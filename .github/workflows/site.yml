@@ -1,0 +1,19 @@
+name: Deploy site
+
+on:
+  push:
+    branches: [master]
+    paths: [site/**]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy to Bunny Edge Scripting
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: BunnyWay/actions/deploy-script@main
+        with:
+          script_id: ${{ vars.BUNNY_SCRIPT_ID }}
+          deploy_key: ${{ secrets.BUNNY_DEPLOY_KEY }}
+          file: site/worker.ts

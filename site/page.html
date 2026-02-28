@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>purple. — SSH config manager and launcher</title>
+<meta name="description" content="Smart, fast SSH launcher for the terminal. TUI host manager with search, tags, tunnels, cloud sync and round-trip fidelity for ~/.ssh/config.">
+<meta property="og:title" content="purple. — SSH config manager and launcher">
+<meta property="og:description" content="Smart, fast SSH launcher for the terminal. TUI with search, tags, tunnels, ping and cloud sync.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://getpurple.sh">
+<meta property="og:image" content="https://raw.githubusercontent.com/erickochen/purple/master/demo.gif">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="canonical" href="https://getpurple.sh">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0a0a0a;
+  color: #e0e0e0;
+  font-family: "SF Mono", "Fira Code", "JetBrains Mono", "Cascadia Code", Menlo, Monaco, "Courier New", monospace;
+  line-height: 1.6;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+main {
+  max-width: 720px;
+  width: 100%;
+  padding: 80px 24px 60px;
+}
+h1 {
+  font-size: 3rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-bottom: 8px;
+}
+h1 span { color: #9333ea; }
+.tagline {
+  color: #888;
+  font-size: 1rem;
+  margin-bottom: 48px;
+}
+.install-box {
+  background: #161616;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  padding: 20px 24px;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.install-box code {
+  font-size: 1rem;
+  color: #fff;
+  white-space: nowrap;
+}
+.install-box code .dim { color: #777; }
+.copy-btn {
+  background: none;
+  border: 1px solid #333;
+  border-radius: 6px;
+  color: #888;
+  padding: 6px 12px;
+  font-family: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.copy-btn:hover { border-color: #9333ea; color: #fff; }
+.alt-methods {
+  color: #555;
+  font-size: 0.85rem;
+  margin-bottom: 56px;
+  line-height: 1.8;
+}
+.alt-methods a {
+  color: #888;
+  text-decoration: none;
+  border-bottom: 1px solid #333;
+  transition: all 0.15s;
+}
+.alt-methods a:hover { color: #9333ea; border-color: #9333ea; }
+.demo {
+  margin-bottom: 56px;
+}
+.demo img {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid #2a2a2a;
+}
+.features {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 32px;
+  margin-bottom: 56px;
+  font-size: 0.9rem;
+}
+.features div {
+  color: #888;
+}
+.features div strong {
+  color: #e0e0e0;
+  font-weight: 600;
+}
+footer {
+  color: #444;
+  font-size: 0.8rem;
+  padding-bottom: 40px;
+}
+footer a {
+  color: #555;
+  text-decoration: none;
+  border-bottom: 1px solid #333;
+  transition: all 0.15s;
+}
+footer a:hover { color: #9333ea; border-color: #9333ea; }
+@media (max-width: 540px) {
+  main { padding: 48px 16px 40px; }
+  h1 { font-size: 2.2rem; }
+  .install-box { padding: 16px; }
+  .install-box code { font-size: 0.85rem; }
+  .features { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<main>
+  <h1>purple<span>.</span></h1>
+  <p class="tagline">SSH config manager and launcher for the terminal</p>
+
+  <div class="install-box">
+    <code><span class="dim">$</span> curl -fsSL getpurple.sh | sh</code>
+    <button class="copy-btn" onclick="copy(this)">copy</button>
+  </div>
+
+  <div class="alt-methods">
+    or via <a href="https://github.com/erickochen/homebrew-purple">Homebrew</a>:
+    brew install erickochen/purple/purple<br>
+    or via <a href="https://crates.io/crates/purple-ssh">cargo</a>:
+    cargo install purple-ssh
+  </div>
+
+  <div class="demo">
+    <img src="https://raw.githubusercontent.com/erickochen/purple/master/demo.gif"
+         alt="purple TUI demo" loading="lazy">
+  </div>
+
+  <div class="features">
+    <div><strong>Search</strong> — fuzzy find across aliases, hostnames and tags</div>
+    <div><strong>Tags</strong> — organize hosts with #tags and filter instantly</div>
+    <div><strong>Tunnels</strong> — manage SSH port forwards per host</div>
+    <div><strong>Ping</strong> — check host reachability from the TUI</div>
+    <div><strong>Cloud sync</strong> — DigitalOcean, Vultr, Linode, Hetzner, UpCloud</div>
+    <div><strong>Round-trip</strong> — preserves comments, formatting and unknown directives</div>
+  </div>
+
+  </main>
+
+<footer>
+  <a href="https://github.com/erickochen/purple">GitHub</a>
+</footer>
+
+<script>
+function copy(btn) {
+  navigator.clipboard.writeText("curl -fsSL getpurple.sh | sh").then(function() {
+    btn.textContent = "copied";
+    setTimeout(function() { btn.textContent = "copy"; }, 2000);
+  }).catch(function() {});
+}
+</script>
+</body>
+</html>
