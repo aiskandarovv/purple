@@ -2744,3 +2744,256 @@ fn delete_host_multi_pattern_not_deleted_by_single() {
     assert!(output.contains("Host prod staging"), "Multi-pattern host should survive single-pattern delete");
     assert!(output.contains("Host other"), "Other host should survive");
 }
+
+// ============================================================================
+// Tunnel forwarding round-trip tests
+// ============================================================================
+
+#[test]
+fn add_forward_roundtrip() {
+    let input = "Host myserver\n  HostName 10.0.0.1\n  User admin\n";
+    let mut config = parse_str(input);
+    config.add_forward("myserver", "LocalForward", "8080 localhost:80");
+    let output = config.serialize();
+    assert!(output.contains("Host myserver"));
+    assert!(output.contains("HostName 10.0.0.1"));
+    assert!(output.contains("User admin"));
+    assert!(output.contains("LocalForward 8080 localhost:80"));
+}
+
+#[test]
+fn remove_forward_roundtrip() {
+    let input = "\
+Host myserver
+  HostName 10.0.0.1
+  LocalForward 8080 localhost:80
+  RemoteForward 9090 localhost:3000
+  User admin
+";
+    let mut config = parse_str(input);
+    config.remove_forward("myserver", "LocalForward", "8080 localhost:80");
+    let output = config.serialize();
+    assert!(!output.contains("LocalForward"));
+    assert!(output.contains("RemoteForward 9090 localhost:3000"));
+    assert!(output.contains("HostName 10.0.0.1"));
+    assert!(output.contains("User admin"));
+}
+
+#[test]
+fn add_forward_does_not_break_update_host() {
+    let input = "Host myserver\n  HostName 10.0.0.1\n  User admin\n";
+    let mut config = parse_str(input);
+    config.add_forward("myserver", "LocalForward", "8080 localhost:80");
+
+    // Now update the host — forward should be preserved
+    config.update_host(
+        "myserver",
+        &HostEntry {
+            alias: "myserver".to_string(),
+            hostname: "10.0.0.2".to_string(),
+            user: "deploy".to_string(),
+            ..Default::default()
+        },
+    );
+    let output = config.serialize();
+    assert!(output.contains("HostName 10.0.0.2"));
+    assert!(output.contains("User deploy"));
+    assert!(output.contains("LocalForward 8080 localhost:80"));
+}
+
+#[test]
+fn multiple_forward_types_in_one_host() {
+    let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
+    config.add_forward("myserver", "LocalForward", "8080 localhost:80");
+    config.add_forward("myserver", "RemoteForward", "9090 localhost:3000");
+    config.add_forward("myserver", "DynamicForward", "1080");
+    let output = config.serialize();
+    assert!(output.contains("LocalForward 8080 localhost:80"));
+    assert!(output.contains("RemoteForward 9090 localhost:3000"));
+    assert!(output.contains("DynamicForward 1080"));
+}
+
+#[test]
+fn add_forward_ipv6_roundtrip() {
+    let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
+    config.add_forward("myserver", "LocalForward", "[::1]:8080 [fe80::1]:80");
+    let output = config.serialize();
+    assert!(output.contains("LocalForward [::1]:8080 [fe80::1]:80"));
+    // Verify re-parse preserves the same value
+    let config2 = parse_str(&output);
+    let output2 = config2.serialize();
+    assert_eq!(output, output2);
+}
+
+#[test]
+fn add_forward_crlf_preservation() {
+    let input = "Host myserver\r\n  HostName 10.0.0.1\r\n";
+    let mut config = parse_str(input);
+    assert!(config.crlf);
+    config.add_forward("myserver", "LocalForward", "8080 localhost:80");
+    let output = config.serialize();
+    // All lines should use CRLF
+    assert!(output.contains("\r\n"));
+    assert!(output.contains("LocalForward 8080 localhost:80\r\n"));
+    // No bare LF
+    let bare_lf_count = output.chars().filter(|c| *c == '\n').count();
+    let crlf_count = output.matches("\r\n").count();
+    assert_eq!(bare_lf_count, crlf_count);
+}
+
+#[test]
+fn remove_forward_crlf_preservation() {
+    let input = "Host myserver\r\n  HostName 10.0.0.1\r\n  LocalForward 8080 localhost:80\r\n";
+    let mut config = parse_str(input);
+    assert!(config.crlf);
+    config.remove_forward("myserver", "LocalForward", "8080 localhost:80");
+    let output = config.serialize();
+    assert!(!output.contains("LocalForward"));
+    // All remaining lines should use CRLF
+    let bare_lf_count = output.chars().filter(|c| *c == '\n').count();
+    let crlf_count = output.matches("\r\n").count();
+    assert_eq!(bare_lf_count, crlf_count);
+}
+
+#[test]
+fn add_forward_to_empty_host_block() {
+    let mut config = parse_str("Host myserver\n");
+    config.add_forward("myserver", "DynamicForward", "1080");
+    let output = config.serialize();
+    assert!(output.contains("DynamicForward 1080"));
+    // Should use default indent (2 spaces)
+    assert!(output.contains("  DynamicForward 1080"));
+}
+
+#[test]
+fn add_forward_preserves_provider_marker() {
+    let input = "Host myserver\n  HostName 10.0.0.1\n  # purple:provider do:12345\n  # purple:tags web,prod\n";
+    let mut config = parse_str(input);
+    config.add_forward("myserver", "LocalForward", "8080 localhost:80");
+    let output = config.serialize();
+    assert!(output.contains("# purple:provider do:12345"));
+    assert!(output.contains("# purple:tags web,prod"));
+    assert!(output.contains("LocalForward 8080 localhost:80"));
+}
+
+#[test]
+fn has_forward_after_add() {
+    let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
+    assert!(!config.has_forward("myserver", "LocalForward", "8080 localhost:80"));
+    config.add_forward("myserver", "LocalForward", "8080 localhost:80");
+    assert!(config.has_forward("myserver", "LocalForward", "8080 localhost:80"));
+}
+
+#[test]
+fn remove_forward_then_has_forward_false() {
+    let mut config = parse_str(
+        "Host myserver\n  HostName 10.0.0.1\n  LocalForward 8080 localhost:80\n",
+    );
+    assert!(config.has_forward("myserver", "LocalForward", "8080 localhost:80"));
+    config.remove_forward("myserver", "LocalForward", "8080 localhost:80");
+    assert!(!config.has_forward("myserver", "LocalForward", "8080 localhost:80"));
+}
+
+#[test]
+fn edit_forward_remove_then_add() {
+    let input = "\
+Host myserver
+  HostName 10.0.0.1
+  LocalForward 8080 localhost:80
+  User admin
+";
+    let mut config = parse_str(input);
+    // Edit: remove old, add new (same pattern as TUI edit flow)
+    config.remove_forward("myserver", "LocalForward", "8080 localhost:80");
+    config.add_forward("myserver", "RemoteForward", "9090 localhost:3000");
+    let output = config.serialize();
+    assert!(!output.contains("LocalForward 8080 localhost:80"));
+    assert!(output.contains("RemoteForward 9090 localhost:3000"));
+    assert!(output.contains("HostName 10.0.0.1"));
+    assert!(output.contains("User admin"));
+}
+
+#[test]
+fn find_tunnel_directives_multi_pattern_host() {
+    let input = "\
+Host prod staging
+  HostName 10.0.0.1
+  LocalForward 8080 localhost:80
+  RemoteForward 9090 localhost:3000
+";
+    let config = parse_str(input);
+    let rules = config.find_tunnel_directives("staging");
+    assert_eq!(rules.len(), 2);
+    let rules2 = config.find_tunnel_directives("prod");
+    assert_eq!(rules2.len(), 2);
+    let rules3 = config.find_tunnel_directives("nohost");
+    assert!(rules3.is_empty());
+}
+
+#[test]
+fn edit_forward_type_change_local_to_dynamic() {
+    // Simulates edit: remove LocalForward, add DynamicForward
+    let input = "\
+Host myserver
+  HostName 10.0.0.1
+  LocalForward 8080 localhost:80
+";
+    let mut config = parse_str(input);
+    // Remove old Local forward
+    assert!(config.remove_forward("myserver", "LocalForward", "8080 localhost:80"));
+    // Add new Dynamic forward
+    config.add_forward("myserver", "DynamicForward", "1080");
+
+    let output = config.serialize();
+    assert!(!output.contains("LocalForward"));
+    assert!(output.contains("DynamicForward 1080"));
+    // HostName preserved
+    assert!(output.contains("HostName 10.0.0.1"));
+
+    // Round-trip: re-parse and verify
+    let reparsed = parse_str(&output);
+    let rules = reparsed.find_tunnel_directives("myserver");
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].tunnel_type, purple_ssh::tunnel::TunnelType::Dynamic);
+    assert_eq!(rules[0].bind_port, 1080);
+}
+
+// ── Equals-in-value separator preservation ──────────────────────────────
+
+#[test]
+fn update_host_equals_in_value_preserves_space_separator() {
+    // IdentityFile value contains '=' — separator must remain a space
+    let input = "Host myserver\n  HostName 10.0.0.1\n  IdentityFile ~/.ssh/id=prod\n";
+    let mut config = parse_str(input);
+
+    let entry = HostEntry {
+        alias: "myserver".to_string(),
+        hostname: "10.0.0.2".to_string(),
+        identity_file: "~/.ssh/id=staging".to_string(),
+        port: 22,
+        ..Default::default()
+    };
+    config.update_host("myserver", &entry);
+    let output = config.serialize();
+
+    assert_eq_visible("Host myserver\n  HostName 10.0.0.2\n  IdentityFile ~/.ssh/id=staging\n", &output);
+}
+
+#[test]
+fn update_host_equals_separator_with_equals_in_value() {
+    // Equals separator + value containing '=' — both must coexist
+    let input = "Host myserver\n  HostName=10.0.0.1\n  IdentityFile=~/.ssh/id=prod\n";
+    let mut config = parse_str(input);
+
+    let entry = HostEntry {
+        alias: "myserver".to_string(),
+        hostname: "10.0.0.2".to_string(),
+        identity_file: "~/.ssh/id=staging".to_string(),
+        port: 22,
+        ..Default::default()
+    };
+    config.update_host("myserver", &entry);
+    let output = config.serialize();
+
+    assert_eq_visible("Host myserver\n  HostName=10.0.0.2\n  IdentityFile=~/.ssh/id=staging\n", &output);
+}

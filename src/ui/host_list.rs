@@ -134,10 +134,12 @@ fn render_display_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::
             }
             HostListItem::Host { index } => {
                 if let Some(host) = app.hosts.get(*index) {
+                    let tunnel_active = app.active_tunnels.contains_key(&host.alias);
                     build_host_item(
                         host,
                         &app.ping_status,
                         &app.history,
+                        tunnel_active,
                         None,
                         alias_col,
                         content_width,
@@ -201,10 +203,12 @@ fn render_search_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::R
         .iter()
         .filter_map(|&idx| {
             let host = app.hosts.get(idx)?;
+            let tunnel_active = app.active_tunnels.contains_key(&host.alias);
             Some(build_host_item(
                 host,
                 &app.ping_status,
                 &app.history,
+                tunnel_active,
                 query,
                 alias_col,
                 content_width,
@@ -229,6 +233,7 @@ fn build_host_item<'a>(
     host: &'a crate::ssh_config::model::HostEntry,
     ping_status: &'a std::collections::HashMap<String, PingStatus>,
     history: &'a crate::history::ConnectionHistory,
+    tunnel_active: bool,
     query: Option<&str>,
     alias_col: usize,
     content_width: usize,
@@ -276,7 +281,7 @@ fn build_host_item<'a>(
         left_spans.push(Span::styled(s, theme::muted()));
     }
 
-    // === RIGHT: key, tags, source, ping, history ===
+    // === RIGHT: tags, provider, source, tunnels, ping, history ===
     let mut right_spans: Vec<Span> = Vec::new();
     let mut right_len: usize = 0;
 
@@ -313,6 +318,17 @@ fn build_host_item<'a>(
             right_len += s.width();
             right_spans.push(Span::styled(s, theme::muted()));
         }
+    }
+
+    // Tunnel indicator
+    if host.tunnel_count > 0 {
+        let (indicator, style) = if tunnel_active {
+            (" [T]", theme::bold())
+        } else {
+            (" [T]", theme::muted())
+        };
+        right_len += indicator.width();
+        right_spans.push(Span::styled(indicator, style));
     }
 
     if let Some(status) = ping_status.get(&host.alias) {

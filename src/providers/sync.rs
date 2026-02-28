@@ -12,6 +12,8 @@ pub struct SyncResult {
     pub updated: usize,
     pub removed: usize,
     pub unchanged: usize,
+    /// Alias renames: (old_alias, new_alias) pairs.
+    pub renames: Vec<(String, String)>,
 }
 
 /// Sanitize a server name into a valid SSH alias component.
@@ -144,6 +146,7 @@ pub fn sync_provider(
                                     provider.name(),
                                     &remote.server_id,
                                 );
+                                result.renames.push((existing_alias.clone(), new_alias.clone()));
                             }
                             result.updated += 1;
                         } else {
@@ -188,12 +191,10 @@ pub fn sync_provider(
                     alias: alias.clone(),
                     hostname: remote.ip.clone(),
                     user: section.user.clone(),
-                    port: 22,
                     identity_file: section.identity_file.clone(),
-                    proxy_jump: String::new(),
-                    source_file: None,
                     tags: remote.tags.clone(),
                     provider: Some(provider.name().to_string()),
+                    ..Default::default()
                 };
 
                 // Add blank line separator before host (skip when preceded by group header

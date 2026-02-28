@@ -43,6 +43,8 @@ pub fn handle_key_event(
         Screen::TagPicker => handle_tag_picker_screen(app, key),
         Screen::Providers => handle_provider_list(app, key, events_tx),
         Screen::ProviderForm { .. } => handle_provider_form(app, key, events_tx),
+        Screen::TunnelList { .. } => handle_tunnel_list(app, key),
+        Screen::TunnelForm { .. } => handle_tunnel_form(app, key),
     }
     Ok(())
 }
@@ -270,6 +272,17 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
         KeyCode::Char('#') => {
             app.open_tag_picker();
         }
+        KeyCode::Char('T') => {
+            if let Some(host) = app.selected_host() {
+                let alias = host.alias.clone();
+                app.refresh_tunnel_list(&alias);
+                app.ui.tunnel_list_state = ratatui::widgets::ListState::default();
+                if !app.tunnel_list.is_empty() {
+                    app.ui.tunnel_list_state.select(Some(0));
+                }
+                app.screen = Screen::TunnelList { alias };
+            }
+        }
         KeyCode::Char('S') => {
             app.provider_config = crate::providers::config::ProviderConfig::load();
             app.ui.provider_list_state = ratatui::widgets::ListState::default();
@@ -418,9 +431,6 @@ fn submit_form(app: &mut App) {
         return;
     }
 
-    // Clear undo buffer on any write
-    app.deleted_host = None;
-
     let result = match &app.screen {
         Screen::AddHost => app.add_host_from_form(),
         Screen::EditHost { alias } => {
@@ -430,7 +440,11 @@ fn submit_form(app: &mut App) {
         _ => return,
     };
     match result {
-        Ok(msg) => app.set_status(msg, false),
+        Ok(msg) => {
+            // Clear undo buffer after successful write
+            app.deleted_host = None;
+            app.set_status(msg, false);
+        }
         Err(msg) => {
             app.set_status(msg, true);
             return;
@@ -452,6 +466,11 @@ fn handle_confirm_delete(app: &mut App, key: KeyEvent) {
                         app.config.insert_host_at(element, position);
                         app.set_status(format!("Failed to save: {}", e), true);
                     } else {
+                        // Stop active tunnel for the deleted host
+                        if let Some(mut tunnel) = app.active_tunnels.remove(&alias) {
+                            let _ = tunnel.child.kill();
+                            let _ = tunnel.child.wait();
+                        }
                         app.deleted_host = Some(crate::app::DeletedHost {
                             element,
                             position,
@@ -778,6 +797,23 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
         return;
     }
 
+    // Reject control characters in all fields (prevents INI injection)
+    let pf_fields = [
+        (&app.provider_form.token, "Token"),
+        (&app.provider_form.alias_prefix, "Alias Prefix"),
+        (&app.provider_form.user, "User"),
+        (&app.provider_form.identity_file, "Identity File"),
+    ];
+    for (value, name) in &pf_fields {
+        if value.chars().any(|c| c.is_control()) {
+            app.set_status(
+                format!("{} contains control characters.", name),
+                true,
+            );
+            return;
+        }
+    }
+
     if app.provider_form.token.trim().is_empty() {
         let display_name = crate::providers::provider_display_name(provider_name.as_str());
         app.set_status(
@@ -804,7 +840,10 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
         provider: provider_name.clone(),
         token: token.clone(),
         alias_prefix,
-        user: app.provider_form.user.trim().to_string(),
+        user: {
+            let u = app.provider_form.user.trim();
+            if u.is_empty() { "root".to_string() } else { u.to_string() }
+        },
         identity_file: app.provider_form.identity_file.trim().to_string(),
     };
 
@@ -894,6 +933,236 @@ fn ping_selected_host(app: &mut App, events_tx: &mpsc::Sender<AppEvent>, show_hi
             ping::ping_host(alias, hostname, port, events_tx.clone());
         }
     }
+}
+
+fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
+    let alias = match &app.screen {
+        Screen::TunnelList { alias } => alias.clone(),
+        _ => return,
+    };
+
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => {
+            app.screen = Screen::HostList;
+        }
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.select_next_tunnel();
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.select_prev_tunnel();
+        }
+        KeyCode::Char('a') => {
+            // Check if host is from an included file (read-only)
+            if let Some(host) = app.hosts.iter().find(|h| h.alias == alias) {
+                if host.source_file.is_some() {
+                    app.set_status("Included host. Tunnels are read-only.", true);
+                    return;
+                }
+            }
+            app.tunnel_form = crate::app::TunnelForm::new();
+            app.screen = Screen::TunnelForm {
+                alias: alias.clone(),
+                editing: None,
+            };
+            app.capture_form_mtime();
+        }
+        KeyCode::Char('e') => {
+            // Check if host is from an included file (read-only)
+            if let Some(host) = app.hosts.iter().find(|h| h.alias == alias) {
+                if host.source_file.is_some() {
+                    app.set_status("Included host. Tunnels are read-only.", true);
+                    return;
+                }
+            }
+            if let Some(sel) = app.ui.tunnel_list_state.selected() {
+                if let Some(rule) = app.tunnel_list.get(sel) {
+                    app.tunnel_form = crate::app::TunnelForm::from_rule(rule);
+                    app.screen = Screen::TunnelForm {
+                        alias: alias.clone(),
+                        editing: Some(sel),
+                    };
+                    app.capture_form_mtime();
+                }
+            }
+        }
+        KeyCode::Char('d') => {
+            // Check if host is from an included file (read-only)
+            if let Some(host) = app.hosts.iter().find(|h| h.alias == alias) {
+                if host.source_file.is_some() {
+                    app.set_status("Included host. Tunnels are read-only.", true);
+                    return;
+                }
+            }
+            if let Some(sel) = app.ui.tunnel_list_state.selected() {
+                if let Some(rule) = app.tunnel_list.get(sel) {
+                    let key = rule.tunnel_type.directive_key().to_string();
+                    let value = rule.to_directive_value();
+                    let config_backup = app.config.clone();
+                    if !app.config.remove_forward(&alias, &key, &value) {
+                        app.set_status("Tunnel not found in config.", true);
+                        return;
+                    }
+                    if let Err(e) = app.config.write() {
+                        app.config = config_backup;
+                        app.set_status(format!("Failed to save: {}", e), true);
+                    } else {
+                        app.deleted_host = None; // Clear undo buffer — positions may have shifted
+                        app.update_last_modified();
+                        app.refresh_tunnel_list(&alias);
+                        app.reload_hosts();
+                        // Fix selection
+                        if app.tunnel_list.is_empty() {
+                            app.ui.tunnel_list_state.select(None);
+                        } else if sel >= app.tunnel_list.len() {
+                            app.ui.tunnel_list_state.select(Some(app.tunnel_list.len() - 1));
+                        }
+                        app.set_status("Tunnel removed.", false);
+                    }
+                }
+            }
+        }
+        KeyCode::Enter => {
+            // Start/stop tunnel
+            if app.active_tunnels.contains_key(&alias) {
+                // Stop
+                if let Some(mut tunnel) = app.active_tunnels.remove(&alias) {
+                    let _ = tunnel.child.kill();
+                    let _ = tunnel.child.wait();
+                    app.set_status(format!("Tunnel for {} stopped.", alias), false);
+                }
+            } else if !app.tunnel_list.is_empty() {
+                // Start
+                match crate::tunnel::start_tunnel(&alias, &app.reload.config_path) {
+                    Ok(child) => {
+                        app.active_tunnels.insert(
+                            alias.clone(),
+                            crate::tunnel::ActiveTunnel { child },
+                        );
+                        app.set_status(format!("Tunnel for {} started.", alias), false);
+                    }
+                    Err(e) => {
+                        app.set_status(format!("Failed to start tunnel: {}", e), true);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn handle_tunnel_form(app: &mut App, key: KeyEvent) {
+    let (alias, editing) = match &app.screen {
+        Screen::TunnelForm { alias, editing } => (alias.clone(), *editing),
+        _ => return,
+    };
+
+    match key.code {
+        KeyCode::Esc => {
+            app.clear_form_mtime();
+            app.screen = Screen::TunnelList { alias };
+        }
+        KeyCode::Tab | KeyCode::Down => {
+            app.tunnel_form.focused_field = app.tunnel_form.focused_field.next(app.tunnel_form.tunnel_type);
+        }
+        KeyCode::BackTab | KeyCode::Up => {
+            app.tunnel_form.focused_field = app.tunnel_form.focused_field.prev(app.tunnel_form.tunnel_type);
+        }
+        KeyCode::Left => {
+            if app.tunnel_form.focused_field == crate::app::TunnelFormField::Type {
+                app.tunnel_form.tunnel_type = app.tunnel_form.tunnel_type.prev();
+            }
+        }
+        KeyCode::Right => {
+            if app.tunnel_form.focused_field == crate::app::TunnelFormField::Type {
+                app.tunnel_form.tunnel_type = app.tunnel_form.tunnel_type.next();
+            }
+        }
+        KeyCode::Enter => {
+            submit_tunnel_form(app, &alias, editing);
+        }
+        KeyCode::Char(c) => {
+            if let Some(val) = app.tunnel_form.focused_value_mut() {
+                val.push(c);
+            }
+        }
+        KeyCode::Backspace => {
+            if let Some(val) = app.tunnel_form.focused_value_mut() {
+                val.pop();
+            }
+        }
+        _ => {}
+    }
+}
+
+fn submit_tunnel_form(app: &mut App, alias: &str, editing: Option<usize>) {
+    // Check for external config changes since form was opened
+    if app.config_changed_since_form_open() {
+        app.set_status(
+            "Config changed externally. Press Esc and re-open to pick up changes.",
+            true,
+        );
+        return;
+    }
+
+    if let Err(msg) = app.tunnel_form.validate() {
+        app.set_status(msg, true);
+        return;
+    }
+
+    let (directive_key, directive_value) = app.tunnel_form.to_directive();
+    let config_backup = app.config.clone();
+
+    // If editing, remove the old directive first
+    if let Some(idx) = editing {
+        if let Some(old_rule) = app.tunnel_list.get(idx) {
+            let old_key = old_rule.tunnel_type.directive_key().to_string();
+            let old_value = old_rule.to_directive_value();
+            if !app.config.remove_forward(alias, &old_key, &old_value) {
+                app.config = config_backup;
+                app.set_status("Original tunnel not found in config.", true);
+                return;
+            }
+        } else {
+            // Index out of bounds (external config change) — abort
+            app.set_status("Tunnel list changed externally. Press Esc and re-open.", true);
+            return;
+        }
+    }
+
+    // Duplicate detection (runs after old directive removal for edits)
+    if app.config.has_forward(alias, directive_key, &directive_value) {
+        app.config = config_backup;
+        app.set_status("Duplicate tunnel already configured.", true);
+        return;
+    }
+
+    app.config.add_forward(alias, directive_key, &directive_value);
+    if let Err(e) = app.config.write() {
+        app.config = config_backup;
+        app.set_status(format!("Failed to save: {}", e), true);
+        return;
+    }
+
+    app.deleted_host = None; // Clear undo buffer — positions may have shifted
+    app.update_last_modified();
+    app.refresh_tunnel_list(alias);
+    app.reload_hosts();
+    // Fix selection after list change
+    if app.tunnel_list.is_empty() {
+        app.ui.tunnel_list_state.select(None);
+    } else if let Some(sel) = app.ui.tunnel_list_state.selected() {
+        if sel >= app.tunnel_list.len() {
+            app.ui.tunnel_list_state.select(Some(app.tunnel_list.len() - 1));
+        }
+    } else {
+        // First tunnel added to empty list — initialize selection
+        app.ui.tunnel_list_state.select(Some(0));
+    }
+    app.clear_form_mtime();
+    app.set_status("Tunnel saved.", false);
+    app.screen = Screen::TunnelList {
+        alias: alias.to_string(),
+    };
 }
 
 /// Spawn a background thread to fetch hosts from a cloud provider.

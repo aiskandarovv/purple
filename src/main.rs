@@ -13,6 +13,7 @@ mod quick_add;
 mod ssh_config;
 mod ssh_keys;
 mod tui;
+mod tunnel;
 mod ui;
 
 use std::path::PathBuf;
@@ -105,6 +106,11 @@ enum Commands {
         #[command(subcommand)]
         command: ProviderCommands,
     },
+    /// Manage SSH tunnels
+    Tunnel {
+        #[command(subcommand)]
+        command: TunnelCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -140,6 +146,36 @@ enum ProviderCommands {
     Remove {
         /// Provider name to remove
         provider: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum TunnelCommands {
+    /// List configured tunnels
+    List {
+        /// Show tunnels for a specific host
+        alias: Option<String>,
+    },
+    /// Add a tunnel to a host
+    Add {
+        /// Host alias
+        alias: String,
+
+        /// Forward spec: L:port:host:port (local), R:port:host:port (remote) or D:port (SOCKS)
+        forward: String,
+    },
+    /// Remove a tunnel from a host
+    Remove {
+        /// Host alias
+        alias: String,
+
+        /// Forward spec: L:port:host:port (local), R:port:host:port (remote) or D:port (SOCKS)
+        forward: String,
+    },
+    /// Start a tunnel (foreground, Ctrl+C to stop)
+    Start {
+        /// Host alias
+        alias: String,
     },
 }
 
@@ -205,13 +241,16 @@ fn main() -> Result<()> {
         }) => {
             return handle_sync(config, provider.as_deref(), dry_run, remove);
         }
+        Some(Commands::Tunnel { command }) => {
+            return handle_tunnel_command(config, command);
+        }
         Some(Commands::Provider { .. }) => unreachable!(),
         None => {}
     }
 
     // Direct connect mode (--connect)
     if let Some(alias) = cli.connect {
-        let status = connection::connect(&alias)?;
+        let status = connection::connect(&alias, &config_path)?;
         let code = status.code().unwrap_or(1);
         if code != 255 {
             history::ConnectionHistory::load().record(&alias);
@@ -248,7 +287,7 @@ fn main() -> Result<()> {
         if let Some(host) = entries.iter().find(|h| h.alias == *alias) {
             let alias = host.alias.clone();
             println!("Beaming you up to {}...\n", alias);
-            let status = connection::connect(&alias)?;
+            let status = connection::connect(&alias, &config_path)?;
             let code = status.code().unwrap_or(1);
             if code != 255 {
                 history::ConnectionHistory::load().record(&alias);
@@ -331,6 +370,11 @@ fn run_tui(mut app: App) -> Result<()> {
                     app.check_config_changed();
                     last_config_check = std::time::Instant::now();
                 }
+                // Poll active tunnels for exit
+                let exited = app.poll_tunnels();
+                for (_alias, msg, is_error) in exited {
+                    app.set_status(msg, is_error);
+                }
             }
             AppEvent::PingResult { alias, reachable } => {
                 let status = if reachable {
@@ -341,15 +385,14 @@ fn run_tui(mut app: App) -> Result<()> {
                 app.ping_status.insert(alias, status);
             }
             AppEvent::SyncComplete { provider, hosts } => {
-                let msg = app.apply_sync_result(&provider, hosts);
-                let is_err = msg.starts_with('!');
+                let (msg, is_err) = app.apply_sync_result(&provider, hosts);
                 app.set_status(msg, is_err);
                 app.syncing_providers.remove(&provider);
             }
             AppEvent::SyncError { provider, message } => {
                 let display_name = providers::provider_display_name(provider.as_str());
                 app.set_status(
-                    format!("! {} sync failed: {}", display_name, message),
+                    format!("{} sync failed: {}", display_name, message),
                     true,
                 );
                 app.syncing_providers.remove(&provider);
@@ -364,7 +407,7 @@ fn run_tui(mut app: App) -> Result<()> {
             events.pause();
             terminal.exit()?;
             println!("Beaming you up to {}...\n", alias);
-            let status = connection::connect(&alias);
+            let status = connection::connect(&alias, &app.reload.config_path);
             println!();
             match &status {
                 Ok(exit) => {
@@ -392,6 +435,12 @@ fn run_tui(mut app: App) -> Result<()> {
             app.reload_hosts();
             app.update_last_modified();
         }
+    }
+
+    // Kill all active tunnels on exit
+    for (_, mut tunnel) in app.active_tunnels.drain() {
+        let _ = tunnel.child.kill();
+        let _ = tunnel.child.wait();
     }
 
     terminal.exit()?;
@@ -430,6 +479,30 @@ fn handle_quick_add(
         std::process::exit(1);
     }
 
+    // Reject control characters in alias, hostname, user and key
+    let key_val = key.unwrap_or("").to_string();
+    for (value, name) in [
+        (&alias_str, "Alias"),
+        (&parsed.hostname, "Hostname"),
+        (&parsed.user, "User"),
+        (&key_val, "Identity file"),
+    ] {
+        if value.chars().any(|c| c.is_control()) {
+            eprintln!("{} contains control characters.", name);
+            std::process::exit(1);
+        }
+    }
+
+    // Reject whitespace in hostname and user (matches TUI validation)
+    if parsed.hostname.contains(char::is_whitespace) {
+        eprintln!("Hostname can't contain whitespace.");
+        std::process::exit(1);
+    }
+    if parsed.user.contains(char::is_whitespace) {
+        eprintln!("User can't contain whitespace.");
+        std::process::exit(1);
+    }
+
     if config.has_host(&alias_str) {
         eprintln!("'{}' already exists. Use --alias to pick a different name.", alias_str);
         std::process::exit(1);
@@ -440,11 +513,8 @@ fn handle_quick_add(
         hostname: parsed.hostname,
         user: parsed.user,
         port: parsed.port,
-        identity_file: key.unwrap_or("").to_string(),
-        proxy_jump: String::new(),
-        source_file: None,
-        tags: Vec::new(),
-        provider: None,
+        identity_file: key_val,
+        ..Default::default()
     };
 
     config.add_host(&entry);
@@ -640,12 +710,28 @@ fn handle_provider_command(command: ProviderCommands) -> Result<()> {
                 std::process::exit(1);
             }
 
+            let user = user.unwrap_or_else(|| "root".to_string());
+            let identity_file = key.unwrap_or_default();
+
+            // Reject control characters in all fields (prevents INI injection)
+            for (value, name) in [
+                (&token, "Token"),
+                (&alias_prefix, "Alias prefix"),
+                (&user, "User"),
+                (&identity_file, "Identity file"),
+            ] {
+                if value.chars().any(|c| c.is_control()) {
+                    eprintln!("{} contains control characters.", name);
+                    std::process::exit(1);
+                }
+            }
+
             let section = providers::config::ProviderSection {
                 provider: provider.clone(),
                 token,
                 alias_prefix,
-                user: user.unwrap_or_else(|| "root".to_string()),
-                identity_file: key.unwrap_or_default(),
+                user,
+                identity_file,
             };
 
             let mut config = providers::config::ProviderConfig::load();
@@ -684,6 +770,125 @@ fn handle_provider_command(command: ProviderCommands) -> Result<()> {
                 .map_err(|e| anyhow::anyhow!("Failed to save: {}", e))?;
             println!("Removed {} configuration.", provider);
             Ok(())
+        }
+    }
+}
+
+fn handle_tunnel_command(mut config: SshConfigFile, command: TunnelCommands) -> Result<()> {
+    match command {
+        TunnelCommands::List { alias } => {
+            if let Some(alias) = alias {
+                // Show tunnels for a specific host
+                if !config.has_host(&alias) {
+                    eprintln!("No host '{}' found.", alias);
+                    std::process::exit(1);
+                }
+                let rules = config.find_tunnel_directives(&alias);
+                if rules.is_empty() {
+                    println!("No tunnels configured for {}.", alias);
+                } else {
+                    println!("Tunnels for {}:", alias);
+                    for rule in &rules {
+                        println!("  {}", rule.display());
+                    }
+                }
+            } else {
+                // Show all hosts with tunnels
+                let entries = config.host_entries();
+                let with_tunnels: Vec<_> = entries.iter().filter(|e| e.tunnel_count > 0).collect();
+                if with_tunnels.is_empty() {
+                    println!("No tunnels configured.");
+                } else {
+                    for (i, host) in with_tunnels.iter().enumerate() {
+                        if i > 0 {
+                            println!();
+                        }
+                        println!("{}:", host.alias);
+                        for rule in config.find_tunnel_directives(&host.alias) {
+                            println!("  {}", rule.display());
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
+        TunnelCommands::Add { alias, forward } => {
+            if !config.has_host(&alias) {
+                eprintln!("No host '{}' found.", alias);
+                std::process::exit(1);
+            }
+            if config.is_included_host(&alias) {
+                eprintln!("Host '{}' is from an included file and cannot be modified.", alias);
+                std::process::exit(1);
+            }
+            let rule = tunnel::TunnelRule::from_cli_spec(&forward).unwrap_or_else(|e| {
+                eprintln!("{}", e);
+                std::process::exit(1);
+            });
+            let key = rule.tunnel_type.directive_key();
+            let value = rule.to_directive_value();
+            // Check for duplicate forward
+            if config.has_forward(&alias, key, &value) {
+                eprintln!("Forward {} already exists on {}.", forward, alias);
+                std::process::exit(1);
+            }
+            config.add_forward(&alias, key, &value);
+            if let Err(e) = config.write() {
+                eprintln!("Failed to save config: {}", e);
+                std::process::exit(1);
+            }
+            println!("Added {} to {}.", forward, alias);
+            Ok(())
+        }
+        TunnelCommands::Remove { alias, forward } => {
+            if !config.has_host(&alias) {
+                eprintln!("No host '{}' found.", alias);
+                std::process::exit(1);
+            }
+            if config.is_included_host(&alias) {
+                eprintln!("Host '{}' is from an included file and cannot be modified.", alias);
+                std::process::exit(1);
+            }
+            let rule = tunnel::TunnelRule::from_cli_spec(&forward).unwrap_or_else(|e| {
+                eprintln!("{}", e);
+                std::process::exit(1);
+            });
+            let key = rule.tunnel_type.directive_key();
+            let value = rule.to_directive_value();
+            let removed = config.remove_forward(&alias, key, &value);
+            if !removed {
+                eprintln!("No matching forward {} found on {}.", forward, alias);
+                std::process::exit(1);
+            }
+            if let Err(e) = config.write() {
+                eprintln!("Failed to save config: {}", e);
+                std::process::exit(1);
+            }
+            println!("Removed {} from {}.", forward, alias);
+            Ok(())
+        }
+        TunnelCommands::Start { alias } => {
+            if !config.has_host(&alias) {
+                eprintln!("No host '{}' found.", alias);
+                std::process::exit(1);
+            }
+            let tunnels = config.find_tunnel_directives(&alias);
+            if tunnels.is_empty() {
+                eprintln!("No forwarding directives configured for '{}'.", alias);
+                std::process::exit(1);
+            }
+            println!("Starting tunnel for {}... (Ctrl+C to stop)", alias);
+            // Run ssh -N in foreground with inherited stdio
+            let status = std::process::Command::new("ssh")
+                .arg("-F")
+                .arg(&config.path)
+                .arg("-N")
+                .arg("--")
+                .arg(&alias)
+                .status()
+                .map_err(|e| anyhow::anyhow!("Failed to start ssh: {}", e))?;
+            let code = status.code().unwrap_or(1);
+            std::process::exit(code);
         }
     }
 }

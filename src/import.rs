@@ -48,11 +48,7 @@ pub fn import_from_file(
                     hostname: parsed.hostname,
                     user: parsed.user,
                     port: parsed.port,
-                    identity_file: String::new(),
-                    proxy_jump: String::new(),
-                    source_file: None,
-                    tags: Vec::new(),
-                    provider: None,
+                    ..Default::default()
                 });
             }
             Err(_) => {
@@ -216,13 +212,8 @@ fn parse_known_hosts_line(line: &str) -> KnownHostResult {
     KnownHostResult::Parsed(HostEntry {
         alias,
         hostname,
-        user: String::new(),
         port,
-        identity_file: String::new(),
-        proxy_jump: String::new(),
-        source_file: None,
-        tags: Vec::new(),
-        provider: None,
+        ..Default::default()
     })
 }
 

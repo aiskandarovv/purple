@@ -76,6 +76,8 @@ pub struct HostEntry {
     pub tags: Vec<String>,
     /// Cloud provider label from purple:provider comment (e.g. "do", "vultr").
     pub provider: Option<String>,
+    /// Number of tunnel forwarding directives.
+    pub tunnel_count: u16,
 }
 
 impl Default for HostEntry {
@@ -90,6 +92,7 @@ impl Default for HostEntry {
             source_file: None,
             tags: Vec::new(),
             provider: None,
+            tunnel_count: 0,
         }
     }
 }
@@ -260,7 +263,43 @@ impl HostBlock {
         }
         entry.tags = self.tags();
         entry.provider = self.provider().map(|(name, _)| name);
+        entry.tunnel_count = self.tunnel_count();
         entry
+    }
+
+    /// Count forwarding directives (LocalForward, RemoteForward, DynamicForward).
+    pub fn tunnel_count(&self) -> u16 {
+        let count = self
+            .directives
+            .iter()
+            .filter(|d| {
+                !d.is_non_directive
+                    && (d.key.eq_ignore_ascii_case("localforward")
+                        || d.key.eq_ignore_ascii_case("remoteforward")
+                        || d.key.eq_ignore_ascii_case("dynamicforward"))
+            })
+            .count();
+        count.min(u16::MAX as usize) as u16
+    }
+
+    /// Check if this block has any tunnel forwarding directives.
+    #[allow(dead_code)]
+    pub fn has_tunnels(&self) -> bool {
+        self.directives.iter().any(|d| {
+            !d.is_non_directive
+                && (d.key.eq_ignore_ascii_case("localforward")
+                    || d.key.eq_ignore_ascii_case("remoteforward")
+                    || d.key.eq_ignore_ascii_case("dynamicforward"))
+        })
+    }
+
+    /// Extract tunnel rules from forwarding directives.
+    pub fn tunnel_directives(&self) -> Vec<crate::tunnel::TunnelRule> {
+        self.directives
+            .iter()
+            .filter(|d| !d.is_non_directive)
+            .filter_map(|d| crate::tunnel::TunnelRule::parse_value(&d.key, &d.value))
+            .collect()
     }
 }
 
@@ -393,6 +432,30 @@ impl SshConfigFile {
         false
     }
 
+    /// Check if a host alias is from an included file (read-only).
+    /// Handles multi-pattern Host lines by splitting on whitespace.
+    pub fn is_included_host(&self, alias: &str) -> bool {
+        // Not in top-level elements → must be in an Include
+        for e in &self.elements {
+            match e {
+                ConfigElement::HostBlock(block) => {
+                    if block.host_pattern.split_whitespace().any(|p| p == alias) {
+                        return false;
+                    }
+                }
+                ConfigElement::Include(include) => {
+                    for file in &include.resolved_files {
+                        if Self::has_host_in_elements(&file.elements, alias) {
+                            return true;
+                        }
+                    }
+                }
+                ConfigElement::GlobalLine(_) => {}
+            }
+        }
+        false
+    }
+
     /// Add a new host entry to the config.
     pub fn add_host(&mut self, entry: &HostEntry) {
         let block = Self::entry_to_block(entry);
@@ -463,11 +526,13 @@ impl SshConfigFile {
                     d.value = value.to_string();
                     // Detect separator style from original raw_line and preserve it.
                     // Handles: "Key value", "Key=value", "Key = value", "Key =value"
+                    // Only considers '=' as separator if it appears before any
+                    // non-whitespace content (avoids matching '=' inside values
+                    // like "IdentityFile ~/.ssh/id=prod").
                     let trimmed = d.raw_line.trim_start();
                     let after_key = &trimmed[d.key.len()..];
-                    let sep = if let Some(eq_pos) = after_key.find('=') {
-                        // Separator is everything up to and including '=', plus any
-                        // trailing whitespace (preserves "Key = " style)
+                    let sep = if after_key.trim_start().starts_with('=') {
+                        let eq_pos = after_key.find('=').unwrap();
                         let after_eq = &after_key[eq_pos + 1..];
                         let trailing_ws = after_eq.len() - after_eq.trim_start().len();
                         after_key[..eq_pos + 1 + trailing_ws].to_string()
@@ -535,6 +600,108 @@ impl SshConfigFile {
                 ConfigElement::GlobalLine(_) => {}
             }
         }
+    }
+
+    /// Compare two directive values with whitespace normalization.
+    /// Handles hand-edited configs with tabs or multiple spaces.
+    fn values_match(a: &str, b: &str) -> bool {
+        a.split_whitespace().eq(b.split_whitespace())
+    }
+
+    /// Add a forwarding directive to a host block.
+    /// Inserts at `content_end()` (before trailing blanks), using detected indentation.
+    /// Uses split_whitespace matching for multi-pattern Host lines.
+    pub fn add_forward(&mut self, alias: &str, directive_key: &str, value: &str) {
+        for element in &mut self.elements {
+            if let ConfigElement::HostBlock(block) = element {
+                if block.host_pattern.split_whitespace().any(|p| p == alias) {
+                    let indent = block.detect_indent();
+                    let pos = block.content_end();
+                    block.directives.insert(
+                        pos,
+                        Directive {
+                            key: directive_key.to_string(),
+                            value: value.to_string(),
+                            raw_line: format!("{}{} {}", indent, directive_key, value),
+                            is_non_directive: false,
+                        },
+                    );
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Remove a specific forwarding directive from a host block.
+    /// Matches key (case-insensitive) and value (whitespace-normalized).
+    /// Uses split_whitespace matching for multi-pattern Host lines.
+    /// Returns true if a directive was actually removed.
+    pub fn remove_forward(&mut self, alias: &str, directive_key: &str, value: &str) -> bool {
+        for element in &mut self.elements {
+            if let ConfigElement::HostBlock(block) = element {
+                if block.host_pattern.split_whitespace().any(|p| p == alias) {
+                    if let Some(pos) = block.directives.iter().position(|d| {
+                        !d.is_non_directive
+                            && d.key.eq_ignore_ascii_case(directive_key)
+                            && Self::values_match(&d.value, value)
+                    }) {
+                        block.directives.remove(pos);
+                        return true;
+                    }
+                    return false;
+                }
+            }
+        }
+        false
+    }
+
+    /// Check if a host block has a specific forwarding directive.
+    /// Uses whitespace-normalized value comparison and split_whitespace host matching.
+    pub fn has_forward(&self, alias: &str, directive_key: &str, value: &str) -> bool {
+        for element in &self.elements {
+            if let ConfigElement::HostBlock(block) = element {
+                if block.host_pattern.split_whitespace().any(|p| p == alias) {
+                    return block.directives.iter().any(|d| {
+                        !d.is_non_directive
+                            && d.key.eq_ignore_ascii_case(directive_key)
+                            && Self::values_match(&d.value, value)
+                    });
+                }
+            }
+        }
+        false
+    }
+
+    /// Find tunnel directives for a host alias, searching all elements including
+    /// Include files. Uses split_whitespace matching like has_host() for multi-pattern
+    /// Host lines.
+    pub fn find_tunnel_directives(&self, alias: &str) -> Vec<crate::tunnel::TunnelRule> {
+        Self::find_tunnel_directives_in(&self.elements, alias)
+    }
+
+    fn find_tunnel_directives_in(
+        elements: &[ConfigElement],
+        alias: &str,
+    ) -> Vec<crate::tunnel::TunnelRule> {
+        for element in elements {
+            match element {
+                ConfigElement::HostBlock(block) => {
+                    if block.host_pattern.split_whitespace().any(|p| p == alias) {
+                        return block.tunnel_directives();
+                    }
+                }
+                ConfigElement::Include(include) => {
+                    for file in &include.resolved_files {
+                        let rules = Self::find_tunnel_directives_in(&file.elements, alias);
+                        if !rules.is_empty() {
+                            return rules;
+                        }
+                    }
+                }
+                ConfigElement::GlobalLine(_) => {}
+            }
+        }
+        Vec::new()
     }
 
     /// Generate a unique alias by appending -2, -3, etc. if the base alias is taken.
@@ -702,5 +869,424 @@ impl SshConfigFile {
             raw_host_line: format!("Host {}", entry.alias),
             directives,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_str(content: &str) -> SshConfigFile {
+        SshConfigFile {
+            elements: SshConfigFile::parse_content(content),
+            path: PathBuf::from("/tmp/test_config"),
+            crlf: false,
+        }
+    }
+
+    #[test]
+    fn tunnel_directives_extracts_forwards() {
+        let config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n  LocalForward 8080 localhost:80\n  RemoteForward 9090 localhost:3000\n  DynamicForward 1080\n",
+        );
+        if let Some(ConfigElement::HostBlock(block)) = config.elements.first() {
+            let rules = block.tunnel_directives();
+            assert_eq!(rules.len(), 3);
+            assert_eq!(rules[0].tunnel_type, crate::tunnel::TunnelType::Local);
+            assert_eq!(rules[0].bind_port, 8080);
+            assert_eq!(rules[1].tunnel_type, crate::tunnel::TunnelType::Remote);
+            assert_eq!(rules[2].tunnel_type, crate::tunnel::TunnelType::Dynamic);
+        } else {
+            panic!("Expected HostBlock");
+        }
+    }
+
+    #[test]
+    fn tunnel_count_counts_forwards() {
+        let config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n  LocalForward 8080 localhost:80\n  RemoteForward 9090 localhost:3000\n",
+        );
+        if let Some(ConfigElement::HostBlock(block)) = config.elements.first() {
+            assert_eq!(block.tunnel_count(), 2);
+        } else {
+            panic!("Expected HostBlock");
+        }
+    }
+
+    #[test]
+    fn tunnel_count_zero_for_no_forwards() {
+        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n  User admin\n");
+        if let Some(ConfigElement::HostBlock(block)) = config.elements.first() {
+            assert_eq!(block.tunnel_count(), 0);
+            assert!(!block.has_tunnels());
+        } else {
+            panic!("Expected HostBlock");
+        }
+    }
+
+    #[test]
+    fn has_tunnels_true_with_forward() {
+        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n  DynamicForward 1080\n");
+        if let Some(ConfigElement::HostBlock(block)) = config.elements.first() {
+            assert!(block.has_tunnels());
+        } else {
+            panic!("Expected HostBlock");
+        }
+    }
+
+    #[test]
+    fn add_forward_inserts_directive() {
+        let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n  User admin\n");
+        config.add_forward("myserver", "LocalForward", "8080 localhost:80");
+        let output = config.serialize();
+        assert!(output.contains("LocalForward 8080 localhost:80"));
+        // Existing directives preserved
+        assert!(output.contains("HostName 10.0.0.1"));
+        assert!(output.contains("User admin"));
+    }
+
+    #[test]
+    fn add_forward_preserves_indentation() {
+        let mut config = parse_str("Host myserver\n\tHostName 10.0.0.1\n");
+        config.add_forward("myserver", "LocalForward", "8080 localhost:80");
+        let output = config.serialize();
+        assert!(output.contains("\tLocalForward 8080 localhost:80"));
+    }
+
+    #[test]
+    fn add_multiple_forwards_same_type() {
+        let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
+        config.add_forward("myserver", "LocalForward", "8080 localhost:80");
+        config.add_forward("myserver", "LocalForward", "9090 localhost:90");
+        let output = config.serialize();
+        assert!(output.contains("LocalForward 8080 localhost:80"));
+        assert!(output.contains("LocalForward 9090 localhost:90"));
+    }
+
+    #[test]
+    fn remove_forward_removes_exact_match() {
+        let mut config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n  LocalForward 8080 localhost:80\n  LocalForward 9090 localhost:90\n",
+        );
+        config.remove_forward("myserver", "LocalForward", "8080 localhost:80");
+        let output = config.serialize();
+        assert!(!output.contains("8080 localhost:80"));
+        assert!(output.contains("9090 localhost:90"));
+    }
+
+    #[test]
+    fn remove_forward_leaves_other_directives() {
+        let mut config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n  LocalForward 8080 localhost:80\n  User admin\n",
+        );
+        config.remove_forward("myserver", "LocalForward", "8080 localhost:80");
+        let output = config.serialize();
+        assert!(!output.contains("LocalForward"));
+        assert!(output.contains("HostName 10.0.0.1"));
+        assert!(output.contains("User admin"));
+    }
+
+    #[test]
+    fn remove_forward_no_match_is_noop() {
+        let original = "Host myserver\n  HostName 10.0.0.1\n  LocalForward 8080 localhost:80\n";
+        let mut config = parse_str(original);
+        config.remove_forward("myserver", "LocalForward", "9999 localhost:99");
+        assert_eq!(config.serialize(), original);
+    }
+
+    #[test]
+    fn host_entry_tunnel_count_populated() {
+        let config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n  LocalForward 8080 localhost:80\n  DynamicForward 1080\n",
+        );
+        let entries = config.host_entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].tunnel_count, 2);
+    }
+
+    #[test]
+    fn remove_forward_returns_true_on_match() {
+        let mut config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n  LocalForward 8080 localhost:80\n",
+        );
+        assert!(config.remove_forward("myserver", "LocalForward", "8080 localhost:80"));
+    }
+
+    #[test]
+    fn remove_forward_returns_false_on_no_match() {
+        let mut config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n  LocalForward 8080 localhost:80\n",
+        );
+        assert!(!config.remove_forward("myserver", "LocalForward", "9999 localhost:99"));
+    }
+
+    #[test]
+    fn remove_forward_returns_false_for_unknown_host() {
+        let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
+        assert!(!config.remove_forward("nohost", "LocalForward", "8080 localhost:80"));
+    }
+
+    #[test]
+    fn has_forward_finds_match() {
+        let config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n  LocalForward 8080 localhost:80\n",
+        );
+        assert!(config.has_forward("myserver", "LocalForward", "8080 localhost:80"));
+    }
+
+    #[test]
+    fn has_forward_no_match() {
+        let config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n  LocalForward 8080 localhost:80\n",
+        );
+        assert!(!config.has_forward("myserver", "LocalForward", "9999 localhost:99"));
+        assert!(!config.has_forward("nohost", "LocalForward", "8080 localhost:80"));
+    }
+
+    #[test]
+    fn has_forward_case_insensitive_key() {
+        let config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n  localforward 8080 localhost:80\n",
+        );
+        assert!(config.has_forward("myserver", "LocalForward", "8080 localhost:80"));
+    }
+
+    #[test]
+    fn add_forward_to_empty_block() {
+        let mut config = parse_str("Host myserver\n");
+        config.add_forward("myserver", "LocalForward", "8080 localhost:80");
+        let output = config.serialize();
+        assert!(output.contains("LocalForward 8080 localhost:80"));
+    }
+
+    #[test]
+    fn remove_forward_case_insensitive_key_match() {
+        let mut config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n  localforward 8080 localhost:80\n",
+        );
+        assert!(config.remove_forward("myserver", "LocalForward", "8080 localhost:80"));
+        assert!(!config.serialize().contains("localforward"));
+    }
+
+    #[test]
+    fn tunnel_count_case_insensitive() {
+        let config = parse_str(
+            "Host myserver\n  localforward 8080 localhost:80\n  REMOTEFORWARD 9090 localhost:90\n  dynamicforward 1080\n",
+        );
+        if let Some(ConfigElement::HostBlock(block)) = config.elements.first() {
+            assert_eq!(block.tunnel_count(), 3);
+        } else {
+            panic!("Expected HostBlock");
+        }
+    }
+
+    #[test]
+    fn tunnel_directives_extracts_all_types() {
+        let config = parse_str(
+            "Host myserver\n  LocalForward 8080 localhost:80\n  RemoteForward 9090 localhost:3000\n  DynamicForward 1080\n",
+        );
+        if let Some(ConfigElement::HostBlock(block)) = config.elements.first() {
+            let rules = block.tunnel_directives();
+            assert_eq!(rules.len(), 3);
+            assert_eq!(rules[0].tunnel_type, crate::tunnel::TunnelType::Local);
+            assert_eq!(rules[1].tunnel_type, crate::tunnel::TunnelType::Remote);
+            assert_eq!(rules[2].tunnel_type, crate::tunnel::TunnelType::Dynamic);
+        } else {
+            panic!("Expected HostBlock");
+        }
+    }
+
+    #[test]
+    fn tunnel_directives_skips_malformed() {
+        let config = parse_str(
+            "Host myserver\n  LocalForward not_valid\n  DynamicForward 1080\n",
+        );
+        if let Some(ConfigElement::HostBlock(block)) = config.elements.first() {
+            let rules = block.tunnel_directives();
+            assert_eq!(rules.len(), 1);
+            assert_eq!(rules[0].bind_port, 1080);
+        } else {
+            panic!("Expected HostBlock");
+        }
+    }
+
+    #[test]
+    fn find_tunnel_directives_multi_pattern_host() {
+        let config = parse_str(
+            "Host prod staging\n  HostName 10.0.0.1\n  LocalForward 8080 localhost:80\n",
+        );
+        let rules = config.find_tunnel_directives("prod");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].bind_port, 8080);
+        let rules2 = config.find_tunnel_directives("staging");
+        assert_eq!(rules2.len(), 1);
+    }
+
+    #[test]
+    fn find_tunnel_directives_no_match() {
+        let config = parse_str(
+            "Host myserver\n  LocalForward 8080 localhost:80\n",
+        );
+        let rules = config.find_tunnel_directives("nohost");
+        assert!(rules.is_empty());
+    }
+
+    #[test]
+    fn has_forward_exact_match() {
+        let config = parse_str(
+            "Host myserver\n  LocalForward 8080 localhost:80\n",
+        );
+        assert!(config.has_forward("myserver", "LocalForward", "8080 localhost:80"));
+        assert!(!config.has_forward("myserver", "LocalForward", "9090 localhost:80"));
+        assert!(!config.has_forward("myserver", "RemoteForward", "8080 localhost:80"));
+        assert!(!config.has_forward("nohost", "LocalForward", "8080 localhost:80"));
+    }
+
+    #[test]
+    fn has_forward_whitespace_normalized() {
+        let config = parse_str(
+            "Host myserver\n  LocalForward 8080  localhost:80\n",
+        );
+        // Extra space in config value vs single space in query — should still match
+        assert!(config.has_forward("myserver", "LocalForward", "8080 localhost:80"));
+    }
+
+    #[test]
+    fn has_forward_multi_pattern_host() {
+        let config = parse_str(
+            "Host prod staging\n  LocalForward 8080 localhost:80\n",
+        );
+        assert!(config.has_forward("prod", "LocalForward", "8080 localhost:80"));
+        assert!(config.has_forward("staging", "LocalForward", "8080 localhost:80"));
+    }
+
+    #[test]
+    fn add_forward_multi_pattern_host() {
+        let mut config = parse_str(
+            "Host prod staging\n  HostName 10.0.0.1\n",
+        );
+        config.add_forward("prod", "LocalForward", "8080 localhost:80");
+        assert!(config.has_forward("prod", "LocalForward", "8080 localhost:80"));
+        assert!(config.has_forward("staging", "LocalForward", "8080 localhost:80"));
+    }
+
+    #[test]
+    fn remove_forward_multi_pattern_host() {
+        let mut config = parse_str(
+            "Host prod staging\n  LocalForward 8080 localhost:80\n  LocalForward 9090 localhost:90\n",
+        );
+        assert!(config.remove_forward("staging", "LocalForward", "8080 localhost:80"));
+        assert!(!config.has_forward("staging", "LocalForward", "8080 localhost:80"));
+        // Other forward should remain
+        assert!(config.has_forward("staging", "LocalForward", "9090 localhost:90"));
+    }
+
+    #[test]
+    fn edit_tunnel_detects_duplicate_after_remove() {
+        // Simulates edit flow: remove old, then check if new value already exists
+        let mut config = parse_str(
+            "Host myserver\n  LocalForward 8080 localhost:80\n  LocalForward 9090 localhost:90\n",
+        );
+        // Edit rule A (8080) toward rule B (9090): remove A first
+        assert!(config.remove_forward("myserver", "LocalForward", "8080 localhost:80"));
+        // Now check if the target value already exists — should detect duplicate
+        assert!(config.has_forward("myserver", "LocalForward", "9090 localhost:90"));
+    }
+
+    #[test]
+    fn has_forward_tab_whitespace_normalized() {
+        let config = parse_str(
+            "Host myserver\n  LocalForward 8080\tlocalhost:80\n",
+        );
+        // Tab in config value vs space in query — should match via values_match
+        assert!(config.has_forward("myserver", "LocalForward", "8080 localhost:80"));
+    }
+
+    #[test]
+    fn remove_forward_tab_whitespace_normalized() {
+        let mut config = parse_str(
+            "Host myserver\n  LocalForward 8080\tlocalhost:80\n",
+        );
+        // Remove with single space should match tab-separated value
+        assert!(config.remove_forward("myserver", "LocalForward", "8080 localhost:80"));
+        assert!(!config.has_forward("myserver", "LocalForward", "8080 localhost:80"));
+    }
+
+    #[test]
+    fn upsert_preserves_space_separator_when_value_contains_equals() {
+        let mut config = parse_str(
+            "Host myserver\n  IdentityFile ~/.ssh/id=prod\n",
+        );
+        let entry = HostEntry {
+            alias: "myserver".to_string(),
+            hostname: "10.0.0.1".to_string(),
+            identity_file: "~/.ssh/id=staging".to_string(),
+            port: 22,
+            ..Default::default()
+        };
+        config.update_host("myserver", &entry);
+        let output = config.serialize();
+        // Separator should remain a space, not pick up the = from the value
+        assert!(output.contains("  IdentityFile ~/.ssh/id=staging"), "got: {}", output);
+        assert!(!output.contains("IdentityFile="), "got: {}", output);
+    }
+
+    #[test]
+    fn upsert_preserves_equals_separator() {
+        let mut config = parse_str(
+            "Host myserver\n  IdentityFile=~/.ssh/id_rsa\n",
+        );
+        let entry = HostEntry {
+            alias: "myserver".to_string(),
+            hostname: "10.0.0.1".to_string(),
+            identity_file: "~/.ssh/id_ed25519".to_string(),
+            port: 22,
+            ..Default::default()
+        };
+        config.update_host("myserver", &entry);
+        let output = config.serialize();
+        assert!(output.contains("IdentityFile=~/.ssh/id_ed25519"), "got: {}", output);
+    }
+
+    #[test]
+    fn upsert_preserves_spaced_equals_separator() {
+        let mut config = parse_str(
+            "Host myserver\n  IdentityFile = ~/.ssh/id_rsa\n",
+        );
+        let entry = HostEntry {
+            alias: "myserver".to_string(),
+            hostname: "10.0.0.1".to_string(),
+            identity_file: "~/.ssh/id_ed25519".to_string(),
+            port: 22,
+            ..Default::default()
+        };
+        config.update_host("myserver", &entry);
+        let output = config.serialize();
+        assert!(output.contains("IdentityFile = ~/.ssh/id_ed25519"), "got: {}", output);
+    }
+
+    #[test]
+    fn is_included_host_false_for_main_config() {
+        let config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n",
+        );
+        assert!(!config.is_included_host("myserver"));
+    }
+
+    #[test]
+    fn is_included_host_false_for_nonexistent() {
+        let config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n",
+        );
+        assert!(!config.is_included_host("nohost"));
+    }
+
+    #[test]
+    fn is_included_host_multi_pattern_main_config() {
+        let config = parse_str(
+            "Host prod staging\n  HostName 10.0.0.1\n",
+        );
+        assert!(!config.is_included_host("prod"));
+        assert!(!config.is_included_host("staging"));
     }
 }

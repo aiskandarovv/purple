@@ -34,6 +34,8 @@
 
 🔑 **SSH key management.** Browse keys with metadata and linked hosts
 
+🔀 **Tunnels.** Add, edit and manage LocalForward, RemoteForward and DynamicForward per host. Start and stop background tunnels from the TUI.
+
 📋 **Clipboard.** Copy the SSH command or full config block
 
 ## Cloud provider sync
@@ -106,6 +108,9 @@ purple import --known-hosts         # Import from known_hosts
 purple provider add digitalocean    # Configure cloud provider
 purple sync                         # Sync all providers
 purple sync --dry-run               # Preview sync changes
+purple tunnel list                  # List configured tunnels
+purple tunnel add myserver L:8080:localhost:80  # Add forward
+purple tunnel start myserver        # Start tunnel (Ctrl+C to stop)
 purple --completions zsh            # Shell completions
 ```
 
@@ -130,19 +135,33 @@ purple --completions zsh            # Shell completions
 | `#`         | Filter by tag                    |
 | `t`         | Tag host                         |
 | `s`         | Cycle sort mode                  |
+| `g`         | Group by provider                |
 | `i`         | Inspect host details             |
 | `u`         | Undo last delete                 |
 | `p`         | Ping selected host               |
 | `P`         | Ping all hosts                   |
 | `S`         | Cloud provider sync              |
+| `T`         | Manage host tunnels              |
 | `K`         | SSH key list                     |
 | `?`         | Help                             |
 | `q` / `Esc` | Quit                             |
+
+**Tunnel List**
+
+| Key         | Action                 |
+| ----------- | ---------------------- |
+| `j` / `k`   | Navigate up and down   |
+| `Enter`     | Start / stop tunnel    |
+| `a`         | Add tunnel             |
+| `e`         | Edit tunnel            |
+| `d`         | Delete tunnel          |
+| `q` / `Esc` | Back                   |
 
 **Provider List**
 
 | Key         | Action                 |
 | ----------- | ---------------------- |
+| `j` / `k`   | Navigate up and down   |
 | `Enter`     | Configure provider     |
 | `s`         | Sync selected provider |
 | `d`         | Remove provider        |
@@ -172,7 +191,7 @@ purple --completions zsh            # Shell completions
 
 **It edits your real SSH config.** Most SSH config tools only read. purple reads, edits and writes `~/.ssh/config` directly.
 
-**It doesn't break anything.** Comments, indentation, unknown directives. All preserved through every edit. Tested with 405 tests including round-trip integration.
+**It doesn't break anything.** Comments, indentation, unknown directives. All preserved through every edit. Tested with 678 tests including round-trip integration.
 
 **It syncs your cloud servers.** purple is the only SSH config manager we know of that pulls hosts from DigitalOcean, Vultr, Linode, Hetzner and UpCloud directly into your config. Configure once, sync anytime.
 
@@ -199,7 +218,7 @@ The name `purple` was taken on crates.io. The binary is still called `purple`.
 
 ## Built with
 
-Rust. 405 tests. Zero clippy warnings. No async runtime. Single binary.
+Rust. 678 tests. Zero clippy warnings. No async runtime. Single binary.
 
 <p align="center">
   💜 <a href="LICENSE">MIT License</a>

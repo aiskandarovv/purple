@@ -49,14 +49,16 @@ pub fn parse_target(target: &str) -> Result<ParsedTarget, String> {
         let host_part = &rest[..colon_pos];
         // Only treat as host:port if the host part has no colons (not bare IPv6)
         if !host_part.contains(':') {
+            if port_str.is_empty() {
+                return Err("Trailing colon with no port. Try host:22 or just host.".to_string());
+            }
             if let Ok(port) = port_str.parse::<u16>() {
                 if port == 0 {
                     return Err("Port 0? Bold choice, but no. Try 1-65535.".to_string());
                 }
                 (host_part.to_string(), port)
             } else {
-                // Not a number after colon, treat as hostname
-                (rest.to_string(), 22)
+                return Err(format!("'{}' is not a valid port number. Ports are 1-65535.", port_str));
             }
         } else {
             // Multiple colons = bare IPv6 address, no port extraction
@@ -151,6 +153,21 @@ mod tests {
     #[test]
     fn test_port_zero() {
         assert!(parse_target("example.com:0").is_err());
+    }
+
+    #[test]
+    fn test_invalid_port_text() {
+        assert!(parse_target("example.com:abc").is_err());
+    }
+
+    #[test]
+    fn test_trailing_colon() {
+        assert!(parse_target("example.com:").is_err());
+    }
+
+    #[test]
+    fn test_port_overflow() {
+        assert!(parse_target("example.com:99999").is_err());
     }
 
     #[test]

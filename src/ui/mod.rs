@@ -8,6 +8,8 @@ mod key_list;
 mod provider_list;
 mod tag_picker;
 pub mod theme;
+mod tunnel_form;
+mod tunnel_list;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -64,6 +66,15 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         Screen::ProviderForm { provider } => {
             let provider = provider.clone();
             provider_list::render_provider_form(frame, app, &provider);
+        }
+        Screen::TunnelList { alias } => {
+            let alias = alias.clone();
+            tunnel_list::render(frame, app, &alias);
+        }
+        Screen::TunnelForm { alias, .. } => {
+            let alias = alias.clone();
+            tunnel_list::render(frame, app, &alias);
+            tunnel_form::render(frame, app);
         }
     }
 }

@@ -8,6 +8,7 @@ use ratatui::widgets::ListState;
 
 use crate::history::ConnectionHistory;
 use crate::providers::config::ProviderConfig;
+use crate::tunnel::{TunnelRule, TunnelType};
 use crate::ssh_config::model::{ConfigElement, HostEntry, SshConfigFile};
 use crate::ssh_keys::{self, SshKeyInfo};
 
@@ -41,6 +42,8 @@ pub enum Screen {
     TagPicker,
     Providers,
     ProviderForm { provider: String },
+    TunnelList { alias: String },
+    TunnelForm { alias: String, editing: Option<usize> },
 }
 
 /// Which form field is focused.
@@ -177,6 +180,12 @@ impl HostForm {
         if self.hostname.trim().is_empty() {
             return Err("Hostname can't be empty. Where should we connect to?".to_string());
         }
+        if self.hostname.trim().contains(char::is_whitespace) {
+            return Err("Hostname can't contain whitespace.".to_string());
+        }
+        if self.user.trim().contains(char::is_whitespace) {
+            return Err("User can't contain whitespace.".to_string());
+        }
         let port: u16 = self
             .port
             .parse()
@@ -196,9 +205,8 @@ impl HostForm {
             port: self.port.parse().unwrap_or(22),
             identity_file: self.identity_file.trim().to_string(),
             proxy_jump: self.proxy_jump.trim().to_string(),
-            source_file: None,
             tags: self.tags.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect(),
-            provider: None,
+            ..Default::default()
         }
     }
 }
@@ -267,6 +275,154 @@ impl ProviderFormFields {
             ProviderFormField::AliasPrefix => &mut self.alias_prefix,
             ProviderFormField::User => &mut self.user,
             ProviderFormField::IdentityFile => &mut self.identity_file,
+        }
+    }
+}
+
+/// Which tunnel form field is focused.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TunnelFormField {
+    Type,
+    BindPort,
+    RemoteHost,
+    RemotePort,
+}
+
+impl TunnelFormField {
+    /// Next field, skipping remote fields when Dynamic.
+    pub fn next(self, tunnel_type: TunnelType) -> Self {
+        match (self, tunnel_type) {
+            (TunnelFormField::Type, _) => TunnelFormField::BindPort,
+            (TunnelFormField::BindPort, TunnelType::Dynamic) => TunnelFormField::Type,
+            (TunnelFormField::BindPort, _) => TunnelFormField::RemoteHost,
+            (TunnelFormField::RemoteHost, _) => TunnelFormField::RemotePort,
+            (TunnelFormField::RemotePort, _) => TunnelFormField::Type,
+        }
+    }
+
+    /// Previous field, skipping remote fields when Dynamic.
+    pub fn prev(self, tunnel_type: TunnelType) -> Self {
+        match (self, tunnel_type) {
+            (TunnelFormField::Type, TunnelType::Dynamic) => TunnelFormField::BindPort,
+            (TunnelFormField::Type, _) => TunnelFormField::RemotePort,
+            (TunnelFormField::BindPort, _) => TunnelFormField::Type,
+            (TunnelFormField::RemoteHost, _) => TunnelFormField::BindPort,
+            (TunnelFormField::RemotePort, _) => TunnelFormField::RemoteHost,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            TunnelFormField::Type => "Type",
+            TunnelFormField::BindPort => "Bind Port",
+            TunnelFormField::RemoteHost => "Remote Host",
+            TunnelFormField::RemotePort => "Remote Port",
+        }
+    }
+}
+
+/// Form state for adding/editing a tunnel.
+#[derive(Debug, Clone)]
+pub struct TunnelForm {
+    pub tunnel_type: TunnelType,
+    pub bind_port: String,
+    pub remote_host: String,
+    pub remote_port: String,
+    /// Hidden field: preserved during edit, not exposed in the form UI.
+    pub bind_address: String,
+    pub focused_field: TunnelFormField,
+}
+
+impl TunnelForm {
+    pub fn new() -> Self {
+        Self {
+            tunnel_type: TunnelType::Local,
+            bind_port: String::new(),
+            remote_host: "localhost".to_string(),
+            remote_port: String::new(),
+            bind_address: String::new(),
+            focused_field: TunnelFormField::Type,
+        }
+    }
+
+    pub fn from_rule(rule: &TunnelRule) -> Self {
+        Self {
+            tunnel_type: rule.tunnel_type,
+            bind_port: rule.bind_port.to_string(),
+            remote_host: rule.remote_host.clone(),
+            remote_port: if rule.remote_port > 0 {
+                rule.remote_port.to_string()
+            } else {
+                String::new()
+            },
+            bind_address: rule.bind_address.clone(),
+            focused_field: TunnelFormField::Type,
+        }
+    }
+
+    /// Validate the form. Returns error message if invalid.
+    pub fn validate(&self) -> Result<(), String> {
+        // Reject control characters in all fields
+        let fields = [
+            (&self.bind_port, "Bind Port"),
+            (&self.remote_host, "Remote Host"),
+            (&self.remote_port, "Remote Port"),
+        ];
+        for (value, name) in &fields {
+            if value.chars().any(|c| c.is_control()) {
+                return Err(format!("{} contains control characters.", name));
+            }
+        }
+        let port: u16 = self
+            .bind_port
+            .parse()
+            .map_err(|_| "Bind port must be 1-65535.".to_string())?;
+        if port == 0 {
+            return Err("Bind port can't be 0.".to_string());
+        }
+        if self.tunnel_type != TunnelType::Dynamic {
+            let host = self.remote_host.trim();
+            if host.is_empty() {
+                return Err("Remote host can't be empty.".to_string());
+            }
+            if host.contains(char::is_whitespace) {
+                return Err("Remote host can't contain spaces.".to_string());
+            }
+            let rport: u16 = self
+                .remote_port
+                .parse()
+                .map_err(|_| "Remote port must be 1-65535.".to_string())?;
+            if rport == 0 {
+                return Err("Remote port can't be 0.".to_string());
+            }
+        }
+        Ok(())
+    }
+
+    /// Convert to directive key and value for writing to SSH config.
+    /// Uses TunnelRule for correct IPv6 bracketing and bind_address preservation.
+    pub fn to_directive(&self) -> (&'static str, String) {
+        let key = self.tunnel_type.directive_key();
+        let bind_port: u16 = self.bind_port.parse().unwrap_or(0);
+        let remote_port: u16 = self.remote_port.parse().unwrap_or(0);
+        let rule = TunnelRule {
+            tunnel_type: self.tunnel_type,
+            bind_address: self.bind_address.clone(),
+            bind_port,
+            remote_host: self.remote_host.clone(),
+            remote_port,
+        };
+        (key, rule.to_directive_value())
+    }
+
+    /// Get mutable reference to the focused text field's value.
+    /// Returns None for Type field (uses Left/Right, not text input).
+    pub fn focused_value_mut(&mut self) -> Option<&mut String> {
+        match self.focused_field {
+            TunnelFormField::Type => None,
+            TunnelFormField::BindPort => Some(&mut self.bind_port),
+            TunnelFormField::RemoteHost => Some(&mut self.remote_host),
+            TunnelFormField::RemotePort => Some(&mut self.remote_port),
         }
     }
 }
@@ -363,6 +519,7 @@ pub struct UiSelection {
     pub key_picker_state: ListState,
     pub tag_picker_state: ListState,
     pub provider_list_state: ListState,
+    pub tunnel_list_state: ListState,
 }
 
 /// Search mode state.
@@ -386,6 +543,16 @@ pub struct ConflictState {
     pub form_include_mtimes: Vec<(PathBuf, Option<SystemTime>)>,
     pub form_include_dir_mtimes: Vec<(PathBuf, Option<SystemTime>)>,
     pub provider_form_mtime: Option<SystemTime>,
+}
+
+/// Kill active tunnel processes when App is dropped (e.g. on panic).
+impl Drop for App {
+    fn drop(&mut self) {
+        for (_, mut tunnel) in self.active_tunnels.drain() {
+            let _ = tunnel.child.kill();
+            let _ = tunnel.child.wait();
+        }
+    }
 }
 
 /// Main application state.
@@ -429,6 +596,11 @@ pub struct App {
     // Hints
     pub ping_status: HashMap<String, PingStatus>,
     pub has_pinged: bool,
+
+    // Tunnels
+    pub tunnel_list: Vec<TunnelRule>,
+    pub tunnel_form: TunnelForm,
+    pub active_tunnels: HashMap<String, crate::tunnel::ActiveTunnel>,
 }
 
 impl App {
@@ -465,6 +637,7 @@ impl App {
                 key_picker_state: ListState::default(),
                 tag_picker_state: ListState::default(),
                 provider_list_state: ListState::default(),
+                tunnel_list_state: ListState::default(),
             },
             search: SearchState {
                 query: None,
@@ -495,6 +668,9 @@ impl App {
             syncing_providers: HashMap::new(),
             ping_status: HashMap::new(),
             has_pinged: false,
+            tunnel_list: Vec::new(),
+            tunnel_form: TunnelForm::new(),
+            active_tunnels: HashMap::new(),
         }
     }
 
@@ -1005,6 +1181,8 @@ impl App {
         if matches!(
             self.screen,
             Screen::AddHost | Screen::EditHost { .. } | Screen::ProviderForm { .. }
+                | Screen::TunnelList { .. } | Screen::TunnelForm { .. }
+                | Screen::HostDetail { .. }
         ) || self.tag_input.is_some()
         {
             return;
@@ -1185,6 +1363,72 @@ impl App {
         cycle_selection(&mut self.ui.tag_picker_state, self.tag_list.len(), true);
     }
 
+    /// Load tunnel directives for a host alias.
+    /// Uses find_tunnel_directives for Include-aware, multi-pattern host lookup.
+    pub fn refresh_tunnel_list(&mut self, alias: &str) {
+        self.tunnel_list = self.config.find_tunnel_directives(alias);
+    }
+
+    /// Move tunnel list selection up.
+    pub fn select_prev_tunnel(&mut self) {
+        cycle_selection(&mut self.ui.tunnel_list_state, self.tunnel_list.len(), false);
+    }
+
+    /// Move tunnel list selection down.
+    pub fn select_next_tunnel(&mut self) {
+        cycle_selection(&mut self.ui.tunnel_list_state, self.tunnel_list.len(), true);
+    }
+
+    /// Poll active tunnels for exit status. Returns messages for any that exited.
+    /// Poll active tunnels for exit. Returns (alias, message, is_error) tuples.
+    pub fn poll_tunnels(&mut self) -> Vec<(String, String, bool)> {
+        if self.active_tunnels.is_empty() {
+            return Vec::new();
+        }
+        let mut exited = Vec::new();
+        let mut to_remove = Vec::new();
+        for (alias, tunnel) in &mut self.active_tunnels {
+            match tunnel.child.try_wait() {
+                Ok(Some(status)) => {
+                    // Read up to 1KB of stderr for error details
+                    let stderr_msg = tunnel.child.stderr.take().and_then(|mut stderr| {
+                        use std::io::Read;
+                        let mut buf = vec![0u8; 1024];
+                        match stderr.read(&mut buf) {
+                            Ok(n) if n > 0 => {
+                                let s = String::from_utf8_lossy(&buf[..n]);
+                                let trimmed = s.trim();
+                                if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+                            }
+                            _ => None,
+                        }
+                    });
+                    let (msg, is_error) = if status.success() {
+                        (format!("Tunnel for {} closed.", alias), false)
+                    } else if let Some(err) = stderr_msg {
+                        (format!("Tunnel for {}: {}", alias, err), true)
+                    } else {
+                        (format!("Tunnel for {} exited with code {}.", alias, status.code().unwrap_or(-1)), true)
+                    };
+                    exited.push((alias.clone(), msg, is_error));
+                    to_remove.push(alias.clone());
+                }
+                Ok(None) => {} // Still running
+                Err(e) => {
+                    exited.push((alias.clone(), format!("Tunnel for {} lost: {}", alias, e), true));
+                    to_remove.push(alias.clone());
+                }
+            }
+        }
+        for alias in to_remove {
+            if let Some(mut tunnel) = self.active_tunnels.remove(&alias) {
+                let _ = tunnel.child.kill();
+                let _ = tunnel.child.wait();
+            }
+        }
+        exited
+    }
+
     /// Add a new host from the current form. Returns status message.
     pub fn add_host_from_form(&mut self) -> Result<String, String> {
         let entry = self.form.to_entry();
@@ -1236,6 +1480,12 @@ impl App {
             self.config.set_host_tags(&old_entry.alias, &old_entry.tags);
             return Err(format!("Failed to save: {}", e));
         }
+        // Migrate active tunnel handle if alias changed
+        if alias != old_alias {
+            if let Some(tunnel) = self.active_tunnels.remove(old_alias) {
+                self.active_tunnels.insert(alias.clone(), tunnel);
+            }
+        }
         self.update_last_modified();
         self.reload_hosts();
         Ok(format!("{} got a makeover.", alias))
@@ -1254,19 +1504,19 @@ impl App {
     }
 
     /// Apply sync results from a background provider fetch.
-    /// Returns status message. Caller must remove from syncing_providers.
+    /// Returns (message, is_error). Caller must remove from syncing_providers.
     pub fn apply_sync_result(
         &mut self,
         provider: &str,
         hosts: Vec<crate::providers::ProviderHost>,
-    ) -> String {
+    ) -> (String, bool) {
         let section = match self.provider_config.section(provider).cloned() {
             Some(s) => s,
-            None => return format!("! {} sync skipped: no config.", provider),
+            None => return (format!("{} sync skipped: no config.", provider), true),
         };
         let provider_impl = match crate::providers::get_provider(provider) {
             Some(p) => p,
-            None => return format!("! Unknown provider: {}.", provider),
+            None => return (format!("Unknown provider: {}.", provider), true),
         };
         let config_backup = self.config.clone();
         let result = crate::providers::sync::sync_provider(
@@ -1280,16 +1530,23 @@ impl App {
         if result.added > 0 || result.updated > 0 {
             if let Err(e) = self.config.write() {
                 self.config = config_backup;
-                return format!("Sync failed to save: {}", e);
+                return (format!("Sync failed to save: {}", e), true);
             }
+            self.deleted_host = None;
             self.update_last_modified();
             self.reload_hosts();
+            // Migrate active tunnel handles for renamed aliases
+            for (old_alias, new_alias) in &result.renames {
+                if let Some(tunnel) = self.active_tunnels.remove(old_alias) {
+                    self.active_tunnels.insert(new_alias.clone(), tunnel);
+                }
+            }
         }
         let name = crate::providers::provider_display_name(provider);
-        format!(
+        (format!(
             "Synced {}: added {}, updated {}, unchanged {}.",
             name, result.added, result.updated, result.unchanged
-        )
+        ), false)
     }
 }
 
@@ -1647,5 +1904,399 @@ Host vultr-app
         ] {
             assert_eq!(SortMode::from_key(mode.to_key()), mode);
         }
+    }
+
+    // --- TunnelForm tests ---
+
+    #[test]
+    fn tunnel_form_from_rule_local() {
+        use crate::tunnel::{TunnelRule, TunnelType};
+        let rule = TunnelRule {
+            tunnel_type: TunnelType::Local,
+            bind_address: String::new(),
+            bind_port: 8080,
+            remote_host: "localhost".to_string(),
+            remote_port: 80,
+        };
+        let form = TunnelForm::from_rule(&rule);
+        assert_eq!(form.tunnel_type, TunnelType::Local);
+        assert_eq!(form.bind_port, "8080");
+        assert_eq!(form.remote_host, "localhost");
+        assert_eq!(form.remote_port, "80");
+    }
+
+    #[test]
+    fn tunnel_form_from_rule_dynamic() {
+        use crate::tunnel::{TunnelRule, TunnelType};
+        let rule = TunnelRule {
+            tunnel_type: TunnelType::Dynamic,
+            bind_address: String::new(),
+            bind_port: 1080,
+            remote_host: String::new(),
+            remote_port: 0,
+        };
+        let form = TunnelForm::from_rule(&rule);
+        assert_eq!(form.tunnel_type, TunnelType::Dynamic);
+        assert_eq!(form.bind_port, "1080");
+        assert_eq!(form.remote_host, "");
+        assert_eq!(form.remote_port, "");
+    }
+
+    #[test]
+    fn tunnel_form_to_directive_local() {
+        use crate::tunnel::TunnelType;
+        let form = TunnelForm {
+            tunnel_type: TunnelType::Local,
+            bind_port: "8080".to_string(),
+            bind_address: String::new(),
+            remote_host: "localhost".to_string(),
+            remote_port: "80".to_string(),
+            focused_field: TunnelFormField::Type,
+        };
+        let (key, value) = form.to_directive();
+        assert_eq!(key, "LocalForward");
+        assert_eq!(value, "8080 localhost:80");
+    }
+
+    #[test]
+    fn tunnel_form_to_directive_remote() {
+        use crate::tunnel::TunnelType;
+        let form = TunnelForm {
+            tunnel_type: TunnelType::Remote,
+            bind_port: "9090".to_string(),
+            bind_address: String::new(),
+            remote_host: "localhost".to_string(),
+            remote_port: "3000".to_string(),
+            focused_field: TunnelFormField::Type,
+        };
+        let (key, value) = form.to_directive();
+        assert_eq!(key, "RemoteForward");
+        assert_eq!(value, "9090 localhost:3000");
+    }
+
+    #[test]
+    fn tunnel_form_to_directive_dynamic() {
+        use crate::tunnel::TunnelType;
+        let form = TunnelForm {
+            tunnel_type: TunnelType::Dynamic,
+            bind_port: "1080".to_string(),
+            bind_address: String::new(),
+            remote_host: String::new(),
+            remote_port: String::new(),
+            focused_field: TunnelFormField::Type,
+        };
+        let (key, value) = form.to_directive();
+        assert_eq!(key, "DynamicForward");
+        assert_eq!(value, "1080");
+    }
+
+    #[test]
+    fn tunnel_form_validate_valid() {
+        use crate::tunnel::TunnelType;
+        let form = TunnelForm {
+            tunnel_type: TunnelType::Local,
+            bind_port: "8080".to_string(),
+            bind_address: String::new(),
+            remote_host: "localhost".to_string(),
+            remote_port: "80".to_string(),
+            focused_field: TunnelFormField::Type,
+        };
+        assert!(form.validate().is_ok());
+    }
+
+    #[test]
+    fn tunnel_form_validate_bad_bind_port() {
+        use crate::tunnel::TunnelType;
+        let form = TunnelForm {
+            tunnel_type: TunnelType::Local,
+            bind_port: "abc".to_string(),
+            bind_address: String::new(),
+            remote_host: "localhost".to_string(),
+            remote_port: "80".to_string(),
+            focused_field: TunnelFormField::Type,
+        };
+        assert!(form.validate().is_err());
+    }
+
+    #[test]
+    fn tunnel_form_validate_zero_bind_port() {
+        use crate::tunnel::TunnelType;
+        let form = TunnelForm {
+            tunnel_type: TunnelType::Local,
+            bind_port: "0".to_string(),
+            bind_address: String::new(),
+            remote_host: "localhost".to_string(),
+            remote_port: "80".to_string(),
+            focused_field: TunnelFormField::Type,
+        };
+        assert!(form.validate().is_err());
+    }
+
+    #[test]
+    fn tunnel_form_validate_empty_remote_host() {
+        use crate::tunnel::TunnelType;
+        let form = TunnelForm {
+            tunnel_type: TunnelType::Local,
+            bind_port: "8080".to_string(),
+            bind_address: String::new(),
+            remote_host: "  ".to_string(),
+            remote_port: "80".to_string(),
+            focused_field: TunnelFormField::Type,
+        };
+        assert!(form.validate().is_err());
+    }
+
+    #[test]
+    fn tunnel_form_validate_dynamic_skips_remote() {
+        use crate::tunnel::TunnelType;
+        let form = TunnelForm {
+            tunnel_type: TunnelType::Dynamic,
+            bind_port: "1080".to_string(),
+            bind_address: String::new(),
+            remote_host: String::new(),
+            remote_port: String::new(),
+            focused_field: TunnelFormField::Type,
+        };
+        assert!(form.validate().is_ok());
+    }
+
+    #[test]
+    fn tunnel_form_field_next_local() {
+        use crate::tunnel::TunnelType;
+        assert_eq!(TunnelFormField::Type.next(TunnelType::Local), TunnelFormField::BindPort);
+        assert_eq!(TunnelFormField::BindPort.next(TunnelType::Local), TunnelFormField::RemoteHost);
+        assert_eq!(TunnelFormField::RemoteHost.next(TunnelType::Local), TunnelFormField::RemotePort);
+        assert_eq!(TunnelFormField::RemotePort.next(TunnelType::Local), TunnelFormField::Type);
+    }
+
+    #[test]
+    fn tunnel_form_field_next_dynamic_skips_remote() {
+        use crate::tunnel::TunnelType;
+        assert_eq!(TunnelFormField::Type.next(TunnelType::Dynamic), TunnelFormField::BindPort);
+        assert_eq!(TunnelFormField::BindPort.next(TunnelType::Dynamic), TunnelFormField::Type);
+    }
+
+    #[test]
+    fn tunnel_form_field_prev_local() {
+        use crate::tunnel::TunnelType;
+        assert_eq!(TunnelFormField::Type.prev(TunnelType::Local), TunnelFormField::RemotePort);
+        assert_eq!(TunnelFormField::BindPort.prev(TunnelType::Local), TunnelFormField::Type);
+        assert_eq!(TunnelFormField::RemoteHost.prev(TunnelType::Local), TunnelFormField::BindPort);
+        assert_eq!(TunnelFormField::RemotePort.prev(TunnelType::Local), TunnelFormField::RemoteHost);
+    }
+
+    #[test]
+    fn tunnel_form_field_prev_dynamic_skips_remote() {
+        use crate::tunnel::TunnelType;
+        assert_eq!(TunnelFormField::Type.prev(TunnelType::Dynamic), TunnelFormField::BindPort);
+        assert_eq!(TunnelFormField::BindPort.prev(TunnelType::Dynamic), TunnelFormField::Type);
+    }
+
+    #[test]
+    fn tunnel_form_validate_bad_remote_port() {
+        use crate::tunnel::TunnelType;
+        let form = TunnelForm {
+            tunnel_type: TunnelType::Local,
+            bind_port: "8080".to_string(),
+            bind_address: String::new(),
+            remote_host: "localhost".to_string(),
+            remote_port: "abc".to_string(),
+            focused_field: TunnelFormField::Type,
+        };
+        assert!(form.validate().is_err());
+    }
+
+    #[test]
+    fn tunnel_form_from_rule_with_bind_address() {
+        use crate::tunnel::{TunnelRule, TunnelType};
+        let rule = TunnelRule {
+            tunnel_type: TunnelType::Local,
+            bind_address: "192.168.1.1".to_string(),
+            bind_port: 8080,
+            remote_host: "localhost".to_string(),
+            remote_port: 80,
+        };
+        let form = TunnelForm::from_rule(&rule);
+        assert_eq!(form.bind_address, "192.168.1.1");
+        assert_eq!(form.bind_port, "8080");
+        let (key, value) = form.to_directive();
+        assert_eq!(key, "LocalForward");
+        assert_eq!(value, "192.168.1.1:8080 localhost:80");
+    }
+
+    #[test]
+    fn tunnel_form_validate_empty_bind_port() {
+        use crate::tunnel::TunnelType;
+        let form = TunnelForm {
+            tunnel_type: TunnelType::Local,
+            bind_port: String::new(),
+            bind_address: String::new(),
+            remote_host: "localhost".to_string(),
+            remote_port: "80".to_string(),
+            focused_field: TunnelFormField::Type,
+        };
+        assert!(form.validate().is_err());
+    }
+
+    #[test]
+    fn tunnel_form_validate_zero_remote_port() {
+        use crate::tunnel::TunnelType;
+        let form = TunnelForm {
+            tunnel_type: TunnelType::Local,
+            bind_port: "8080".to_string(),
+            bind_address: String::new(),
+            remote_host: "localhost".to_string(),
+            remote_port: "0".to_string(),
+            focused_field: TunnelFormField::Type,
+        };
+        let err = form.validate().unwrap_err();
+        assert!(err.contains("Remote port"));
+    }
+
+    #[test]
+    fn tunnel_form_validate_control_chars() {
+        use crate::tunnel::TunnelType;
+        let form = TunnelForm {
+            tunnel_type: TunnelType::Local,
+            bind_port: "8080".to_string(),
+            bind_address: String::new(),
+            remote_host: "local\x00host".to_string(),
+            remote_port: "80".to_string(),
+            focused_field: TunnelFormField::Type,
+        };
+        let err = form.validate().unwrap_err();
+        assert!(err.contains("control characters"));
+    }
+
+    #[test]
+    fn tunnel_form_validate_spaces_in_remote_host() {
+        use crate::tunnel::TunnelType;
+        let form = TunnelForm {
+            tunnel_type: TunnelType::Local,
+            bind_port: "8080".to_string(),
+            bind_address: String::new(),
+            remote_host: "local host".to_string(),
+            remote_port: "80".to_string(),
+            focused_field: TunnelFormField::Type,
+        };
+        let err = form.validate().unwrap_err();
+        assert!(err.contains("spaces"));
+    }
+
+    #[test]
+    fn tunnel_form_from_rule_ipv6_bind_address() {
+        use crate::tunnel::{TunnelRule, TunnelType};
+        let rule = TunnelRule {
+            tunnel_type: TunnelType::Local,
+            bind_address: "::1".to_string(),
+            bind_port: 8080,
+            remote_host: "localhost".to_string(),
+            remote_port: 80,
+        };
+        let form = TunnelForm::from_rule(&rule);
+        assert_eq!(form.bind_address, "::1");
+        let (key, value) = form.to_directive();
+        assert_eq!(key, "LocalForward");
+        assert_eq!(value, "[::1]:8080 localhost:80");
+    }
+
+    // --- HostForm validation tests ---
+
+    #[test]
+    fn validate_hostname_whitespace_rejected() {
+        let form = HostForm {
+            alias: "myserver".to_string(),
+            hostname: "host name".to_string(),
+            port: "22".to_string(),
+            ..HostForm::new()
+        };
+        let err = form.validate().unwrap_err();
+        assert!(err.contains("whitespace"), "got: {}", err);
+    }
+
+    #[test]
+    fn validate_user_whitespace_rejected() {
+        let form = HostForm {
+            alias: "myserver".to_string(),
+            hostname: "10.0.0.1".to_string(),
+            user: "my user".to_string(),
+            port: "22".to_string(),
+            ..HostForm::new()
+        };
+        let err = form.validate().unwrap_err();
+        assert!(err.contains("whitespace"), "got: {}", err);
+    }
+
+    #[test]
+    fn validate_hostname_with_control_chars_rejected() {
+        let form = HostForm {
+            alias: "myserver".to_string(),
+            hostname: "10.0.0.1\n".to_string(),
+            port: "22".to_string(),
+            ..HostForm::new()
+        };
+        let err = form.validate().unwrap_err();
+        assert!(err.contains("control"), "got: {}", err);
+    }
+
+    // --- TunnelForm validation error message tests ---
+
+    #[test]
+    fn tunnel_validate_bind_port_zero_message() {
+        let form = TunnelForm {
+            bind_port: "0".to_string(),
+            ..TunnelForm::new()
+        };
+        let err = form.validate().unwrap_err();
+        assert!(err.contains("0"), "got: {}", err);
+    }
+
+    #[test]
+    fn tunnel_validate_remote_host_empty_message() {
+        let form = TunnelForm {
+            tunnel_type: TunnelType::Local,
+            bind_port: "8080".to_string(),
+            remote_host: "".to_string(),
+            remote_port: "80".to_string(),
+            ..TunnelForm::new()
+        };
+        let err = form.validate().unwrap_err();
+        assert!(err.contains("empty"), "got: {}", err);
+    }
+
+    #[test]
+    fn tunnel_validate_remote_host_whitespace_message() {
+        let form = TunnelForm {
+            tunnel_type: TunnelType::Local,
+            bind_port: "8080".to_string(),
+            remote_host: "host name".to_string(),
+            remote_port: "80".to_string(),
+            ..TunnelForm::new()
+        };
+        let err = form.validate().unwrap_err();
+        assert!(err.contains("spaces"), "got: {}", err);
+    }
+
+    #[test]
+    fn tunnel_validate_bind_port_non_numeric_message() {
+        let form = TunnelForm {
+            bind_port: "abc".to_string(),
+            ..TunnelForm::new()
+        };
+        let err = form.validate().unwrap_err();
+        assert!(err.contains("1-65535"), "got: {}", err);
+    }
+
+    #[test]
+    fn tunnel_validate_remote_port_zero_message() {
+        let form = TunnelForm {
+            tunnel_type: TunnelType::Local,
+            bind_port: "8080".to_string(),
+            remote_host: "localhost".to_string(),
+            remote_port: "0".to_string(),
+            ..TunnelForm::new()
+        };
+        let err = form.validate().unwrap_err();
+        assert!(err.contains("0"), "got: {}", err);
     }
 }

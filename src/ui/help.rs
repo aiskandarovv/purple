@@ -5,7 +5,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use super::theme;
 
 pub fn render(frame: &mut Frame) {
-    let area = super::centered_rect_fixed(50, 26, frame.area());
+    let area = super::centered_rect_fixed(50, 27, frame.area());
 
     // Clear background
     frame.render_widget(Clear, area);
@@ -36,6 +36,7 @@ pub fn render(frame: &mut Frame) {
         Line::from(""),
         Line::from(Span::styled("  Tools", theme::section_header())),
         help_line("  i         ", "Inspect host details"),
+        help_line("  T         ", "Manage host tunnels"),
         help_line("  p / P     ", "Ping host / ping all"),
         help_line("  y / x     ", "Copy command / config block"),
         help_line("  K         ", "SSH key list"),
