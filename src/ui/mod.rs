@@ -111,14 +111,27 @@ pub fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
     .split(vertical[1])[1]
 }
 
-/// Truncate a string to `max_len` characters (char-boundary safe).
-pub(crate) fn truncate(s: &str, max_len: usize) -> String {
-    if s.chars().count() <= max_len {
-        s.to_string()
-    } else {
-        let truncated: String = s.chars().take(max_len.saturating_sub(3)).collect();
-        format!("{}...", truncated)
+/// Truncate a string to fit within `max_cols` display columns (unicode-width-aware).
+pub(crate) fn truncate(s: &str, max_cols: usize) -> String {
+    use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+    if s.width() <= max_cols {
+        return s.to_string();
     }
+    if max_cols <= 1 {
+        return String::new();
+    }
+    let target = max_cols - 1;
+    let mut col = 0;
+    let mut byte_end = 0;
+    for ch in s.chars() {
+        let w = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if col + w > target {
+            break;
+        }
+        col += w;
+        byte_end += ch.len_utf8();
+    }
+    format!("{}…", &s[..byte_end])
 }
 
 /// Create a centered rect with fixed dimensions.

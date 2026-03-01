@@ -14,8 +14,9 @@ pub fn render(frame: &mut Frame, app: &App, index: usize) {
     let linked_count = key.linked_hosts.len();
     let max_visible_hosts = 10;
     let visible_hosts = linked_count.min(max_visible_hosts);
-    // 2 (border) + 1 (blank) + 4 (metadata) + 1 (blank) + 2 (header+sep) + hosts + 1 (blank)
-    let height = (11 + visible_hosts.max(1)) as u16;
+    let overflow_line = if linked_count > max_visible_hosts { 1 } else { 0 };
+    // 2 (border) + 1 (blank) + 4 (metadata) + 1 (blank) + 2 (header+sep) + hosts + overflow + 1 (blank)
+    let height = (11 + visible_hosts.max(1) + overflow_line) as u16;
     let area = super::centered_rect_fixed(58, height, frame.area());
 
     frame.render_widget(Clear, area);

@@ -338,9 +338,10 @@ mod tests {
         fn short_label(&self) -> &str {
             "do"
         }
-        fn fetch_hosts(
+        fn fetch_hosts_cancellable(
             &self,
             _token: &str,
+            _cancel: &std::sync::atomic::AtomicBool,
         ) -> Result<Vec<ProviderHost>, super::super::ProviderError> {
             Ok(Vec::new())
         }

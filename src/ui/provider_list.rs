@@ -2,7 +2,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_width::UnicodeWidthStr;
 
 use super::theme;
 use crate::app::{App, ProviderFormField};
@@ -69,8 +69,8 @@ pub fn render_provider_list(frame: &mut Frame, app: &mut App) {
                 };
                 if let Some((text, style)) = sync_text {
                     let max = content_width.saturating_sub(used_width);
-                    if let Some(truncated) = truncate_to_width(&text, max) {
-                        spans.push(Span::styled(truncated, style));
+                    if max > 1 {
+                        spans.push(Span::styled(super::truncate(&text, max), style));
                     }
                 }
             }
@@ -246,78 +246,54 @@ fn render_provider_field(
     }
 }
 
-/// Truncate text to fit within `max_cols` display columns.
-/// Returns None if no room (max_cols <= 1), the original text if it fits,
-/// or truncated text with ellipsis appended.
-fn truncate_to_width(text: &str, max_cols: usize) -> Option<String> {
-    if max_cols <= 1 {
-        return None;
-    }
-    if text.width() <= max_cols {
-        return Some(text.to_string());
-    }
-    let target = max_cols - 1; // reserve 1 column for ellipsis
-    let mut col = 0;
-    let mut byte_end = 0;
-    for ch in text.chars() {
-        let w = UnicodeWidthChar::width(ch).unwrap_or(0);
-        if col + w > target {
-            break;
-        }
-        col += w;
-        byte_end += ch.len_utf8();
-    }
-    Some(format!("{}…", &text[..byte_end]))
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::super::truncate;
 
     #[test]
     fn truncate_fits() {
-        assert_eq!(truncate_to_width("hello", 10), Some("hello".to_string()));
+        assert_eq!(truncate("hello", 10), "hello");
     }
 
     #[test]
     fn truncate_exact_fit() {
-        assert_eq!(truncate_to_width("hello", 5), Some("hello".to_string()));
+        assert_eq!(truncate("hello", 5), "hello");
     }
 
     #[test]
     fn truncate_ascii() {
-        assert_eq!(truncate_to_width("hello world", 8), Some("hello w…".to_string()));
+        assert_eq!(truncate("hello world", 8), "hello w…");
     }
 
     #[test]
     fn truncate_no_room() {
-        assert_eq!(truncate_to_width("hello", 1), None);
-        assert_eq!(truncate_to_width("hello", 0), None);
+        assert_eq!(truncate("hello", 1), "");
+        assert_eq!(truncate("hello", 0), "");
     }
 
     #[test]
     fn truncate_wide_cjk() {
         // CJK chars are 2 columns wide each. "你好世界" = 8 columns.
         // With max 5: target = 4 columns, fits "你好" (4 cols) + "…"
-        assert_eq!(truncate_to_width("你好世界", 5), Some("你好…".to_string()));
+        assert_eq!(truncate("你好世界", 5), "你好…");
     }
 
     #[test]
     fn truncate_wide_cjk_odd_boundary() {
         // max 4: target = 3 columns, "你" = 2 cols fits, "好" = 2 cols won't
-        assert_eq!(truncate_to_width("你好世界", 4), Some("你…".to_string()));
+        assert_eq!(truncate("你好世界", 4), "你…");
     }
 
     #[test]
     fn truncate_mixed_ascii_cjk() {
         // "ab你好" = 2 + 4 = 6 columns. max 5: target = 4, "ab你" fits (4 cols)
-        assert_eq!(truncate_to_width("ab你好", 5), Some("ab你…".to_string()));
+        assert_eq!(truncate("ab你好", 5), "ab你…");
     }
 
     #[test]
     fn truncate_multibyte_emoji() {
         // "🚀🔥" = 2+2 = 4 columns (each emoji is 2 cols wide).
         // max 3: target = 2, "🚀" fits (2 cols)
-        assert_eq!(truncate_to_width("🚀🔥", 3), Some("🚀…".to_string()));
+        assert_eq!(truncate("🚀🔥", 3), "🚀…");
     }
 }

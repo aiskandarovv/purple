@@ -45,16 +45,15 @@ pub trait Provider {
     fn name(&self) -> &str;
     /// Short label for aliases (e.g. "do").
     fn short_label(&self) -> &str;
-    /// Fetch all servers from the provider API.
-    fn fetch_hosts(&self, token: &str) -> Result<Vec<ProviderHost>, ProviderError>;
-    /// Fetch hosts with cancellation support. Default delegates to fetch_hosts.
+    /// Fetch hosts with cancellation support.
     fn fetch_hosts_cancellable(
         &self,
         token: &str,
         cancel: &AtomicBool,
-    ) -> Result<Vec<ProviderHost>, ProviderError> {
-        let _ = cancel;
-        self.fetch_hosts(token)
+    ) -> Result<Vec<ProviderHost>, ProviderError>;
+    /// Fetch all servers from the provider API.
+    fn fetch_hosts(&self, token: &str) -> Result<Vec<ProviderHost>, ProviderError> {
+        self.fetch_hosts_cancellable(token, &AtomicBool::new(false))
     }
 }
 
@@ -89,6 +88,7 @@ pub fn provider_display_name(name: &str) -> &str {
 pub(crate) fn http_agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
         .timeout(std::time::Duration::from_secs(30))
+        .redirects(0)
         .build()
 }
 

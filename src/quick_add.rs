@@ -72,6 +72,13 @@ pub fn parse_target(target: &str) -> Result<ParsedTarget, String> {
         return Err("Hostname can't be empty.".to_string());
     }
 
+    if hostname.chars().any(|c| c.is_control() || c == ' ') {
+        return Err("Hostname contains invalid characters.".to_string());
+    }
+    if !user.is_empty() && user.chars().any(|c| c.is_control() || c == ' ') {
+        return Err("User contains invalid characters.".to_string());
+    }
+
     Ok(ParsedTarget {
         user,
         hostname,
@@ -223,5 +230,26 @@ mod tests {
     #[test]
     fn test_looks_like_target_bracketed_ipv6() {
         assert!(looks_like_target("[::1]:22"));
+    }
+
+    #[test]
+    fn test_hostname_with_space() {
+        assert!(parse_target("bad host").is_err());
+    }
+
+    #[test]
+    fn test_hostname_with_control_char() {
+        assert!(parse_target("bad\x00host").is_err());
+        assert!(parse_target("bad\nhost").is_err());
+    }
+
+    #[test]
+    fn test_user_with_space() {
+        assert!(parse_target("bad user@host").is_err());
+    }
+
+    #[test]
+    fn test_user_with_control_char() {
+        assert!(parse_target("bad\x01user@host").is_err());
     }
 }

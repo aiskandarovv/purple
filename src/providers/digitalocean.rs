@@ -49,67 +49,6 @@ impl Provider for DigitalOcean {
         "do"
     }
 
-    fn fetch_hosts(&self, token: &str) -> Result<Vec<ProviderHost>, ProviderError> {
-        let mut all_hosts = Vec::new();
-        let mut page = 1u64;
-        let per_page = 200;
-        let agent = super::http_agent();
-
-        loop {
-            let url = format!(
-                "https://api.digitalocean.com/v2/droplets?page={}&per_page={}",
-                page, per_page
-            );
-            let resp: DropletResponse = agent
-                .get(&url)
-                .set("Authorization", &format!("Bearer {}", token))
-                .call()
-                .map_err(map_ureq_error)?
-                .into_json()
-                .map_err(|e| ProviderError::Parse(e.to_string()))?;
-
-            if resp.droplets.is_empty() {
-                break;
-            }
-
-            for droplet in &resp.droplets {
-                // Prefer public IPv4, fall back to public IPv6
-                let ip = droplet
-                    .networks
-                    .v4
-                    .iter()
-                    .find(|n| n.net_type == "public")
-                    .or_else(|| {
-                        droplet
-                            .networks
-                            .v6
-                            .iter()
-                            .find(|n| n.net_type == "public")
-                    })
-                    .map(|n| n.ip_address.clone());
-                if let Some(ip) = ip {
-                    all_hosts.push(ProviderHost {
-                        server_id: droplet.id.to_string(),
-                        name: droplet.name.clone(),
-                        ip,
-                        tags: droplet.tags.clone(),
-                    });
-                }
-            }
-
-            let fetched = page * per_page;
-            if fetched >= resp.meta.total {
-                break;
-            }
-            page += 1;
-            if page > 500 {
-                break;
-            }
-        }
-
-        Ok(all_hosts)
-    }
-
     fn fetch_hosts_cancellable(
         &self,
         token: &str,

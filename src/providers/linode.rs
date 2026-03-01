@@ -53,67 +53,6 @@ impl Provider for Linode {
         "linode"
     }
 
-    fn fetch_hosts(&self, token: &str) -> Result<Vec<ProviderHost>, ProviderError> {
-        let mut all_hosts = Vec::new();
-        let mut page = 1u64;
-        let agent = super::http_agent();
-
-        loop {
-            let url = format!(
-                "https://api.linode.com/v4/linode/instances?page={}&page_size=500",
-                page
-            );
-            let resp: LinodeResponse = agent
-                .get(&url)
-                .set("Authorization", &format!("Bearer {}", token))
-                .call()
-                .map_err(map_ureq_error)?
-                .into_json()
-                .map_err(|e| ProviderError::Parse(e.to_string()))?;
-
-            if resp.data.is_empty() {
-                break;
-            }
-
-            for instance in &resp.data {
-                // Prefer public IPv4; fall back to private IPv4, then IPv6
-                let ip = instance
-                    .ipv4
-                    .iter()
-                    .find(|ip| !is_private_ip(ip))
-                    .or_else(|| instance.ipv4.first())
-                    .cloned()
-                    .or_else(|| {
-                        instance
-                            .ipv6
-                            .as_ref()
-                            .filter(|v| !v.is_empty())
-                            .map(|v| super::strip_cidr(v).to_string())
-                    });
-                if let Some(ip) = ip {
-                    if !ip.is_empty() {
-                        all_hosts.push(ProviderHost {
-                            server_id: instance.id.to_string(),
-                            name: instance.label.clone(),
-                            ip,
-                            tags: instance.tags.clone(),
-                        });
-                    }
-                }
-            }
-
-            if resp.page >= resp.pages {
-                break;
-            }
-            page += 1;
-            if page > 500 {
-                break;
-            }
-        }
-
-        Ok(all_hosts)
-    }
-
     fn fetch_hosts_cancellable(
         &self,
         token: &str,

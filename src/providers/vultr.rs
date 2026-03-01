@@ -43,62 +43,6 @@ impl Provider for Vultr {
         "vultr"
     }
 
-    fn fetch_hosts(&self, token: &str) -> Result<Vec<ProviderHost>, ProviderError> {
-        let mut all_hosts = Vec::new();
-        let mut cursor: Option<String> = None;
-        let agent = super::http_agent();
-        let mut pages = 0u64;
-
-        loop {
-            let url = match &cursor {
-                None => "https://api.vultr.com/v2/instances?per_page=500".to_string(),
-                Some(c) => format!(
-                    "https://api.vultr.com/v2/instances?per_page=500&cursor={}",
-                    c
-                ),
-            };
-            let resp: InstanceResponse = agent
-                .get(&url)
-                .set("Authorization", &format!("Bearer {}", token))
-                .call()
-                .map_err(map_ureq_error)?
-                .into_json()
-                .map_err(|e| ProviderError::Parse(e.to_string()))?;
-
-            if resp.instances.is_empty() {
-                break;
-            }
-
-            for instance in &resp.instances {
-                // Prefer public IPv4, fall back to public IPv6
-                let ip = if !instance.main_ip.is_empty() && instance.main_ip != "0.0.0.0" {
-                    instance.main_ip.clone()
-                } else if !instance.v6_main_ip.is_empty() && instance.v6_main_ip != "::" {
-                    instance.v6_main_ip.clone()
-                } else {
-                    continue;
-                };
-                all_hosts.push(ProviderHost {
-                    server_id: instance.id.clone(),
-                    name: instance.label.clone(),
-                    ip,
-                    tags: instance.tags.clone(),
-                });
-            }
-
-            if resp.meta.links.next.is_empty() {
-                break;
-            }
-            cursor = Some(resp.meta.links.next.clone());
-            pages += 1;
-            if pages >= 500 {
-                break;
-            }
-        }
-
-        Ok(all_hosts)
-    }
-
     fn fetch_hosts_cancellable(
         &self,
         token: &str,
