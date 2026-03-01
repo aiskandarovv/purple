@@ -667,7 +667,8 @@ fn handle_provider_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<A
         }
         KeyCode::Enter => {
             if let Some(index) = app.ui.provider_list_state.selected() {
-                if let Some(&name) = providers::PROVIDER_NAMES.get(index) {
+                let sorted = app.sorted_provider_names();
+                if let Some(&name) = sorted.get(index) {
                     let provider_impl = providers::get_provider(name);
                     let short_label = provider_impl
                         .as_ref()
@@ -703,7 +704,8 @@ fn handle_provider_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<A
         }
         KeyCode::Char('s') => {
             if let Some(index) = app.ui.provider_list_state.selected() {
-                if let Some(&name) = providers::PROVIDER_NAMES.get(index) {
+                let sorted = app.sorted_provider_names();
+                if let Some(&name) = sorted.get(index) {
                     if let Some(section) = app.provider_config.section(name) {
                         if !app.syncing_providers.contains_key(name) {
                             let cancel = Arc::new(AtomicBool::new(false));
@@ -719,7 +721,8 @@ fn handle_provider_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<A
         }
         KeyCode::Char('d') => {
             if let Some(index) = app.ui.provider_list_state.selected() {
-                if let Some(&name) = providers::PROVIDER_NAMES.get(index) {
+                let sorted = app.sorted_provider_names();
+                if let Some(&name) = sorted.get(index) {
                     if let Some(old_section) = app.provider_config.section(name).cloned() {
                         app.provider_config.remove_section(name);
                         if let Err(e) = app.provider_config.save() {

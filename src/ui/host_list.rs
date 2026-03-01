@@ -33,30 +33,14 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     if is_searching {
         render_search_list(frame, app, chunks[0]);
         render_search_bar(frame, app, chunks[1]);
-        // Footer or status
-        if app.status.is_some() {
-            super::render_status_bar(frame, chunks[2], app);
-        } else {
-            render_search_footer(frame, chunks[2]);
-        }
+        super::render_footer_with_status(frame, chunks[2], search_footer_spans(), app);
     } else if is_tagging {
         render_display_list(frame, app, chunks[0]);
         render_tag_bar(frame, app, chunks[1]);
-        // Footer or status
-        if app.status.is_some() {
-            super::render_status_bar(frame, chunks[2], app);
-        } else {
-            render_tag_footer(frame, chunks[2]);
-        }
+        super::render_footer_with_status(frame, chunks[2], tag_footer_spans(), app);
     } else {
         render_display_list(frame, app, chunks[0]);
-        // Footer or status
-        let footer_area = chunks[1];
-        if app.status.is_some() {
-            super::render_status_bar(frame, footer_area, app);
-        } else {
-            render_footer(frame, footer_area);
-        }
+        super::render_footer_with_status(frame, chunks[1], footer_spans(), app);
     }
 }
 
@@ -395,8 +379,8 @@ fn render_search_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) 
     frame.render_widget(Paragraph::new(search_line), area);
 }
 
-fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect) {
-    let footer = Line::from(vec![
+fn footer_spans<'a>() -> Vec<Span<'a>> {
+    vec![
         Span::styled(" Enter", theme::primary_action()),
         Span::styled(" connect  ", theme::muted()),
         Span::styled("/", theme::accent_bold()),
@@ -415,18 +399,16 @@ fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect) {
         Span::styled(" delete  ", theme::muted()),
         Span::styled("?", theme::accent_bold()),
         Span::styled(" help", theme::muted()),
-    ]);
-    frame.render_widget(Paragraph::new(footer), area);
+    ]
 }
 
-fn render_search_footer(frame: &mut Frame, area: ratatui::layout::Rect) {
-    let footer = Line::from(vec![
+fn search_footer_spans<'a>() -> Vec<Span<'a>> {
+    vec![
         Span::styled(" Enter", theme::primary_action()),
         Span::styled(" connect  ", theme::muted()),
         Span::styled("Esc", theme::accent_bold()),
         Span::styled(" cancel", theme::muted()),
-    ]);
-    frame.render_widget(Paragraph::new(footer), area);
+    ]
 }
 
 fn render_tag_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
@@ -439,13 +421,12 @@ fn render_tag_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     frame.render_widget(Paragraph::new(tag_line), area);
 }
 
-fn render_tag_footer(frame: &mut Frame, area: ratatui::layout::Rect) {
-    let footer = Line::from(vec![
+fn tag_footer_spans<'a>() -> Vec<Span<'a>> {
+    vec![
         Span::styled(" Enter", theme::primary_action()),
         Span::styled(" save  ", theme::muted()),
         Span::styled("Esc", theme::accent_bold()),
         Span::styled(" cancel  ", theme::muted()),
         Span::styled("comma-separated", theme::muted()),
-    ]);
-    frame.render_widget(Paragraph::new(footer), area);
+    ]
 }

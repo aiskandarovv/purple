@@ -1,6 +1,6 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::text::{Line, Span};
+use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
@@ -83,23 +83,18 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         );
     }
 
-    // Footer or status
+    // Footer with status right-aligned
     let footer_idx = chunks.len() - 1;
-    if app.status.is_some() {
-        super::render_status_bar(frame, chunks[footer_idx], app);
-    } else {
-        let footer = Line::from(vec![
-            Span::styled(" Enter", theme::primary_action()),
-            Span::styled(" save  ", theme::muted()),
-            Span::styled("Left/Right", theme::accent_bold()),
-            Span::styled(" type  ", theme::muted()),
-            Span::styled("Tab/S-Tab", theme::accent_bold()),
-            Span::styled(" navigate  ", theme::muted()),
-            Span::styled("Esc", theme::accent_bold()),
-            Span::styled(" cancel", theme::muted()),
-        ]);
-        frame.render_widget(Paragraph::new(footer), chunks[footer_idx]);
-    }
+    super::render_footer_with_status(frame, chunks[footer_idx], vec![
+        Span::styled(" Enter", theme::primary_action()),
+        Span::styled(" save  ", theme::muted()),
+        Span::styled("Left/Right", theme::accent_bold()),
+        Span::styled(" type  ", theme::muted()),
+        Span::styled("Tab/S-Tab", theme::accent_bold()),
+        Span::styled(" navigate  ", theme::muted()),
+        Span::styled("Esc", theme::accent_bold()),
+        Span::styled(" cancel", theme::muted()),
+    ], app);
 }
 
 fn render_type_field(frame: &mut Frame, area: Rect, form: &crate::app::TunnelForm) {

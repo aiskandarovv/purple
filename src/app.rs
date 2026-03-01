@@ -1167,6 +1167,20 @@ impl App {
         }
     }
 
+    /// Provider names sorted by last sync (most recent first), then configured, then unconfigured.
+    pub fn sorted_provider_names(&self) -> Vec<&'static str> {
+        use crate::providers;
+        let mut names: Vec<&str> = providers::PROVIDER_NAMES.to_vec();
+        names.sort_by(|a, b| {
+            let ts_a = self.sync_history.get(*a).map_or(0, |r| r.timestamp);
+            let ts_b = self.sync_history.get(*b).map_or(0, |r| r.timestamp);
+            let conf_a = self.provider_config.section(a).is_some();
+            let conf_b = self.provider_config.section(b).is_some();
+            ts_b.cmp(&ts_a).then(conf_b.cmp(&conf_a))
+        });
+        names
+    }
+
     /// Set a status message.
     pub fn set_status(&mut self, text: impl Into<String>, is_error: bool) {
         self.status = Some(StatusMessage {

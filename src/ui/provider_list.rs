@@ -7,7 +7,6 @@ use unicode_width::UnicodeWidthStr;
 use super::theme;
 use crate::app::{App, ProviderFormField};
 use crate::history::ConnectionHistory;
-use crate::providers;
 
 /// Render the provider management list screen.
 pub fn render_provider_list(frame: &mut Frame, app: &mut App) {
@@ -21,7 +20,9 @@ pub fn render_provider_list(frame: &mut Frame, app: &mut App) {
     // Content width inside borders (2 for left+right border)
     let content_width = area.width.saturating_sub(2) as usize;
 
-    let items: Vec<ListItem> = providers::PROVIDER_NAMES
+    let sorted_names = app.sorted_provider_names();
+
+    let items: Vec<ListItem> = sorted_names
         .iter()
         .map(|&name| {
             let display_name = crate::providers::provider_display_name(name);
@@ -37,19 +38,20 @@ pub fn render_provider_list(frame: &mut Frame, app: &mut App) {
                 theme::muted()
             };
             let name_col = format!("  {:<18}", display_name);
-            let mut used_width = name_col.width() + status.width();
+            let status_col = format!("{:<17}", status);
+            let mut used_width = name_col.width() + status_col.width();
             let mut spans = vec![
                 Span::styled(name_col, theme::bold()),
-                Span::styled(status, status_style),
+                Span::styled(status_col, status_style),
             ];
             if configured {
                 if let Some(section) = app.provider_config.section(name) {
-                    let prefix_span = format!("     {}-*", section.alias_prefix);
+                    let prefix_span = format!("{}-*", section.alias_prefix);
                     used_width += prefix_span.width();
                     spans.push(Span::styled(prefix_span, theme::muted()));
                 }
                 let sync_text = if app.syncing_providers.contains_key(name) {
-                    Some(("  syncing...".to_string(), theme::muted()))
+                    Some(("   syncing...".to_string(), theme::muted()))
                 } else if let Some(record) = app.sync_history.get(name) {
                     let ago = ConnectionHistory::format_time_ago(record.timestamp);
                     let detail = if ago.is_empty() {
@@ -62,7 +64,7 @@ pub fn render_provider_list(frame: &mut Frame, app: &mut App) {
                     } else {
                         theme::muted()
                     };
-                    let prefix = if record.is_error { "  ! " } else { "  " };
+                    let prefix = if record.is_error { "   ! " } else { "   " };
                     Some((format!("{}{}", prefix, detail), style))
                 } else {
                     None
@@ -96,22 +98,17 @@ pub fn render_provider_list(frame: &mut Frame, app: &mut App) {
 
     frame.render_stateful_widget(list, chunks[0], &mut app.ui.provider_list_state);
 
-    // Footer
-    if app.status.is_some() {
-        super::render_status_bar(frame, chunks[1], app);
-    } else {
-        let footer = Line::from(vec![
-            Span::styled(" Enter", theme::primary_action()),
-            Span::styled(" configure  ", theme::muted()),
-            Span::styled("s", theme::accent_bold()),
-            Span::styled(" sync  ", theme::muted()),
-            Span::styled("d", theme::accent_bold()),
-            Span::styled(" remove  ", theme::muted()),
-            Span::styled("Esc", theme::accent_bold()),
-            Span::styled(" back", theme::muted()),
-        ]);
-        frame.render_widget(Paragraph::new(footer), chunks[1]);
-    }
+    // Footer with status right-aligned
+    super::render_footer_with_status(frame, chunks[1], vec![
+        Span::styled(" Enter", theme::primary_action()),
+        Span::styled(" configure  ", theme::muted()),
+        Span::styled("s", theme::accent_bold()),
+        Span::styled(" sync  ", theme::muted()),
+        Span::styled("d", theme::accent_bold()),
+        Span::styled(" remove  ", theme::muted()),
+        Span::styled("Esc", theme::accent_bold()),
+        Span::styled(" back", theme::muted()),
+    ], app);
 }
 
 /// Render the provider configuration form.
@@ -147,22 +144,17 @@ pub fn render_provider_form(frame: &mut Frame, app: &mut App, provider_name: &st
     render_provider_field(frame, chunks[2], ProviderFormField::User, &app.provider_form);
     render_provider_field(frame, chunks[3], ProviderFormField::IdentityFile, &app.provider_form);
 
-    // Footer or status
-    if app.status.is_some() {
-        super::render_status_bar(frame, chunks[5], app);
-    } else {
-        let footer = Line::from(vec![
-            Span::styled(" Enter", theme::primary_action()),
-            Span::styled(" save  ", theme::muted()),
-            Span::styled("Tab/S-Tab", theme::accent_bold()),
-            Span::styled(" navigate  ", theme::muted()),
-            Span::styled("Ctrl+K", theme::accent_bold()),
-            Span::styled(" pick key  ", theme::muted()),
-            Span::styled("Esc", theme::accent_bold()),
-            Span::styled(" cancel", theme::muted()),
-        ]);
-        frame.render_widget(Paragraph::new(footer), chunks[5]);
-    }
+    // Footer with status right-aligned
+    super::render_footer_with_status(frame, chunks[5], vec![
+        Span::styled(" Enter", theme::primary_action()),
+        Span::styled(" save  ", theme::muted()),
+        Span::styled("Tab/S-Tab", theme::accent_bold()),
+        Span::styled(" navigate  ", theme::muted()),
+        Span::styled("Ctrl+K", theme::accent_bold()),
+        Span::styled(" pick key  ", theme::muted()),
+        Span::styled("Esc", theme::accent_bold()),
+        Span::styled(" cancel", theme::muted()),
+    ], app);
 
     // Key picker popup overlay
     if app.ui.show_key_picker {

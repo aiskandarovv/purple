@@ -103,7 +103,7 @@ impl ConnectionHistory {
             .as_secs();
         let diff = now.saturating_sub(timestamp);
         if diff < 60 {
-            "just now".to_string()
+            "<1m ago".to_string()
         } else if diff < 3600 {
             format!("{}m ago", diff / 60)
         } else if diff < 86400 {
@@ -159,7 +159,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        assert_eq!(ConnectionHistory::format_time_ago(now), "just now");
+        assert_eq!(ConnectionHistory::format_time_ago(now), "<1m ago");
         assert_eq!(
             ConnectionHistory::format_time_ago(now - 300),
             "5m ago"

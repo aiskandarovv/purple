@@ -79,19 +79,30 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 }
 
-/// Render the status bar at the bottom.
-pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
+/// Render footer with shortcuts always visible and optional status right-aligned.
+pub fn render_footer_with_status(
+    frame: &mut Frame,
+    area: Rect,
+    mut footer_spans: Vec<Span<'_>>,
+    app: &App,
+) {
     if let Some(ref status) = app.status {
-        let line = if status.is_error {
-            Line::from(vec![
-                Span::styled("! ", theme::error()),
-                Span::styled(status.text.as_str(), theme::error()),
-            ])
+        use unicode_width::UnicodeWidthStr;
+        let shortcuts_width: usize = footer_spans.iter().map(|s| s.width()).sum();
+        let total_width = area.width as usize;
+        let (status_text, style) = if status.is_error {
+            (format!("! {} ", status.text), theme::error())
         } else {
-            Line::from(Span::styled(status.text.as_str(), theme::success()))
+            (format!("{} ", status.text), theme::success())
         };
-        frame.render_widget(Paragraph::new(line), area);
+        let status_width = status_text.width();
+        let gap = total_width.saturating_sub(shortcuts_width + status_width);
+        if gap > 0 {
+            footer_spans.push(Span::raw(" ".repeat(gap)));
+            footer_spans.push(Span::styled(status_text, style));
+        }
     }
+    frame.render_widget(Paragraph::new(Line::from(footer_spans)), area);
 }
 
 /// Create a centered rect of given percentage within the parent rect.

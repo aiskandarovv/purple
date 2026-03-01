@@ -65,22 +65,17 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     render_field(frame, chunks[5], FormField::ProxyJump, &app.form);
     render_field(frame, chunks[6], FormField::Tags, &app.form);
 
-    // Footer or status (merged)
-    if app.status.is_some() {
-        super::render_status_bar(frame, chunks[8], app);
-    } else {
-        let footer = Line::from(vec![
-            Span::styled(" Enter", theme::primary_action()),
-            Span::styled(" save  ", theme::muted()),
-            Span::styled("Tab/S-Tab", theme::accent_bold()),
-            Span::styled(" navigate  ", theme::muted()),
-            Span::styled("Ctrl+K", theme::accent_bold()),
-            Span::styled(" pick key  ", theme::muted()),
-            Span::styled("Esc", theme::accent_bold()),
-            Span::styled(" cancel", theme::muted()),
-        ]);
-        frame.render_widget(Paragraph::new(footer), chunks[8]);
-    }
+    // Footer with status right-aligned
+    super::render_footer_with_status(frame, chunks[8], vec![
+        Span::styled(" Enter", theme::primary_action()),
+        Span::styled(" save  ", theme::muted()),
+        Span::styled("Tab/S-Tab", theme::accent_bold()),
+        Span::styled(" navigate  ", theme::muted()),
+        Span::styled("Ctrl+K", theme::accent_bold()),
+        Span::styled(" pick key  ", theme::muted()),
+        Span::styled("Esc", theme::accent_bold()),
+        Span::styled(" cancel", theme::muted()),
+    ], app);
 
     // Key picker popup overlay
     if app.ui.show_key_picker {

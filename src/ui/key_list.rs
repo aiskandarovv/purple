@@ -101,22 +101,13 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         frame.render_stateful_widget(list, inner_chunks[1], &mut app.ui.key_list_state);
     }
 
-    if app.status.is_some() {
-        super::render_status_bar(frame, chunks[1], app);
-    } else {
-        render_footer(frame, chunks[1]);
-    }
-}
-
-fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect) {
-    let footer = Line::from(vec![
+    super::render_footer_with_status(frame, chunks[1], vec![
         Span::styled(" K", theme::accent_bold()),
         Span::styled(" hosts  ", theme::muted()),
         Span::styled("Enter", theme::primary_action()),
         Span::styled(" details  ", theme::muted()),
         Span::styled("q", theme::accent_bold()),
         Span::styled(" back", theme::muted()),
-    ]);
-    frame.render_widget(Paragraph::new(footer), area);
+    ], app);
 }
 

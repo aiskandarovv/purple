@@ -88,7 +88,7 @@ purple provider add digitalocean --token-stdin         # pipe from password mana
 purple sync
 ```
 
-Synced hosts are tagged by provider and appear alongside your manual hosts. The provider list shows last sync results per provider (server count and time ago or error details).
+Synced hosts are tagged by provider and appear alongside your manual hosts. The provider list is sorted by last sync time (most recent first) and shows sync results per provider (server count and time ago or error details).
 
 ## Your config, respected
 
