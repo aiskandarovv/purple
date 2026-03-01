@@ -601,6 +601,10 @@ pub struct App {
     pub tunnel_list: Vec<TunnelRule>,
     pub tunnel_form: TunnelForm,
     pub active_tunnels: HashMap<String, crate::tunnel::ActiveTunnel>,
+
+    // Update
+    pub update_available: Option<String>,
+    pub update_hint: &'static str,
 }
 
 impl App {
@@ -671,6 +675,8 @@ impl App {
             tunnel_list: Vec::new(),
             tunnel_form: TunnelForm::new(),
             active_tunnels: HashMap::new(),
+            update_available: None,
+            update_hint: crate::update::update_hint(),
         }
     }
 

@@ -52,6 +52,14 @@ cd purple && cargo build --release
 
 </details>
 
+## Update
+
+```bash
+purple update
+```
+
+Downloads the latest release from GitHub, verifies the checksum and replaces the binary in place. macOS only (installed via `curl`). Homebrew users should run `brew upgrade erickochen/purple/purple` instead. Cargo users should run `cargo install purple-ssh`. The TUI also checks for updates on startup and shows a notification in the title bar when a new version is available.
+
 ## Launch, search and connect
 
 🚀 **Instant search.** Filter on alias, hostname, user, tags or provider as you type
@@ -121,6 +129,7 @@ purple sync --dry-run               # Preview sync changes
 purple tunnel list                  # List configured tunnels
 purple tunnel add myserver L:8080:localhost:80  # Add forward
 purple tunnel start myserver        # Start tunnel (Ctrl+C to stop)
+purple update                       # Update to latest version
 purple --completions zsh            # Shell completions
 ```
 
@@ -201,7 +210,7 @@ purple --completions zsh            # Shell completions
 
 **It edits your real SSH config.** Most SSH config tools only read. purple reads, edits and writes `~/.ssh/config` directly.
 
-**It doesn't break anything.** Comments, indentation, unknown directives. All preserved through every edit. Tested with 678 tests including round-trip integration.
+**It doesn't break anything.** Comments, indentation, unknown directives. All preserved through every edit. Tested with 719 tests including round-trip integration.
 
 **It syncs your cloud servers.** purple is the only SSH config manager we know of that pulls hosts from DigitalOcean, Vultr, Linode, Hetzner and UpCloud directly into your config. Configure once, sync anytime.
 
@@ -221,14 +230,14 @@ No. purple preserves comments, indentation and unknown directives through every 
 No. It's a single binary. Run it, use it, close it.
 
 **Does purple send my SSH config anywhere?**
-No. Everything stays local. Provider sync only calls cloud APIs to fetch server lists. Your config never leaves your machine.
+No. Your config never leaves your machine. Provider sync calls cloud APIs to fetch server lists. The TUI checks GitHub for new releases on startup (cached for 24 hours). No config data is transmitted in either case.
 
 **Why is the crate called `purple-ssh`?**
 The name `purple` was taken on crates.io. The binary is still called `purple`.
 
 ## Built with
 
-Rust. 678 tests. Zero clippy warnings. No async runtime. Single binary.
+Rust. 719 tests. Zero clippy warnings. No async runtime. Single binary.
 
 <p align="center">
   💜 <a href="LICENSE">MIT License</a>

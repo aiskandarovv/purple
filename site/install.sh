@@ -1,4 +1,7 @@
 #!/bin/sh
+# Source of truth for the install script.
+# Also embedded in worker.ts — keep both in sync.
+# CI checks for drift on every PR and push (site.yml).
 set -eu
 
 REPO="erickochen/purple"
@@ -7,12 +10,7 @@ BINARY="purple"
 main() {
     printf "\n  \033[1mpurple.\033[0m installer\n\n"
 
-    # Check dependencies
-    need_cmd curl
-    need_cmd tar
-    need_cmd shasum
-
-    # Detect OS
+    # Detect OS (before dependency checks so non-macOS gets a clear message)
     os="$(uname -s)"
     case "$os" in
         Darwin) ;;
@@ -29,6 +27,11 @@ main() {
             exit 1
             ;;
     esac
+
+    # Check dependencies (after OS detection so non-macOS exits with a clear message)
+    need_cmd curl
+    need_cmd tar
+    need_cmd shasum
 
     # Detect architecture
     arch="$(uname -m)"
@@ -95,6 +98,8 @@ main() {
 
     printf "\n  \033[1;35mpurple v%s\033[0m installed to %s/%s\n\n" \
         "$version" "$install_dir" "$BINARY"
+
+    printf "  To update later, run: purple update\n\n"
 
     # Check PATH
     case ":${PATH}:" in

@@ -15,6 +15,7 @@ mod ssh_keys;
 mod tui;
 mod tunnel;
 mod ui;
+mod update;
 
 use std::path::PathBuf;
 
@@ -111,6 +112,8 @@ enum Commands {
         #[command(subcommand)]
         command: TunnelCommands,
     },
+    /// Update purple to the latest version
+    Update,
 }
 
 #[derive(Subcommand)]
@@ -214,9 +217,12 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    // Provider subcommand doesn't need SSH config
+    // Provider and Update subcommands don't need SSH config
     if let Some(Commands::Provider { command }) = cli.command {
         return handle_provider_command(command);
+    }
+    if let Some(Commands::Update) = cli.command {
+        return update::self_update();
     }
 
     let config_path = resolve_config_path(&cli.config)?;
@@ -244,7 +250,7 @@ fn main() -> Result<()> {
         Some(Commands::Tunnel { command }) => {
             return handle_tunnel_command(config, command);
         }
-        Some(Commands::Provider { .. }) => unreachable!(),
+        Some(Commands::Provider { .. }) | Some(Commands::Update) => unreachable!(),
         None => {}
     }
 
@@ -358,6 +364,9 @@ fn run_tui(mut app: App) -> Result<()> {
         }
     }
 
+    // Background version check
+    update::spawn_version_check(events_tx.clone());
+
     while app.running {
         terminal.draw(&mut app)?;
 
@@ -396,6 +405,9 @@ fn run_tui(mut app: App) -> Result<()> {
                     true,
                 );
                 app.syncing_providers.remove(&provider);
+            }
+            AppEvent::UpdateAvailable { version } => {
+                app.update_available = Some(version);
             }
             AppEvent::PollError => {
                 app.running = false;

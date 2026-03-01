@@ -19,6 +19,7 @@ pub enum AppEvent {
         provider: String,
         message: String,
     },
+    UpdateAvailable { version: String },
     PollError,
 }
 
@@ -123,7 +124,8 @@ impl EventHandler {
             match event {
                 AppEvent::PingResult { .. }
                 | AppEvent::SyncComplete { .. }
-                | AppEvent::SyncError { .. } => preserved.push(event),
+                | AppEvent::SyncError { .. }
+                | AppEvent::UpdateAvailable { .. } => preserved.push(event),
                 _ => {}
             }
         }

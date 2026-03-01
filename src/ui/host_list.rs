@@ -93,16 +93,25 @@ fn render_display_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::
         Line::from(spans)
     };
 
+    let update_title = app.update_available.as_ref().map(|ver| {
+        Line::from(Span::styled(
+            format!("v{} available — run '{}' ", ver, app.update_hint),
+            theme::bold(),
+        ))
+    });
+
     if app.hosts.is_empty() {
+        let mut block = Block::default()
+            .title(title)
+            .borders(Borders::ALL)
+            .border_style(theme::border());
+        if let Some(update) = update_title {
+            block = block.title_top(update.right_aligned());
+        }
         let empty_msg =
             Paragraph::new("  It's quiet in here... Press 'a' to add your first host.")
                 .style(theme::muted())
-                .block(
-                    Block::default()
-                        .title(title)
-                        .borders(Borders::ALL)
-                        .border_style(theme::border()),
-                );
+                .block(block);
         frame.render_widget(empty_msg, area);
         return;
     }
@@ -151,13 +160,16 @@ fn render_display_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::
         })
         .collect();
 
+    let mut block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(theme::border());
+    if let Some(update) = update_title {
+        block = block.title_top(update.right_aligned());
+    }
+
     let list = List::new(items)
-        .block(
-            Block::default()
-                .title(title)
-                .borders(Borders::ALL)
-                .border_style(theme::border()),
-        )
+        .block(block)
         .highlight_style(theme::selected())
         .highlight_symbol("  ");
 
