@@ -213,7 +213,7 @@ purple --completions zsh            # Shell completions
 
 **It edits your real SSH config.** Most SSH config tools only read. purple reads, edits and writes `~/.ssh/config` directly.
 
-**It doesn't break anything.** Comments, indentation, unknown directives. All preserved through every edit. Tested with 751 tests including round-trip integration.
+**It doesn't break anything.** Comments, indentation, unknown directives. All preserved through every edit. Tested with 755 tests including round-trip integration.
 
 **It syncs your cloud servers.** purple is the only SSH config manager we know of that pulls hosts from DigitalOcean, Vultr, Linode, Hetzner and UpCloud directly into your config. Configure once, sync anytime.
 
@@ -240,7 +240,7 @@ The name `purple` was taken on crates.io. The binary is still called `purple`.
 
 ## Built with
 
-Rust. 751 tests. Zero clippy warnings. No async runtime. Single binary.
+Rust. 755 tests. Zero clippy warnings. No async runtime. Single binary.
 
 <p align="center">
   💜 <a href="LICENSE">MIT License</a>
