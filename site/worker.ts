@@ -503,12 +503,178 @@ function copy(btn) {
 </body>
 </html>`;
 
+const LLMS_TXT = `# purple
+
+> SSH config manager and host launcher for the terminal
+
+purple is a free, open-source TUI (terminal user interface) that turns ~/.ssh/config into a searchable, taggable host launcher with full round-trip fidelity. Written in Rust as a single binary with 2400+ tests.
+
+## What purple does
+
+purple reads your existing ~/.ssh/config, gives you a terminal UI to search, filter, tag and connect to hosts, and writes changes back without touching your comments, formatting or unknown directives. It syncs servers from six cloud providers directly into your SSH config. No browser, no YAML files, no context switching.
+
+## Key capabilities
+
+- Reads, edits and writes ~/.ssh/config directly while preserving comments, formatting and unknown directives (round-trip fidelity)
+- Fuzzy search across aliases, hostnames, users, tags and providers
+- Host tagging via SSH config comments (# purple:tags)
+- Cloud provider sync: DigitalOcean, Vultr, Linode (Akamai), Hetzner, UpCloud, Proxmox VE
+- SSH tunnel management: LocalForward, RemoteForward, DynamicForward. Start/stop from TUI or CLI
+- Password management: OS Keychain, 1Password (op://), Bitwarden (bw:), pass (pass:), HashiCorp Vault (vault:), custom command
+- SSH key browsing with metadata (type, bits, fingerprint) and host linking
+- Bulk import from hosts files or ~/.ssh/known_hosts
+- Frecency-based connection history and sorting
+- TCP ping / connectivity check per host or all at once
+- Atomic writes with automatic backups (last 5). Temp file, chmod 600, rename
+- Include file support (read-only, recursive up to depth 5, tilde + glob expansion)
+- Shell completions (bash, zsh, fish)
+- Self-update mechanism (macOS curl installs). Homebrew and cargo users update via their package manager
+- Auto-reload: detects external config changes every 4 seconds
+- Minimal UI with monochrome base and subtle color for status. Works in any terminal, respects NO_COLOR
+
+## Install
+
+curl -fsSL getpurple.sh | sh
+brew install erickochen/purple/purple
+cargo install purple-ssh
+
+## CLI usage
+
+purple                              # Launch the TUI
+purple --config ~/other/ssh_config  # Use alternate config file
+purple myserver                     # Connect if exact match, otherwise open TUI with search
+purple -c myserver                  # Direct connect (skip the TUI)
+purple --list                       # List all configured hosts
+purple add deploy@10.0.1.5:22      # Quick-add a host
+purple add user@host --alias name   # Quick-add with custom alias
+purple add user@host --key ~/.ssh/id_ed25519  # Quick-add with key
+purple import hosts.txt             # Bulk import from file
+purple import --known-hosts         # Import from ~/.ssh/known_hosts
+purple provider add digitalocean --token TOKEN
+purple provider add proxmox --url https://pve:8006 --token user@pam!token=secret
+purple provider add digitalocean --token TOKEN --no-auto-sync   # --auto-sync to re-enable
+purple provider list                # List configured providers
+purple provider remove digitalocean # Remove provider
+purple sync                         # Sync all providers
+purple sync digitalocean            # Sync single provider
+purple sync --dry-run               # Preview changes
+purple sync --remove                # Remove hosts deleted from provider
+purple sync --reset-tags            # Replace local tags with provider tags
+purple tunnel list                  # List all tunnels
+purple tunnel list myserver         # List tunnels for a host
+purple tunnel add myserver L:8080:localhost:80
+purple tunnel remove myserver L:8080:localhost:80
+purple tunnel start myserver        # Start tunnel (Ctrl+C to stop)
+purple password set myserver        # Store password in OS keychain
+purple password remove myserver     # Remove from keychain
+purple update                       # Self-update
+purple --completions zsh            # Generate shell completions
+
+## Cloud provider sync
+
+Sync servers from cloud providers into ~/.ssh/config. Each synced host is tracked via a comment (# purple:provider name:id) so purple knows which hosts belong to which provider.
+
+Supported providers:
+- DigitalOcean: page-based pagination, droplet tags synced
+- Vultr: cursor-based pagination, instance tags synced
+- Linode (Akamai): page-based pagination, private IP filtering, tags synced
+- Hetzner: page-based pagination, labels converted to tags
+- UpCloud: offset-based pagination, tags and labels synced, N+1 detail requests
+- Proxmox VE: N+1 detail requests, QEMU guest agent + LXC interfaces, self-signed TLS support
+
+Per-provider auto_sync toggle controls startup sync. Default is true for all providers except Proxmox (default false). Manual sync via the TUI (s key) or CLI always works.
+
+## Password management
+
+Purple can retrieve SSH passwords automatically on connect. Set a password source per host via the TUI form or a global default in ~/.purple/preferences. Purple acts as its own SSH_ASKPASS program.
+
+Supported password sources:
+- OS Keychain (keychain): uses security command on macOS, secret-tool on Linux. Service name purple-ssh
+- 1Password (op://): vault/item/field path
+- Bitwarden (bw:): item name
+- pass (pass:): entry path in the password store
+- HashiCorp Vault (vault:): secret path
+- Custom command: any shell command that outputs the password. Supports %a (alias) and %h (hostname) substitution. Optional cmd: prefix
+
+## SSH tunnel management
+
+Manage LocalForward, RemoteForward and DynamicForward rules per host. Start and stop background SSH tunnels from the TUI (T key) or CLI. Active tunnels run as ssh -N background processes and are cleaned up on exit.
+
+## Tags
+
+Tags are stored as SSH config comments (# purple:tags prod,us-east). Filter with tag: prefix in search (fuzzy match) or tag= prefix (exact match). Provider names appear as virtual tags. The tag picker (# key) shows all tags with host counts.
+
+## Round-trip fidelity
+
+purple preserves through every read-write cycle:
+- Comments (including inline comments)
+- Indentation (spaces, tabs)
+- Unknown directives
+- CRLF line endings
+- Equals-syntax (Host = value)
+- Match blocks (stored as inert global lines)
+- Include file references
+
+Consecutive blank lines are collapsed to one. Hosts from Include files are displayed but never modified.
+
+## Technical details
+
+- Language: Rust (edition 2024)
+- Binary name: purple (crate name: purple-ssh)
+- Dependencies: ratatui, crossterm, clap (derive), clap_complete, dirs, glob, unicode-width, ureq (json, native-tls), serde, serde_json, anyhow, thiserror
+- Tests: 2400+ (unit + integration)
+- No async runtime (std::sync::mpsc for events and sync results)
+- Atomic writes via temp file + chmod 600 + rename
+- SSH invocations use system ssh binary with -F <config_path>
+- Auto-reload every 4 seconds via config file stat()
+- Event loop: crossterm polling thread (sync mpsc), pause/resume for SSH sessions
+
+## FAQ
+
+Q: Does purple modify my existing SSH config?
+A: Only when you add, edit, delete or sync. All writes are atomic with automatic backups. Auto-sync runs on startup for providers that have it enabled.
+
+Q: Will purple break my comments or formatting?
+A: No. Comments, indentation and unknown directives are preserved through every read-write cycle.
+
+Q: Does purple need a daemon or background process?
+A: No. It is a single binary. Run it, use it, close it.
+
+Q: Does purple send my SSH config anywhere?
+A: No. Your config never leaves your machine. Provider sync calls cloud APIs to fetch server lists. The TUI checks GitHub for new releases on startup (cached for 24 hours). No config data is transmitted.
+
+Q: How does password management work?
+A: Set a password source per host. When you connect, purple acts as SSH_ASKPASS and retrieves the password automatically. Supported sources: OS Keychain, 1Password, Bitwarden, pass, HashiCorp Vault and custom commands.
+
+Q: Can I use purple with Include files?
+A: Yes. Hosts from Include files are displayed in the TUI but never modified.
+
+Q: How does provider sync handle name conflicts?
+A: Synced hosts get an alias prefix (e.g. do-web-1 for DigitalOcean). If a name collides, purple appends a numeric suffix (do-web-1-2).
+
+## Links
+
+- Website: https://getpurple.sh
+- GitHub: https://github.com/erickochen/purple
+- Crate: https://crates.io/crates/purple-ssh
+- License: MIT
+`;
+
 BunnySDK.net.http.serve(async (request: Request): Promise<Response> => {
+  const url = new URL(request.url);
+
   // Redirect purple-ssh.com → getpurple.sh
   const host = request.headers.get("host") || "";
   if (host === "purple-ssh.com" || host === "www.purple-ssh.com" || host === "www.getpurple.sh") {
-    const url = new URL(request.url);
     return Response.redirect(`https://getpurple.sh${url.pathname}${url.search}`, 301);
+  }
+  if (url.pathname === "/llms.txt") {
+    return new Response(LLMS_TXT, {
+      headers: {
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "public, max-age=3600",
+      },
+    });
   }
 
   const ua = (request.headers.get("user-agent") || "").toLowerCase();
