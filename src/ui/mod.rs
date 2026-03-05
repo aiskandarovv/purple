@@ -27,15 +27,20 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Terminal too small guard
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
-        let msg = Paragraph::new("Terminal too small. Need at least 50x10.")
-            .style(theme::error());
+        let msg = Paragraph::new(Line::from(vec![
+            Span::styled("\u{26A0}", theme::error()),
+            Span::raw(" Terminal too small. Need at least 50x10."),
+        ]));
         frame.render_widget(msg, area);
         return;
     }
 
     match &app.screen {
         Screen::HostList => host_list::render(frame, app),
-        Screen::AddHost | Screen::EditHost { .. } => host_form::render(frame, app),
+        Screen::AddHost | Screen::EditHost { .. } => {
+            host_list::render(frame, app);
+            host_form::render(frame, app);
+        }
         Screen::ConfirmDelete { alias } => {
             let alias = alias.clone();
             host_list::render(frame, app);
@@ -45,9 +50,13 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             host_list::render(frame, app);
             help::render(frame);
         }
-        Screen::KeyList => key_list::render(frame, app),
+        Screen::KeyList => {
+            host_list::render(frame, app);
+            key_list::render(frame, app);
+        }
         Screen::KeyDetail { index } => {
             let index = *index;
+            host_list::render(frame, app);
             key_list::render(frame, app);
             key_detail::render(frame, app, index);
         }
@@ -61,18 +70,22 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             tag_picker::render(frame, app);
         }
         Screen::Providers => {
+            host_list::render(frame, app);
             provider_list::render_provider_list(frame, app);
         }
         Screen::ProviderForm { provider } => {
             let provider = provider.clone();
+            host_list::render(frame, app);
             provider_list::render_provider_form(frame, app, &provider);
         }
         Screen::TunnelList { alias } => {
             let alias = alias.clone();
+            host_list::render(frame, app);
             tunnel_list::render(frame, app, &alias);
         }
         Screen::TunnelForm { alias, .. } => {
             let alias = alias.clone();
+            host_list::render(frame, app);
             tunnel_list::render(frame, app, &alias);
             tunnel_form::render(frame, app);
         }
@@ -90,16 +103,17 @@ pub fn render_footer_with_status(
         use unicode_width::UnicodeWidthStr;
         let shortcuts_width: usize = footer_spans.iter().map(|s| s.width()).sum();
         let total_width = area.width as usize;
-        let (status_text, style) = if status.is_error {
-            (format!("! {} ", status.text), theme::error())
+        let (icon, icon_style, text) = if status.is_error {
+            ("\u{26A0}", theme::error(), format!(" {} ", status.text))
         } else {
-            (format!("{} ", status.text), theme::success())
+            ("\u{2713} ", theme::success(), format!("{} ", status.text))
         };
-        let status_width = status_text.width();
+        let status_width = icon.width() + text.width();
         let gap = total_width.saturating_sub(shortcuts_width + status_width);
         if gap > 0 {
             footer_spans.push(Span::raw(" ".repeat(gap)));
-            footer_spans.push(Span::styled(status_text, style));
+            footer_spans.push(Span::styled(icon, icon_style));
+            footer_spans.push(Span::raw(text));
         }
     }
     frame.render_widget(Paragraph::new(Line::from(footer_spans)), area);

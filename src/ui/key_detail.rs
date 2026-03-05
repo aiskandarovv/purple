@@ -17,7 +17,8 @@ pub fn render(frame: &mut Frame, app: &App, index: usize) {
     let overflow_line = if linked_count > max_visible_hosts { 1 } else { 0 };
     // 2 (border) + 1 (blank) + 4 (metadata) + 1 (blank) + 2 (header+sep) + hosts + overflow + 1 (blank)
     let height = (11 + visible_hosts.max(1) + overflow_line) as u16;
-    let area = super::centered_rect_fixed(58, height, frame.area());
+    let width = frame.area().width.clamp(58, 80);
+    let area = super::centered_rect_fixed(width, height, frame.area());
 
     frame.render_widget(Clear, area);
 
@@ -30,10 +31,10 @@ pub fn render(frame: &mut Frame, app: &App, index: usize) {
     let type_display = key.type_display();
     let mut lines = vec![
         Line::from(""),
-        detail_line("  Type           ", &type_display),
-        detail_line("  Fingerprint    ", &key.fingerprint),
-        detail_line("  Comment        ", if key.comment.is_empty() { "(none)" } else { &key.comment }),
-        detail_line("  Path           ", &key.display_path),
+        detail_line("  Type                  ", &type_display),
+        detail_line("  Fingerprint           ", &key.fingerprint),
+        detail_line("  Comment               ", if key.comment.is_empty() { "(none)" } else { &key.comment }),
+        detail_line("  Path                  ", &key.display_path),
         Line::from(""),
         Line::from(Span::styled("  Linked Hosts", theme::section_header())),
         Line::from(Span::styled("  ────────────────────────", theme::muted())),

@@ -61,11 +61,11 @@ fn save_value(key: &str, value: &str) -> io::Result<()> {
     fs_util::atomic_write(&path, content.as_bytes())
 }
 
-/// Load sort mode from ~/.purple/preferences. Returns AlphaAlias if missing or invalid.
+/// Load sort mode from ~/.purple/preferences. Returns MostRecent if missing or invalid.
 pub fn load_sort_mode() -> SortMode {
     load_value("sort_mode")
         .map(|v| SortMode::from_key(&v))
-        .unwrap_or(SortMode::AlphaAlias)
+        .unwrap_or(SortMode::MostRecent)
 }
 
 /// Save sort mode to ~/.purple/preferences.
@@ -83,4 +83,146 @@ pub fn load_group_by_provider() -> bool {
 /// Save group_by_provider to ~/.purple/preferences.
 pub fn save_group_by_provider(enabled: bool) -> io::Result<()> {
     save_value("group_by_provider", &enabled.to_string())
+}
+
+/// Load global askpass default from ~/.purple/preferences.
+pub fn load_askpass_default() -> Option<String> {
+    load_value("askpass").filter(|v| !v.is_empty())
+}
+
+/// Save global askpass default to ~/.purple/preferences.
+pub fn save_askpass_default(source: &str) -> io::Result<()> {
+    save_value("askpass", source)
+}
+
+#[cfg(test)]
+mod tests {
+    // We test load_value/save_value logic by replicating the parsing inline,
+    // since the real functions read from ~/.purple/preferences.
+
+    fn parse_value(content: &str, key: &str) -> Option<String> {
+        for line in content.lines() {
+            let line = line.trim();
+            if line.starts_with('#') || line.is_empty() {
+                continue;
+            }
+            if let Some((k, v)) = line.split_once('=') {
+                if k.trim() == key {
+                    return Some(v.trim().to_string());
+                }
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn load_askpass_returns_value() {
+        let content = "askpass=keychain\n";
+        let val = parse_value(content, "askpass").filter(|v| !v.is_empty());
+        assert_eq!(val, Some("keychain".to_string()));
+    }
+
+    #[test]
+    fn load_askpass_returns_none_for_empty() {
+        let content = "askpass=\n";
+        let val = parse_value(content, "askpass").filter(|v| !v.is_empty());
+        assert_eq!(val, None);
+    }
+
+    #[test]
+    fn load_askpass_returns_none_when_missing() {
+        let content = "sort_mode=alpha\n";
+        let val = parse_value(content, "askpass").filter(|v| !v.is_empty());
+        assert_eq!(val, None);
+    }
+
+    #[test]
+    fn load_askpass_preserves_vault_uri() {
+        let content = "askpass=vault:secret/ssh#password\n";
+        let val = parse_value(content, "askpass").filter(|v| !v.is_empty());
+        assert_eq!(val, Some("vault:secret/ssh#password".to_string()));
+    }
+
+    #[test]
+    fn load_askpass_preserves_op_uri() {
+        let content = "askpass=op://Vault/SSH/password\n";
+        let val = parse_value(content, "askpass").filter(|v| !v.is_empty());
+        assert_eq!(val, Some("op://Vault/SSH/password".to_string()));
+    }
+
+    #[test]
+    fn load_askpass_among_other_prefs() {
+        let content = "sort_mode=alpha\ngroup_by_provider=true\naskpass=bw:my-item\n";
+        let val = parse_value(content, "askpass").filter(|v| !v.is_empty());
+        assert_eq!(val, Some("bw:my-item".to_string()));
+    }
+
+    #[test]
+    fn save_value_builds_correct_line() {
+        // Verify the format that save_value produces
+        let key = "askpass";
+        let value = "keychain";
+        let line = format!("{}={}", key, value);
+        assert_eq!(line, "askpass=keychain");
+    }
+
+    #[test]
+    fn save_value_replaces_existing() {
+        // Simulate save_value logic
+        let existing = "sort_mode=alpha\naskpass=old\n";
+        let key = "askpass";
+        let new_value = "vault:secret/ssh";
+
+        let mut lines: Vec<String> = Vec::new();
+        let mut found = false;
+        for line in existing.lines() {
+            let trimmed = line.trim();
+            if !trimmed.starts_with('#')
+                && !trimmed.is_empty()
+                && trimmed.split_once('=').is_some_and(|(k, _)| k.trim() == key)
+            {
+                lines.push(format!("{}={}", key, new_value));
+                found = true;
+            } else {
+                lines.push(line.to_string());
+            }
+        }
+        if !found {
+            lines.push(format!("{}={}", key, new_value));
+        }
+        let content = lines.join("\n") + "\n";
+        assert!(content.contains("askpass=vault:secret/ssh"));
+        assert!(!content.contains("askpass=old"));
+        assert!(content.contains("sort_mode=alpha"));
+        assert!(found);
+    }
+
+    #[test]
+    fn save_value_appends_new_key() {
+        let existing = "sort_mode=alpha\n";
+        let key = "askpass";
+        let new_value = "keychain";
+
+        let mut lines: Vec<String> = Vec::new();
+        let mut found = false;
+        for line in existing.lines() {
+            let trimmed = line.trim();
+            if !trimmed.starts_with('#')
+                && !trimmed.is_empty()
+                && trimmed.split_once('=').is_some_and(|(k, _)| k.trim() == key)
+            {
+                lines.push(format!("{}={}", key, new_value));
+                found = true;
+            } else {
+                lines.push(line.to_string());
+            }
+        }
+        if !found {
+            lines.push(format!("{}={}", key, new_value));
+        }
+        let content = lines.join("\n") + "\n";
+        assert!(content.contains("askpass=keychain"));
+        assert!(content.contains("sort_mode=alpha"));
+        assert!(!found); // Was appended, not replaced
+    }
 }

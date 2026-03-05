@@ -8,107 +8,122 @@ use super::theme;
 use crate::app::{App, ProviderFormField};
 use crate::history::ConnectionHistory;
 
-/// Render the provider management list screen.
+/// Render the provider management list as a centered overlay.
 pub fn render_provider_list(frame: &mut Frame, app: &mut App) {
-    let area = frame.area();
-
-    let title = Line::from(vec![
-        Span::styled(" purple. ", theme::brand_badge()),
-        Span::raw(" Providers "),
-    ]);
-
-    // Content width inside borders (2 for left+right border)
-    let content_width = area.width.saturating_sub(2) as usize;
-
     let sorted_names = app.sorted_provider_names();
+
+    // Overlay: percentage-based width, height fits content
+    let item_count = sorted_names.len();
+    let height = (item_count as u16 + 4).min(frame.area().height.saturating_sub(4));
+    let pct_width: u16 = 70;
+    let area = {
+        let r = super::centered_rect(pct_width, 80, frame.area());
+        super::centered_rect_fixed(r.width, height, frame.area())
+    };
+    frame.render_widget(Clear, area);
+
+    let title = Span::styled(" Providers ", theme::brand());
+
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(theme::accent());
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    // Content width inside the overlay
+    let content_width = inner.width as usize;
 
     let items: Vec<ListItem> = sorted_names
         .iter()
         .map(|name| {
             let display_name = crate::providers::provider_display_name(name.as_str());
             let configured = app.provider_config.section(name.as_str()).is_some();
-            let status = if configured {
-                "[configured]"
-            } else {
-                "[not configured]"
-            };
-            let status_style = if configured {
-                theme::success()
-            } else {
-                theme::muted()
-            };
-            let name_col = format!("  {:<18}", display_name);
-            let status_col = format!("{:<17}", status);
-            let mut used_width = name_col.width() + status_col.width();
-            let mut spans = vec![
-                Span::styled(name_col, theme::bold()),
-                Span::styled(status_col, status_style),
-            ];
+
+            let name_col = format!(" {:<16}", display_name);
+            let mut spans = vec![Span::styled(name_col, theme::bold())];
+            let mut used = 17;
+
             if configured {
-                if let Some(section) = app.provider_config.section(name.as_str()) {
-                    let prefix_span = format!("{}-*", section.alias_prefix);
-                    used_width += prefix_span.width();
-                    spans.push(Span::styled(prefix_span, theme::muted()));
+                let has_error = app.sync_history.get(name.as_str()).is_some_and(|r| r.is_error);
+                if has_error {
+                    spans.push(Span::styled("\u{26A0}", theme::error()));
+                } else {
+                    spans.push(Span::styled("\u{2713}", theme::success()));
                 }
-                let sync_text = if app.syncing_providers.contains_key(name.as_str()) {
-                    Some(("   syncing...".to_string(), theme::muted()))
+                used += 1;
+
+                if let Some(section) = app.provider_config.section(name.as_str()) {
+                    if !section.auto_sync {
+                        spans.push(Span::styled(" (manual)", theme::muted()));
+                        used += 9;
+                    }
+                }
+
+                // Sync detail on same line
+                let sync_detail = if app.syncing_providers.contains_key(name.as_str()) {
+                    Some("syncing...".to_string())
                 } else if let Some(record) = app.sync_history.get(name.as_str()) {
                     let ago = ConnectionHistory::format_time_ago(record.timestamp);
-                    let detail = if ago.is_empty() {
-                        record.message.clone()
+                    if ago.is_empty() {
+                        Some(record.message.clone())
                     } else {
-                        format!("{}, {}", record.message, ago)
-                    };
-                    let style = if record.is_error {
-                        theme::error()
-                    } else {
-                        theme::muted()
-                    };
-                    let prefix = if record.is_error { "   ! " } else { "   " };
-                    Some((format!("{}{}", prefix, detail), style))
+                        Some(format!("{}, {}", record.message, ago))
+                    }
                 } else {
                     None
                 };
-                if let Some((text, style)) = sync_text {
-                    let max = content_width.saturating_sub(used_width);
+                if let Some(detail) = sync_detail {
+                    let max = content_width.saturating_sub(used + 2);
                     if max > 1 {
-                        spans.push(Span::styled(super::truncate(&text, max), style));
+                        spans.push(Span::styled(
+                            format!("  {}", super::truncate(&detail, max)),
+                            theme::muted(),
+                        ));
                     }
                 }
             }
+
             ListItem::new(Line::from(spans))
         })
         .collect();
 
     let chunks = Layout::vertical([
-        Constraint::Min(5),
+        Constraint::Min(1),
         Constraint::Length(1),
     ])
-    .split(area);
+    .split(inner);
 
     let list = List::new(items)
-        .block(
-            Block::default()
-                .title(title)
-                .borders(Borders::ALL)
-                .border_style(theme::border()),
-        )
         .highlight_style(theme::selected())
         .highlight_symbol("  ");
 
     frame.render_stateful_widget(list, chunks[0], &mut app.ui.provider_list_state);
 
-    // Footer with status right-aligned
-    super::render_footer_with_status(frame, chunks[1], vec![
-        Span::styled(" Enter", theme::primary_action()),
-        Span::styled(" configure  ", theme::muted()),
-        Span::styled("s", theme::accent_bold()),
-        Span::styled(" sync  ", theme::muted()),
-        Span::styled("d", theme::accent_bold()),
-        Span::styled(" remove  ", theme::muted()),
-        Span::styled("Esc", theme::accent_bold()),
-        Span::styled(" back", theme::muted()),
-    ], app);
+    // Footer with status
+    if app.pending_provider_delete.is_some() {
+        let name = app.pending_provider_delete.as_deref().unwrap_or("");
+        let display = crate::providers::provider_display_name(name);
+        super::render_footer_with_status(frame, chunks[1], vec![
+            Span::styled(format!(" Remove {}? ", display), theme::bold()),
+            Span::styled("y", theme::accent_bold()),
+            Span::styled(" yes  ", theme::muted()),
+            Span::styled("Esc", theme::accent_bold()),
+            Span::styled(" no", theme::muted()),
+        ], app);
+    } else {
+        super::render_footer_with_status(frame, chunks[1], vec![
+            Span::styled(" s", theme::accent_bold()),
+            Span::styled(" sync  ", theme::muted()),
+            Span::styled("Enter", theme::primary_action()),
+            Span::styled(" configure  ", theme::muted()),
+            Span::styled("d", theme::accent_bold()),
+            Span::styled(" remove  ", theme::muted()),
+            Span::styled("Esc", theme::accent_bold()),
+            Span::styled(" back", theme::muted()),
+        ], app);
+    }
 }
 
 /// Render the provider configuration form.
@@ -148,15 +163,14 @@ pub fn render_provider_form(frame: &mut Frame, app: &mut App, provider_name: &st
         }
     }
 
-    // Footer with status right-aligned
+    // Footer with status
     let footer_idx = fields.len() + 1;
     super::render_footer_with_status(frame, chunks[footer_idx], vec![
         Span::styled(" Enter", theme::primary_action()),
-        Span::styled(" save  ", theme::muted()),
-        Span::styled("Tab/S-Tab", theme::accent_bold()),
-        Span::styled(" navigate  ", theme::muted()),
-        Span::styled("Ctrl+K", theme::accent_bold()),
-        Span::styled(" pick key  ", theme::muted()),
+        Span::styled(" save ", theme::muted()),
+        Span::styled("\u{2502} ", theme::muted()),
+        Span::styled("Tab", theme::accent_bold()),
+        Span::styled(" next  ", theme::muted()),
         Span::styled("Esc", theme::accent_bold()),
         Span::styled(" cancel", theme::muted()),
     ], app);
@@ -170,7 +184,11 @@ pub fn render_provider_form(frame: &mut Frame, app: &mut App, provider_name: &st
 fn placeholder_for(field: ProviderFormField, provider_name: &str) -> &'static str {
     match field {
         ProviderFormField::Url => "https://pve.example.com:8006",
-        ProviderFormField::Token => "your-api-token",
+        ProviderFormField::Token => match provider_name {
+            "proxmox" => "user@pam!token=secret",
+            "upcloud" => "username:password",
+            _ => "your-api-token",
+        },
         ProviderFormField::AliasPrefix => match provider_name {
             "digitalocean" => "do",
             "vultr" => "vultr",
@@ -181,7 +199,7 @@ fn placeholder_for(field: ProviderFormField, provider_name: &str) -> &'static st
             _ => "prefix",
         },
         ProviderFormField::User => "root",
-        ProviderFormField::IdentityFile => "~/.ssh/id_ed25519",
+        ProviderFormField::IdentityFile => "Enter to pick a key",
         ProviderFormField::VerifyTls => "",
         ProviderFormField::AutoSync => "",
     }
@@ -237,13 +255,25 @@ fn render_provider_field(
         value.clone()
     };
 
-    let display: Span = if value.is_empty() && !is_focused {
-        Span::styled(placeholder_for(field, provider_name), theme::muted())
+    let is_picker = field == ProviderFormField::IdentityFile;
+
+    let content = if value.is_empty() && !is_focused {
+        Line::from(Span::styled(placeholder_for(field, provider_name), theme::muted()))
+    } else if is_picker && is_focused {
+        let inner_width = area.width.saturating_sub(2) as usize;
+        let arrow_pos = inner_width.saturating_sub(1);
+        let val_width = UnicodeWidthStr::width(display_value.as_str());
+        let gap = arrow_pos.saturating_sub(val_width);
+        Line::from(vec![
+            Span::raw(display_value),
+            Span::raw(" ".repeat(gap)),
+            Span::styled("\u{25B8}", theme::muted()),
+        ])
     } else {
-        Span::raw(display_value)
+        Line::from(Span::raw(display_value))
     };
 
-    let paragraph = Paragraph::new(display).block(block);
+    let paragraph = Paragraph::new(content).block(block);
     frame.render_widget(paragraph, area);
 
     if is_focused {
@@ -282,12 +312,20 @@ fn render_provider_toggle_field(
         "no (accept self-signed)"
     };
 
-    let mut spans = vec![Span::raw(value_text)];
-    if is_focused {
-        spans.push(Span::styled("  [Space to toggle]", theme::muted()));
-    }
+    let content = if is_focused {
+        let inner_width = area.width.saturating_sub(2) as usize;
+        let val_width = UnicodeWidthStr::width(value_text);
+        let gap = inner_width.saturating_sub(val_width + 3);
+        Line::from(vec![
+            Span::raw(value_text),
+            Span::raw(" ".repeat(gap)),
+            Span::styled("\u{25C2} \u{25B8}", theme::muted()),
+        ])
+    } else {
+        Line::from(Span::raw(value_text))
+    };
 
-    let paragraph = Paragraph::new(Line::from(spans)).block(block);
+    let paragraph = Paragraph::new(content).block(block);
     frame.render_widget(paragraph, area);
 }
 
@@ -315,12 +353,20 @@ fn render_provider_auto_sync_field(
         "no (sync manually)"
     };
 
-    let mut spans = vec![Span::raw(value_text)];
-    if is_focused {
-        spans.push(Span::styled("  [Space to toggle]", theme::muted()));
-    }
+    let content = if is_focused {
+        let inner_width = area.width.saturating_sub(2) as usize;
+        let val_width = UnicodeWidthStr::width(value_text);
+        let gap = inner_width.saturating_sub(val_width + 3);
+        Line::from(vec![
+            Span::raw(value_text),
+            Span::raw(" ".repeat(gap)),
+            Span::styled("\u{25C2} \u{25B8}", theme::muted()),
+        ])
+    } else {
+        Line::from(Span::raw(value_text))
+    };
 
-    let paragraph = Paragraph::new(Line::from(spans)).block(block);
+    let paragraph = Paragraph::new(content).block(block);
     frame.render_widget(paragraph, area);
 }
 

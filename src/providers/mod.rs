@@ -170,6 +170,10 @@ fn map_ureq_error(err: ureq::Error) -> ProviderError {
 mod tests {
     use super::*;
 
+    // =========================================================================
+    // strip_cidr tests
+    // =========================================================================
+
     #[test]
     fn test_strip_cidr_ipv6_with_prefix() {
         assert_eq!(strip_cidr("2600:3c00::1/128"), "2600:3c00::1");
@@ -190,5 +194,451 @@ mod tests {
     #[test]
     fn test_strip_cidr_empty() {
         assert_eq!(strip_cidr(""), "");
+    }
+
+    #[test]
+    fn test_strip_cidr_slash_without_digits() {
+        // Shouldn't strip if after slash there are non-digits
+        assert_eq!(strip_cidr("path/to/something"), "path/to/something");
+    }
+
+    #[test]
+    fn test_strip_cidr_trailing_slash() {
+        // Trailing slash with nothing after: pos+1 == ip.len(), should NOT strip
+        assert_eq!(strip_cidr("1.2.3.4/"), "1.2.3.4/");
+    }
+
+    // =========================================================================
+    // get_provider factory tests
+    // =========================================================================
+
+    #[test]
+    fn test_get_provider_digitalocean() {
+        let p = get_provider("digitalocean").unwrap();
+        assert_eq!(p.name(), "digitalocean");
+        assert_eq!(p.short_label(), "do");
+    }
+
+    #[test]
+    fn test_get_provider_vultr() {
+        let p = get_provider("vultr").unwrap();
+        assert_eq!(p.name(), "vultr");
+        assert_eq!(p.short_label(), "vultr");
+    }
+
+    #[test]
+    fn test_get_provider_linode() {
+        let p = get_provider("linode").unwrap();
+        assert_eq!(p.name(), "linode");
+        assert_eq!(p.short_label(), "linode");
+    }
+
+    #[test]
+    fn test_get_provider_hetzner() {
+        let p = get_provider("hetzner").unwrap();
+        assert_eq!(p.name(), "hetzner");
+        assert_eq!(p.short_label(), "hetzner");
+    }
+
+    #[test]
+    fn test_get_provider_upcloud() {
+        let p = get_provider("upcloud").unwrap();
+        assert_eq!(p.name(), "upcloud");
+        assert_eq!(p.short_label(), "uc");
+    }
+
+    #[test]
+    fn test_get_provider_proxmox() {
+        let p = get_provider("proxmox").unwrap();
+        assert_eq!(p.name(), "proxmox");
+        assert_eq!(p.short_label(), "pve");
+    }
+
+    #[test]
+    fn test_get_provider_unknown_returns_none() {
+        assert!(get_provider("aws").is_none());
+        assert!(get_provider("").is_none());
+        assert!(get_provider("DigitalOcean").is_none()); // case-sensitive
+    }
+
+    #[test]
+    fn test_get_provider_all_names_resolve() {
+        for name in PROVIDER_NAMES {
+            assert!(get_provider(name).is_some(), "Provider '{}' should resolve", name);
+        }
+    }
+
+    // =========================================================================
+    // get_provider_with_config tests
+    // =========================================================================
+
+    #[test]
+    fn test_get_provider_with_config_proxmox_uses_url() {
+        let section = config::ProviderSection {
+            provider: "proxmox".to_string(),
+            token: "user@pam!token=secret".to_string(),
+            alias_prefix: "pve-".to_string(),
+            user: String::new(),
+            identity_file: String::new(),
+            url: "https://pve.example.com:8006".to_string(),
+            verify_tls: false,
+            auto_sync: false,
+        };
+        let p = get_provider_with_config("proxmox", &section).unwrap();
+        assert_eq!(p.name(), "proxmox");
+    }
+
+    #[test]
+    fn test_get_provider_with_config_non_proxmox_delegates() {
+        let section = config::ProviderSection {
+            provider: "digitalocean".to_string(),
+            token: "do-token".to_string(),
+            alias_prefix: "do-".to_string(),
+            user: String::new(),
+            identity_file: String::new(),
+            url: String::new(),
+            verify_tls: true,
+            auto_sync: true,
+        };
+        let p = get_provider_with_config("digitalocean", &section).unwrap();
+        assert_eq!(p.name(), "digitalocean");
+    }
+
+    #[test]
+    fn test_get_provider_with_config_unknown_returns_none() {
+        let section = config::ProviderSection {
+            provider: "aws".to_string(),
+            token: String::new(),
+            alias_prefix: String::new(),
+            user: String::new(),
+            identity_file: String::new(),
+            url: String::new(),
+            verify_tls: true,
+            auto_sync: true,
+        };
+        assert!(get_provider_with_config("aws", &section).is_none());
+    }
+
+    // =========================================================================
+    // provider_display_name tests
+    // =========================================================================
+
+    #[test]
+    fn test_display_name_all_providers() {
+        assert_eq!(provider_display_name("digitalocean"), "DigitalOcean");
+        assert_eq!(provider_display_name("vultr"), "Vultr");
+        assert_eq!(provider_display_name("linode"), "Linode");
+        assert_eq!(provider_display_name("hetzner"), "Hetzner");
+        assert_eq!(provider_display_name("upcloud"), "UpCloud");
+        assert_eq!(provider_display_name("proxmox"), "Proxmox VE");
+    }
+
+    #[test]
+    fn test_display_name_unknown_returns_input() {
+        assert_eq!(provider_display_name("aws"), "aws");
+        assert_eq!(provider_display_name(""), "");
+    }
+
+    // =========================================================================
+    // PROVIDER_NAMES constant tests
+    // =========================================================================
+
+    #[test]
+    fn test_provider_names_count() {
+        assert_eq!(PROVIDER_NAMES.len(), 6);
+    }
+
+    #[test]
+    fn test_provider_names_contains_all() {
+        assert!(PROVIDER_NAMES.contains(&"digitalocean"));
+        assert!(PROVIDER_NAMES.contains(&"vultr"));
+        assert!(PROVIDER_NAMES.contains(&"linode"));
+        assert!(PROVIDER_NAMES.contains(&"hetzner"));
+        assert!(PROVIDER_NAMES.contains(&"upcloud"));
+        assert!(PROVIDER_NAMES.contains(&"proxmox"));
+    }
+
+    // =========================================================================
+    // ProviderError display tests
+    // =========================================================================
+
+    #[test]
+    fn test_provider_error_display_http() {
+        let err = ProviderError::Http("connection refused".to_string());
+        assert_eq!(format!("{}", err), "HTTP error: connection refused");
+    }
+
+    #[test]
+    fn test_provider_error_display_parse() {
+        let err = ProviderError::Parse("invalid JSON".to_string());
+        assert_eq!(format!("{}", err), "Failed to parse response: invalid JSON");
+    }
+
+    #[test]
+    fn test_provider_error_display_auth() {
+        let err = ProviderError::AuthFailed;
+        assert!(format!("{}", err).contains("Authentication failed"));
+    }
+
+    #[test]
+    fn test_provider_error_display_rate_limited() {
+        let err = ProviderError::RateLimited;
+        assert!(format!("{}", err).contains("Rate limited"));
+    }
+
+    #[test]
+    fn test_provider_error_display_cancelled() {
+        let err = ProviderError::Cancelled;
+        assert_eq!(format!("{}", err), "Cancelled.");
+    }
+
+    #[test]
+    fn test_provider_error_display_partial_result() {
+        let err = ProviderError::PartialResult {
+            hosts: vec![],
+            failures: 3,
+            total: 10,
+        };
+        assert!(format!("{}", err).contains("3 of 10 failed"));
+    }
+
+    // =========================================================================
+    // ProviderHost struct tests
+    // =========================================================================
+
+    #[test]
+    fn test_provider_host_construction() {
+        let host = ProviderHost {
+            server_id: "12345".to_string(),
+            name: "web-01".to_string(),
+            ip: "1.2.3.4".to_string(),
+            tags: vec!["prod".to_string(), "web".to_string()],
+        };
+        assert_eq!(host.server_id, "12345");
+        assert_eq!(host.name, "web-01");
+        assert_eq!(host.ip, "1.2.3.4");
+        assert_eq!(host.tags.len(), 2);
+    }
+
+    #[test]
+    fn test_provider_host_clone() {
+        let host = ProviderHost {
+            server_id: "1".to_string(),
+            name: "a".to_string(),
+            ip: "1.1.1.1".to_string(),
+            tags: vec![],
+        };
+        let cloned = host.clone();
+        assert_eq!(cloned.server_id, host.server_id);
+        assert_eq!(cloned.name, host.name);
+    }
+
+    // =========================================================================
+    // strip_cidr additional edge cases
+    // =========================================================================
+
+    #[test]
+    fn test_strip_cidr_ipv6_with_64() {
+        assert_eq!(strip_cidr("2a01:4f8::1/64"), "2a01:4f8::1");
+    }
+
+    #[test]
+    fn test_strip_cidr_ipv4_with_32() {
+        assert_eq!(strip_cidr("1.2.3.4/32"), "1.2.3.4");
+    }
+
+    #[test]
+    fn test_strip_cidr_ipv4_with_8() {
+        assert_eq!(strip_cidr("10.0.0.1/8"), "10.0.0.1");
+    }
+
+    #[test]
+    fn test_strip_cidr_just_slash() {
+        // "/" alone: pos=0, pos+1=1=len -> condition fails
+        assert_eq!(strip_cidr("/"), "/");
+    }
+
+    #[test]
+    fn test_strip_cidr_slash_with_letters() {
+        assert_eq!(strip_cidr("10.0.0.1/abc"), "10.0.0.1/abc");
+    }
+
+    #[test]
+    fn test_strip_cidr_multiple_slashes() {
+        // rfind gets last slash: "48" is digits, so it strips the last /48
+        assert_eq!(strip_cidr("10.0.0.1/24/48"), "10.0.0.1/24");
+    }
+
+    #[test]
+    fn test_strip_cidr_ipv6_full_notation() {
+        assert_eq!(
+            strip_cidr("2001:0db8:85a3:0000:0000:8a2e:0370:7334/128"),
+            "2001:0db8:85a3:0000:0000:8a2e:0370:7334"
+        );
+    }
+
+    // =========================================================================
+    // ProviderError Debug
+    // =========================================================================
+
+    #[test]
+    fn test_provider_error_debug_http() {
+        let err = ProviderError::Http("timeout".to_string());
+        let debug = format!("{:?}", err);
+        assert!(debug.contains("Http"));
+        assert!(debug.contains("timeout"));
+    }
+
+    #[test]
+    fn test_provider_error_debug_partial_result() {
+        let err = ProviderError::PartialResult {
+            hosts: vec![ProviderHost {
+                server_id: "1".to_string(),
+                name: "web".to_string(),
+                ip: "1.2.3.4".to_string(),
+                tags: vec![],
+            }],
+            failures: 2,
+            total: 5,
+        };
+        let debug = format!("{:?}", err);
+        assert!(debug.contains("PartialResult"));
+        assert!(debug.contains("failures: 2"));
+    }
+
+    // =========================================================================
+    // ProviderHost with empty fields
+    // =========================================================================
+
+    #[test]
+    fn test_provider_host_empty_fields() {
+        let host = ProviderHost {
+            server_id: String::new(),
+            name: String::new(),
+            ip: String::new(),
+            tags: vec![],
+        };
+        assert!(host.server_id.is_empty());
+        assert!(host.name.is_empty());
+        assert!(host.ip.is_empty());
+    }
+
+    // =========================================================================
+    // get_provider_with_config for all non-proxmox providers
+    // =========================================================================
+
+    #[test]
+    fn test_get_provider_with_config_all_providers() {
+        for &name in PROVIDER_NAMES {
+            let section = config::ProviderSection {
+                provider: name.to_string(),
+                token: "tok".to_string(),
+                alias_prefix: "test".to_string(),
+                user: String::new(),
+                identity_file: String::new(),
+                url: if name == "proxmox" {
+                    "https://pve:8006".to_string()
+                } else {
+                    String::new()
+                },
+                verify_tls: true,
+                auto_sync: true,
+            };
+            let p = get_provider_with_config(name, &section);
+            assert!(p.is_some(), "get_provider_with_config({}) should return Some", name);
+            assert_eq!(p.unwrap().name(), name);
+        }
+    }
+
+    // =========================================================================
+    // Provider trait default methods
+    // =========================================================================
+
+    #[test]
+    fn test_provider_fetch_hosts_delegates_to_cancellable() {
+        let provider = get_provider("digitalocean").unwrap();
+        // fetch_hosts delegates to fetch_hosts_cancellable with AtomicBool(false)
+        // We can't actually test this without a server, but we verify the method exists
+        // by calling it (will fail with network error, which is fine for this test)
+        let result = provider.fetch_hosts("fake-token");
+        assert!(result.is_err()); // Expected: no network
+    }
+
+    // =========================================================================
+    // strip_cidr: suffix starts with digit but contains letters
+    // =========================================================================
+
+    #[test]
+    fn test_strip_cidr_digit_then_letters_not_stripped() {
+        assert_eq!(strip_cidr("10.0.0.1/24abc"), "10.0.0.1/24abc");
+    }
+
+    // =========================================================================
+    // provider_display_name: all known providers
+    // =========================================================================
+
+    #[test]
+    fn test_provider_display_name_all() {
+        assert_eq!(provider_display_name("digitalocean"), "DigitalOcean");
+        assert_eq!(provider_display_name("vultr"), "Vultr");
+        assert_eq!(provider_display_name("linode"), "Linode");
+        assert_eq!(provider_display_name("hetzner"), "Hetzner");
+        assert_eq!(provider_display_name("upcloud"), "UpCloud");
+        assert_eq!(provider_display_name("proxmox"), "Proxmox VE");
+    }
+
+    #[test]
+    fn test_provider_display_name_unknown() {
+        assert_eq!(provider_display_name("foobar"), "foobar");
+    }
+
+    // =========================================================================
+    // get_provider: all known + unknown
+    // =========================================================================
+
+    #[test]
+    fn test_get_provider_all_known() {
+        for name in PROVIDER_NAMES {
+            assert!(get_provider(name).is_some(), "get_provider({}) should return Some", name);
+        }
+    }
+
+    #[test]
+    fn test_get_provider_case_sensitive_and_unknown() {
+        assert!(get_provider("aws").is_none());
+        assert!(get_provider("DigitalOcean").is_none()); // Case-sensitive
+        assert!(get_provider("VULTR").is_none());
+        assert!(get_provider("").is_none());
+    }
+
+    // =========================================================================
+    // PROVIDER_NAMES constant
+    // =========================================================================
+
+    #[test]
+    fn test_provider_names_has_all_six() {
+        assert_eq!(PROVIDER_NAMES.len(), 6);
+        assert!(PROVIDER_NAMES.contains(&"digitalocean"));
+        assert!(PROVIDER_NAMES.contains(&"proxmox"));
+    }
+
+    // =========================================================================
+    // Provider short_label via get_provider
+    // =========================================================================
+
+    #[test]
+    fn test_provider_short_labels() {
+        let cases = [
+            ("digitalocean", "do"),
+            ("vultr", "vultr"),
+            ("linode", "linode"),
+            ("hetzner", "hetzner"),
+            ("upcloud", "uc"),
+            ("proxmox", "pve"),
+        ];
+        for (name, expected_label) in &cases {
+            let p = get_provider(name).unwrap();
+            assert_eq!(p.short_label(), *expected_label, "short_label for {}", name);
+        }
     }
 }

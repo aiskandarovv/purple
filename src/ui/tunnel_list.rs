@@ -1,13 +1,12 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
 
 use super::theme;
 use crate::app::App;
 
 pub fn render(frame: &mut Frame, app: &mut App, alias: &str) {
-    let area = frame.area();
     let is_active = app.active_tunnels.contains_key(alias);
     let is_readonly = app
         .hosts
@@ -16,41 +15,52 @@ pub fn render(frame: &mut Frame, app: &mut App, alias: &str) {
 
     // Title
     let mut title_spans = vec![
-        Span::styled(" purple. ", theme::brand_badge()),
-        Span::raw(format!(" Tunnels for {} ", alias)),
+        Span::styled(format!(" Tunnels for {} ", alias), theme::brand()),
     ];
     if is_active {
         title_spans.push(Span::styled("[running] ", theme::success()));
     }
     let title = Line::from(title_spans);
 
+    // Overlay: percentage-based width, height fits content
+    let item_count = app.tunnel_list.len().max(1);
+    let height = (item_count as u16 + 5).min(frame.area().height.saturating_sub(4));
+    let area = {
+        let r = super::centered_rect(70, 80, frame.area());
+        super::centered_rect_fixed(r.width, height, frame.area())
+    };
+    frame.render_widget(Clear, area);
+
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(theme::accent());
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
     let chunks = Layout::vertical([
-        Constraint::Min(5),    // Tunnel list
-        Constraint::Length(1), // Footer or status
+        Constraint::Min(1),
+        Constraint::Length(1),
     ])
-    .split(area);
+    .split(inner);
 
     if app.tunnel_list.is_empty() {
         let msg = if is_readonly {
-            "  No tunnels configured. This host is read-only (included file)."
+            "  Read-only (included file)."
         } else {
-            "  No tunnels configured. Press 'a' to add one."
+            "  No tunnels. Press 'a' to add one."
         };
-        let empty_msg = Paragraph::new(msg)
-            .style(theme::muted())
-            .block(
-                Block::default()
-                    .title(title)
-                    .borders(Borders::ALL)
-                    .border_style(theme::border()),
-            );
-        frame.render_widget(empty_msg, chunks[0]);
+        frame.render_widget(
+            Paragraph::new(msg).style(theme::muted()),
+            chunks[0],
+        );
     } else {
         let items: Vec<ListItem> = app
             .tunnel_list
             .iter()
             .map(|rule| {
-                let type_label = format!("  {:<10}", rule.tunnel_type.label());
+                let type_label = format!(" {:<10}", rule.tunnel_type.label());
                 let port_str = if rule.bind_address.is_empty() {
                     format!("{}", rule.bind_port)
                 } else if rule.bind_address.contains(':') {
@@ -70,7 +80,7 @@ pub fn render(frame: &mut Frame, app: &mut App, alias: &str) {
                 };
                 let line = Line::from(vec![
                     Span::styled(type_label, theme::bold()),
-                    Span::styled(format!("{:<8}", port_str), theme::bold()),
+                    Span::styled(format!("{:<14}", port_str), theme::bold()),
                     Span::raw("  "),
                     Span::styled(dest, theme::muted()),
                 ]);
@@ -79,19 +89,13 @@ pub fn render(frame: &mut Frame, app: &mut App, alias: &str) {
             .collect();
 
         let list = List::new(items)
-            .block(
-                Block::default()
-                    .title(title)
-                    .borders(Borders::ALL)
-                    .border_style(theme::border()),
-            )
             .highlight_style(theme::selected())
             .highlight_symbol("  ");
 
         frame.render_stateful_widget(list, chunks[0], &mut app.ui.tunnel_list_state);
     }
 
-    // Footer with status right-aligned
+    // Footer
     let mut spans: Vec<Span<'_>> = Vec::new();
     if is_active {
         spans.push(Span::styled(" Enter", theme::primary_action()));

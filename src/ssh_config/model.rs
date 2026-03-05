@@ -78,6 +78,8 @@ pub struct HostEntry {
     pub provider: Option<String>,
     /// Number of tunnel forwarding directives.
     pub tunnel_count: u16,
+    /// Password source from purple:askpass comment (e.g. "keychain", "op://...", "pass:...").
+    pub askpass: Option<String>,
 }
 
 impl Default for HostEntry {
@@ -93,6 +95,7 @@ impl Default for HostEntry {
             tags: Vec::new(),
             provider: None,
             tunnel_count: 0,
+            askpass: None,
         }
     }
 }
@@ -216,6 +219,43 @@ impl HostBlock {
         );
     }
 
+    /// Extract askpass source from purple:askpass comment in directives.
+    pub fn askpass(&self) -> Option<String> {
+        for d in &self.directives {
+            if d.is_non_directive {
+                let trimmed = d.raw_line.trim();
+                if let Some(rest) = trimmed.strip_prefix("# purple:askpass ") {
+                    let val = rest.trim();
+                    if !val.is_empty() {
+                        return Some(val.to_string());
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Set askpass source on a host block. Replaces existing purple:askpass comment or adds one.
+    /// Pass an empty string to remove the comment.
+    pub fn set_askpass(&mut self, source: &str) {
+        let indent = self.detect_indent();
+        self.directives.retain(|d| {
+            !(d.is_non_directive && d.raw_line.trim().starts_with("# purple:askpass"))
+        });
+        if !source.is_empty() {
+            let pos = self.content_end();
+            self.directives.insert(
+                pos,
+                Directive {
+                    key: String::new(),
+                    value: String::new(),
+                    raw_line: format!("{}# purple:askpass {}", indent, source),
+                    is_non_directive: true,
+                },
+            );
+        }
+    }
+
     /// Set tags on a host block. Replaces existing purple:tags comment or adds one.
     pub fn set_tags(&mut self, tags: &[String]) {
         let indent = self.detect_indent();
@@ -264,6 +304,7 @@ impl HostBlock {
         entry.tags = self.tags();
         entry.provider = self.provider().map(|(name, _)| name);
         entry.tunnel_count = self.tunnel_count();
+        entry.askpass = self.askpass();
         entry
     }
 
@@ -737,6 +778,18 @@ impl SshConfigFile {
             if let ConfigElement::HostBlock(block) = element {
                 if block.host_pattern == alias {
                     block.set_tags(tags);
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Set askpass source on a host block by alias.
+    pub fn set_host_askpass(&mut self, alias: &str, source: &str) {
+        for element in &mut self.elements {
+            if let ConfigElement::HostBlock(block) = element {
+                if block.host_pattern == alias {
+                    block.set_askpass(source);
                     return;
                 }
             }
@@ -1288,5 +1341,391 @@ mod tests {
         );
         assert!(!config.is_included_host("prod"));
         assert!(!config.is_included_host("staging"));
+    }
+
+    // =========================================================================
+    // HostBlock::askpass() and set_askpass() tests
+    // =========================================================================
+
+    fn first_block(config: &SshConfigFile) -> &HostBlock {
+        match config.elements.first().unwrap() {
+            ConfigElement::HostBlock(b) => b,
+            _ => panic!("Expected HostBlock"),
+        }
+    }
+
+    fn block_by_index(config: &SshConfigFile, idx: usize) -> &HostBlock {
+        let mut count = 0;
+        for el in &config.elements {
+            if let ConfigElement::HostBlock(b) = el {
+                if count == idx {
+                    return b;
+                }
+                count += 1;
+            }
+        }
+        panic!("No HostBlock at index {}", idx);
+    }
+
+    #[test]
+    fn askpass_returns_none_when_absent() {
+        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
+        assert_eq!(first_block(&config).askpass(), None);
+    }
+
+    #[test]
+    fn askpass_returns_keychain() {
+        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
+        assert_eq!(first_block(&config).askpass(), Some("keychain".to_string()));
+    }
+
+    #[test]
+    fn askpass_returns_op_uri() {
+        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass op://Vault/Item/field\n");
+        assert_eq!(first_block(&config).askpass(), Some("op://Vault/Item/field".to_string()));
+    }
+
+    #[test]
+    fn askpass_returns_vault_with_field() {
+        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass vault:secret/ssh#password\n");
+        assert_eq!(first_block(&config).askpass(), Some("vault:secret/ssh#password".to_string()));
+    }
+
+    #[test]
+    fn askpass_returns_bw_source() {
+        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass bw:my-item\n");
+        assert_eq!(first_block(&config).askpass(), Some("bw:my-item".to_string()));
+    }
+
+    #[test]
+    fn askpass_returns_pass_source() {
+        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass pass:ssh/prod\n");
+        assert_eq!(first_block(&config).askpass(), Some("pass:ssh/prod".to_string()));
+    }
+
+    #[test]
+    fn askpass_returns_custom_command() {
+        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass get-pass %a %h\n");
+        assert_eq!(first_block(&config).askpass(), Some("get-pass %a %h".to_string()));
+    }
+
+    #[test]
+    fn askpass_ignores_empty_value() {
+        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass \n");
+        assert_eq!(first_block(&config).askpass(), None);
+    }
+
+    #[test]
+    fn askpass_ignores_non_askpass_purple_comments() {
+        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:tags prod\n");
+        assert_eq!(first_block(&config).askpass(), None);
+    }
+
+    #[test]
+    fn set_askpass_adds_comment() {
+        let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
+        config.set_host_askpass("myserver", "keychain");
+        assert_eq!(first_block(&config).askpass(), Some("keychain".to_string()));
+    }
+
+    #[test]
+    fn set_askpass_replaces_existing() {
+        let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
+        config.set_host_askpass("myserver", "op://V/I/p");
+        assert_eq!(first_block(&config).askpass(), Some("op://V/I/p".to_string()));
+    }
+
+    #[test]
+    fn set_askpass_empty_removes_comment() {
+        let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
+        config.set_host_askpass("myserver", "");
+        assert_eq!(first_block(&config).askpass(), None);
+    }
+
+    #[test]
+    fn set_askpass_preserves_other_directives() {
+        let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n  User admin\n  # purple:tags prod\n");
+        config.set_host_askpass("myserver", "vault:secret/ssh");
+        assert_eq!(first_block(&config).askpass(), Some("vault:secret/ssh".to_string()));
+        let entry = first_block(&config).to_host_entry();
+        assert_eq!(entry.user, "admin");
+        assert!(entry.tags.contains(&"prod".to_string()));
+    }
+
+    #[test]
+    fn set_askpass_preserves_indent() {
+        let mut config = parse_str("Host myserver\n    HostName 10.0.0.1\n");
+        config.set_host_askpass("myserver", "keychain");
+        let raw = first_block(&config).directives.iter()
+            .find(|d| d.raw_line.contains("purple:askpass"))
+            .unwrap();
+        assert!(raw.raw_line.starts_with("    "), "Expected 4-space indent, got: {:?}", raw.raw_line);
+    }
+
+    #[test]
+    fn set_askpass_on_nonexistent_host() {
+        let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
+        config.set_host_askpass("nohost", "keychain");
+        assert_eq!(first_block(&config).askpass(), None);
+    }
+
+    #[test]
+    fn to_entry_includes_askpass() {
+        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass bw:item\n");
+        let entries = config.host_entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].askpass, Some("bw:item".to_string()));
+    }
+
+    #[test]
+    fn to_entry_askpass_none_when_absent() {
+        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
+        let entries = config.host_entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].askpass, None);
+    }
+
+    #[test]
+    fn set_askpass_vault_with_hash_field() {
+        let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
+        config.set_host_askpass("myserver", "vault:secret/data/team#api_key");
+        assert_eq!(first_block(&config).askpass(), Some("vault:secret/data/team#api_key".to_string()));
+    }
+
+    #[test]
+    fn set_askpass_custom_command_with_percent() {
+        let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
+        config.set_host_askpass("myserver", "get-pass %a %h");
+        assert_eq!(first_block(&config).askpass(), Some("get-pass %a %h".to_string()));
+    }
+
+    #[test]
+    fn multiple_hosts_independent_askpass() {
+        let mut config = parse_str("Host alpha\n  HostName a.com\n\nHost beta\n  HostName b.com\n");
+        config.set_host_askpass("alpha", "keychain");
+        config.set_host_askpass("beta", "vault:secret/ssh");
+        assert_eq!(block_by_index(&config, 0).askpass(), Some("keychain".to_string()));
+        assert_eq!(block_by_index(&config, 1).askpass(), Some("vault:secret/ssh".to_string()));
+    }
+
+    #[test]
+    fn set_askpass_then_clear_then_set_again() {
+        let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
+        config.set_host_askpass("myserver", "keychain");
+        assert_eq!(first_block(&config).askpass(), Some("keychain".to_string()));
+        config.set_host_askpass("myserver", "");
+        assert_eq!(first_block(&config).askpass(), None);
+        config.set_host_askpass("myserver", "op://V/I/p");
+        assert_eq!(first_block(&config).askpass(), Some("op://V/I/p".to_string()));
+    }
+
+    #[test]
+    fn askpass_tab_indent_preserved() {
+        let mut config = parse_str("Host myserver\n\tHostName 10.0.0.1\n");
+        config.set_host_askpass("myserver", "pass:ssh/prod");
+        let raw = first_block(&config).directives.iter()
+            .find(|d| d.raw_line.contains("purple:askpass"))
+            .unwrap();
+        assert!(raw.raw_line.starts_with("\t"), "Expected tab indent, got: {:?}", raw.raw_line);
+    }
+
+    #[test]
+    fn askpass_coexists_with_provider_comment() {
+        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:provider do:123\n  # purple:askpass keychain\n");
+        let block = first_block(&config);
+        assert_eq!(block.askpass(), Some("keychain".to_string()));
+        assert!(block.provider().is_some());
+    }
+
+    #[test]
+    fn set_askpass_does_not_remove_tags() {
+        let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:tags prod,staging\n");
+        config.set_host_askpass("myserver", "keychain");
+        let entry = first_block(&config).to_host_entry();
+        assert_eq!(entry.askpass, Some("keychain".to_string()));
+        assert!(entry.tags.contains(&"prod".to_string()));
+        assert!(entry.tags.contains(&"staging".to_string()));
+    }
+
+    #[test]
+    fn askpass_idempotent_set_same_value() {
+        let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
+        config.set_host_askpass("myserver", "keychain");
+        assert_eq!(first_block(&config).askpass(), Some("keychain".to_string()));
+        let serialized = config.serialize();
+        assert_eq!(serialized.matches("purple:askpass").count(), 1, "Should have exactly one askpass comment");
+    }
+
+    #[test]
+    fn askpass_with_value_containing_equals() {
+        let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
+        config.set_host_askpass("myserver", "cmd --opt=val %h");
+        assert_eq!(first_block(&config).askpass(), Some("cmd --opt=val %h".to_string()));
+    }
+
+    #[test]
+    fn askpass_with_value_containing_hash() {
+        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass vault:a/b#c\n");
+        assert_eq!(first_block(&config).askpass(), Some("vault:a/b#c".to_string()));
+    }
+
+    #[test]
+    fn askpass_with_long_op_uri() {
+        let uri = "op://My Personal Vault/SSH Production Server/password";
+        let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
+        config.set_host_askpass("myserver", uri);
+        assert_eq!(first_block(&config).askpass(), Some(uri.to_string()));
+    }
+
+    #[test]
+    fn askpass_does_not_interfere_with_host_matching() {
+        // askpass is stored as a non-directive comment; it shouldn't affect SSH matching
+        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n  User root\n  # purple:askpass keychain\n");
+        let entry = first_block(&config).to_host_entry();
+        assert_eq!(entry.user, "root");
+        assert_eq!(entry.hostname, "10.0.0.1");
+        assert_eq!(entry.askpass, Some("keychain".to_string()));
+    }
+
+    #[test]
+    fn set_askpass_on_host_with_many_directives() {
+        let config_str = "\
+Host myserver
+  HostName 10.0.0.1
+  User admin
+  Port 2222
+  IdentityFile ~/.ssh/id_ed25519
+  ProxyJump bastion
+  # purple:tags prod,us-east
+";
+        let mut config = parse_str(config_str);
+        config.set_host_askpass("myserver", "pass:ssh/prod");
+        let entry = first_block(&config).to_host_entry();
+        assert_eq!(entry.askpass, Some("pass:ssh/prod".to_string()));
+        assert_eq!(entry.user, "admin");
+        assert_eq!(entry.port, 2222);
+        assert!(entry.tags.contains(&"prod".to_string()));
+    }
+
+    #[test]
+    fn askpass_with_crlf_line_endings() {
+        let config = parse_str("Host myserver\r\n  HostName 10.0.0.1\r\n  # purple:askpass keychain\r\n");
+        assert_eq!(first_block(&config).askpass(), Some("keychain".to_string()));
+    }
+
+    #[test]
+    fn askpass_only_on_first_matching_host() {
+        // If two Host blocks have the same alias (unusual), askpass comes from first
+        let config = parse_str("Host dup\n  HostName a.com\n  # purple:askpass keychain\n\nHost dup\n  HostName b.com\n  # purple:askpass vault:x\n");
+        let entries = config.host_entries();
+        // First match
+        assert_eq!(entries[0].askpass, Some("keychain".to_string()));
+    }
+
+    #[test]
+    fn set_askpass_preserves_other_non_directive_comments() {
+        let config_str = "Host myserver\n  HostName 10.0.0.1\n  # This is a user comment\n  # purple:askpass old\n  # Another comment\n";
+        let mut config = parse_str(config_str);
+        config.set_host_askpass("myserver", "new-source");
+        let serialized = config.serialize();
+        assert!(serialized.contains("# This is a user comment"));
+        assert!(serialized.contains("# Another comment"));
+        assert!(serialized.contains("# purple:askpass new-source"));
+        assert!(!serialized.contains("# purple:askpass old"));
+    }
+
+    #[test]
+    fn askpass_mixed_with_tunnel_directives() {
+        let config_str = "\
+Host myserver
+  HostName 10.0.0.1
+  LocalForward 8080 localhost:80
+  # purple:askpass bw:item
+  RemoteForward 9090 localhost:9090
+";
+        let config = parse_str(config_str);
+        let entry = first_block(&config).to_host_entry();
+        assert_eq!(entry.askpass, Some("bw:item".to_string()));
+        assert_eq!(entry.tunnel_count, 2);
+    }
+
+    // =========================================================================
+    // askpass: set_askpass idempotent (same value)
+    // =========================================================================
+
+    #[test]
+    fn set_askpass_idempotent_same_value() {
+        let config_str = "Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n";
+        let mut config = parse_str(config_str);
+        config.set_host_askpass("myserver", "keychain");
+        let output = config.serialize();
+        // Should still have exactly one askpass comment
+        assert_eq!(output.matches("purple:askpass").count(), 1);
+        assert!(output.contains("# purple:askpass keychain"));
+    }
+
+    #[test]
+    fn set_askpass_with_equals_in_value() {
+        let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
+        config.set_host_askpass("myserver", "cmd --opt=val");
+        let entries = config.host_entries();
+        assert_eq!(entries[0].askpass, Some("cmd --opt=val".to_string()));
+    }
+
+    #[test]
+    fn set_askpass_with_hash_in_value() {
+        let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
+        config.set_host_askpass("myserver", "vault:secret/data#field");
+        let entries = config.host_entries();
+        assert_eq!(entries[0].askpass, Some("vault:secret/data#field".to_string()));
+    }
+
+    #[test]
+    fn set_askpass_long_op_uri() {
+        let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
+        let long_uri = "op://My Personal Vault/SSH Production Server Key/password";
+        config.set_host_askpass("myserver", long_uri);
+        assert_eq!(config.host_entries()[0].askpass, Some(long_uri.to_string()));
+    }
+
+    #[test]
+    fn askpass_host_with_multi_pattern_is_skipped() {
+        // Multi-pattern host blocks ("Host prod staging") are treated as patterns
+        // and are not included in host_entries(), so set_askpass is a no-op
+        let config_str = "Host prod staging\n  HostName 10.0.0.1\n";
+        let mut config = parse_str(config_str);
+        config.set_host_askpass("prod", "keychain");
+        // No entries because multi-pattern hosts are pattern hosts
+        assert!(config.host_entries().is_empty());
+    }
+
+    #[test]
+    fn askpass_survives_directive_reorder() {
+        // askpass should survive even when directives are in unusual order
+        let config_str = "\
+Host myserver
+  # purple:askpass op://V/I/p
+  HostName 10.0.0.1
+  User root
+";
+        let config = parse_str(config_str);
+        let entry = first_block(&config).to_host_entry();
+        assert_eq!(entry.askpass, Some("op://V/I/p".to_string()));
+        assert_eq!(entry.hostname, "10.0.0.1");
+    }
+
+    #[test]
+    fn askpass_among_many_purple_comments() {
+        let config_str = "\
+Host myserver
+  HostName 10.0.0.1
+  # purple:tags prod,us-east
+  # purple:provider do:12345
+  # purple:askpass pass:ssh/prod
+";
+        let config = parse_str(config_str);
+        let entry = first_block(&config).to_host_entry();
+        assert_eq!(entry.askpass, Some("pass:ssh/prod".to_string()));
+        assert!(entry.tags.contains(&"prod".to_string()));
     }
 }

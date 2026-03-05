@@ -1,4 +1,5 @@
 mod app;
+mod askpass;
 mod clipboard;
 mod connection;
 mod event;
@@ -116,6 +117,11 @@ enum Commands {
         #[command(subcommand)]
         command: TunnelCommands,
     },
+    /// Manage passwords in the OS keychain for SSH hosts
+    Password {
+        #[command(subcommand)]
+        command: PasswordCommands,
+    },
     /// Update purple to the latest version
     Update,
 }
@@ -206,6 +212,20 @@ enum TunnelCommands {
     },
 }
 
+#[derive(Subcommand)]
+enum PasswordCommands {
+    /// Store a password in the OS keychain for a host
+    Set {
+        /// Host alias
+        alias: String,
+    },
+    /// Remove a password from the OS keychain
+    Remove {
+        /// Host alias
+        alias: String,
+    },
+}
+
 fn resolve_config_path(path: &str) -> Result<PathBuf> {
     if let Some(rest) = path.strip_prefix("~/") {
         let home = dirs::home_dir().context("Could not determine home directory")?;
@@ -231,6 +251,12 @@ fn resolve_token(explicit: Option<String>, from_stdin: bool) -> Result<String> {
 }
 
 fn main() -> Result<()> {
+    // Askpass mode: when invoked as SSH_ASKPASS, handle the request and exit.
+    // Must run before theme init and CLI parse to avoid terminal interference.
+    if std::env::var("PURPLE_ASKPASS_MODE").is_ok() {
+        return askpass::handle();
+    }
+
     ui::theme::init();
     let cli = Cli::parse();
 
@@ -247,6 +273,9 @@ fn main() -> Result<()> {
     }
     if let Some(Commands::Update) = cli.command {
         return update::self_update();
+    }
+    if let Some(Commands::Password { command }) = cli.command {
+        return handle_password_command(command);
     }
 
     let config_path = resolve_config_path(&cli.config)?;
@@ -275,17 +304,24 @@ fn main() -> Result<()> {
         Some(Commands::Tunnel { command }) => {
             return handle_tunnel_command(config, command);
         }
-        Some(Commands::Provider { .. }) | Some(Commands::Update) => unreachable!(),
+        Some(Commands::Provider { .. }) | Some(Commands::Update) | Some(Commands::Password { .. }) => unreachable!(),
         None => {}
     }
 
     // Direct connect mode (--connect)
     if let Some(alias) = cli.connect {
-        let status = connection::connect(&alias, &config_path)?;
+        let askpass = config.host_entries().iter()
+            .find(|h| h.alias == alias)
+            .and_then(|h| h.askpass.clone())
+            .or_else(preferences::load_askpass_default);
+        let bw_session = ensure_bw_session(None, askpass.as_deref());
+        ensure_keychain_password(&alias, askpass.as_deref());
+        let status = connection::connect(&alias, &config_path, askpass.as_deref(), bw_session.as_deref())?;
         let code = status.code().unwrap_or(1);
         if code != 255 {
             history::ConnectionHistory::load().record(&alias);
         }
+        askpass::cleanup_marker(&alias);
         std::process::exit(code);
     }
 
@@ -317,12 +353,17 @@ fn main() -> Result<()> {
         let entries = config.host_entries();
         if let Some(host) = entries.iter().find(|h| h.alias == *alias) {
             let alias = host.alias.clone();
+            let askpass = host.askpass.clone()
+                .or_else(preferences::load_askpass_default);
+            let bw_session = ensure_bw_session(None, askpass.as_deref());
+            ensure_keychain_password(&alias, askpass.as_deref());
             println!("Beaming you up to {}...\n", alias);
-            let status = connection::connect(&alias, &config_path)?;
+            let status = connection::connect(&alias, &config_path, askpass.as_deref(), bw_session.as_deref())?;
             let code = status.code().unwrap_or(1);
             if code != 255 {
                 history::ConnectionHistory::load().record(&alias);
             }
+            askpass::cleanup_marker(&alias);
             std::process::exit(code);
         }
         // No exact match — open TUI with search pre-filled
@@ -502,11 +543,16 @@ fn run_tui(mut app: App) -> Result<()> {
         }
 
         // Handle pending SSH connection
-        if let Some(alias) = app.pending_connect.take() {
+        if let Some((alias, host_askpass)) = app.pending_connect.take() {
+            let askpass = host_askpass.or_else(preferences::load_askpass_default);
             events.pause();
             terminal.exit()?;
+            if let Some(token) = ensure_bw_session(app.bw_session.as_deref(), askpass.as_deref()) {
+                app.bw_session = Some(token);
+            }
+            ensure_keychain_password(&alias, askpass.as_deref());
             println!("Beaming you up to {}...\n", alias);
-            let status = connection::connect(&alias, &app.reload.config_path);
+            let status = connection::connect(&alias, &app.reload.config_path, askpass.as_deref(), app.bw_session.as_deref());
             println!();
             match &status {
                 Ok(exit) => {
@@ -526,6 +572,7 @@ fn run_tui(mut app: App) -> Result<()> {
                     app.set_status(format!("Connection to {} failed.", alias), true);
                 }
             }
+            askpass::cleanup_marker(&alias);
             terminal.enter()?;
             events.resume();
             last_config_check = std::time::Instant::now();
@@ -1116,6 +1163,148 @@ fn handle_tunnel_command(mut config: SshConfigFile, command: TunnelCommands) -> 
                 .map_err(|e| anyhow::anyhow!("Failed to start ssh: {}", e))?;
             let code = status.code().unwrap_or(1);
             std::process::exit(code);
+        }
+    }
+}
+
+/// Read a line of input with echo disabled. Returns None if the user presses Esc.
+fn prompt_hidden_input(prompt: &str) -> Result<Option<String>> {
+    eprint!("{}", prompt);
+    crossterm::terminal::enable_raw_mode()?;
+    let mut input = String::new();
+    loop {
+        if let crossterm::event::Event::Key(key) = crossterm::event::read()? {
+            match key.code {
+                crossterm::event::KeyCode::Enter => break,
+                crossterm::event::KeyCode::Char(c) => {
+                    input.push(c);
+                    eprint!("*");
+                }
+                crossterm::event::KeyCode::Backspace => {
+                    if input.pop().is_some() {
+                        eprint!("\x08 \x08");
+                    }
+                }
+                crossterm::event::KeyCode::Esc => {
+                    crossterm::terminal::disable_raw_mode()?;
+                    eprintln!();
+                    return Ok(None);
+                }
+                _ => {}
+            }
+        }
+    }
+    crossterm::terminal::disable_raw_mode()?;
+    eprintln!();
+    Ok(Some(input))
+}
+
+/// Pre-flight check for Bitwarden vault. If the askpass source uses `bw:` and
+/// no session token is cached, prompts the user to unlock the vault.
+/// Returns Some(token) only when a new token was obtained. None means no action needed.
+fn ensure_bw_session(existing: Option<&str>, askpass: Option<&str>) -> Option<String> {
+    let askpass = askpass?;
+    if !askpass.starts_with("bw:") || existing.is_some() {
+        return None;
+    }
+    // Check vault status
+    let status = askpass::bw_vault_status();
+    match status {
+        askpass::BwStatus::Unlocked => {
+            // Vault already unlocked (e.g. BW_SESSION in environment). No action needed.
+            None
+        }
+        askpass::BwStatus::NotInstalled => {
+            eprintln!("Bitwarden CLI (bw) not found. SSH will prompt for password.");
+            None
+        }
+        askpass::BwStatus::NotAuthenticated => {
+            eprintln!("Bitwarden vault not logged in. Run 'bw login' first.");
+            None
+        }
+        askpass::BwStatus::Locked => {
+            // Prompt for master password and unlock
+            for attempt in 0..2 {
+                let password = match prompt_hidden_input("Bitwarden master password: ") {
+                    Ok(Some(p)) if !p.is_empty() => p,
+                    Ok(Some(_)) => {
+                        eprintln!("Empty password. SSH will prompt for password.");
+                        return None;
+                    }
+                    Ok(None) => {
+                        // User pressed Esc
+                        return None;
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to read password: {}", e);
+                        return None;
+                    }
+                };
+                match askpass::bw_unlock(&password) {
+                    Ok(token) => return Some(token),
+                    Err(e) => {
+                        if attempt == 0 {
+                            eprintln!("Unlock failed: {}. Try again.", e);
+                        } else {
+                            eprintln!("Unlock failed: {}. SSH will prompt for password.", e);
+                        }
+                    }
+                }
+            }
+            None
+        }
+    }
+}
+
+/// Pre-flight check for keychain password. If the askpass source is `keychain` and
+/// no password is stored yet, prompts the user to enter one and stores it.
+fn ensure_keychain_password(alias: &str, askpass: Option<&str>) {
+    if askpass != Some("keychain") {
+        return;
+    }
+    // Check if password already exists
+    if askpass::keychain_has_password(alias) {
+        return;
+    }
+    // Prompt for password and store it
+    let password = match prompt_hidden_input(&format!("Password for {} (stored in keychain): ", alias)) {
+        Ok(Some(p)) if !p.is_empty() => p,
+        Ok(Some(_)) => {
+            eprintln!("Empty password. SSH will prompt for password.");
+            return;
+        }
+        Ok(None) => return, // Esc
+        Err(_) => return,
+    };
+    match askpass::store_in_keychain(alias, &password) {
+        Ok(()) => eprintln!("Password stored in keychain."),
+        Err(e) => eprintln!("Failed to store in keychain: {}. SSH will prompt for password.", e),
+    }
+}
+
+fn handle_password_command(command: PasswordCommands) -> Result<()> {
+    match command {
+        PasswordCommands::Set { alias } => {
+            let password = match prompt_hidden_input(&format!("Password for {}: ", alias))? {
+                Some(p) if !p.is_empty() => p,
+                Some(_) => {
+                    eprintln!("Password can't be empty.");
+                    std::process::exit(1);
+                }
+                None => {
+                    eprintln!("Cancelled.");
+                    std::process::exit(1);
+                }
+            };
+
+            askpass::store_in_keychain(&alias, &password)?;
+            println!("Password stored for {}. Set 'keychain' as password source to use it.", alias);
+            Ok(())
+        }
+        PasswordCommands::Remove { alias } => {
+            askpass::remove_from_keychain(&alias)?;
+            println!("Password removed for {}.", alias);
+            Ok(())
         }
     }
 }

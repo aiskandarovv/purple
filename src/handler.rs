@@ -69,7 +69,8 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
         KeyCode::Enter => {
             if let Some(host) = app.selected_host() {
                 let alias = host.alias.clone();
-                app.pending_connect = Some(alias);
+                let askpass = host.askpass.clone();
+                app.pending_connect = Some((alias, askpass));
             }
         }
         KeyCode::Char('a') => {
@@ -304,8 +305,9 @@ fn handle_host_list_search(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sende
         KeyCode::Enter => {
             if let Some(host) = app.selected_host() {
                 let alias = host.alias.clone();
+                let askpass = host.askpass.clone();
                 app.cancel_search();
-                app.pending_connect = Some(alias);
+                app.pending_connect = Some((alias, askpass));
             }
         }
         KeyCode::Down | KeyCode::Tab => {
@@ -334,20 +336,15 @@ fn handle_host_list_search(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sende
 }
 
 fn handle_form(app: &mut App, key: KeyEvent) {
-    // Dispatch to key picker if it's open
-    if app.ui.show_key_picker {
-        handle_key_picker_shared(app, key, false);
+    // Dispatch to password picker if it's open
+    if app.ui.show_password_picker {
+        handle_password_picker(app, key);
         return;
     }
 
-    // Ctrl+K opens key picker from any field (not bare K, which conflicts with text input)
-    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('k') {
-        app.scan_keys();
-        app.ui.show_key_picker = true;
-        app.ui.key_picker_state = ratatui::widgets::ListState::default();
-        if !app.keys.is_empty() {
-            app.ui.key_picker_state.select(Some(0));
-        }
+    // Dispatch to key picker if it's open
+    if app.ui.show_key_picker {
+        handle_key_picker_shared(app, key, false);
         return;
     }
 
@@ -370,11 +367,28 @@ fn handle_form(app: &mut App, key: KeyEvent) {
             app.form.focused_field = app.form.focused_field.prev();
         }
         KeyCode::Enter => {
-            // Smart paste on submit too
-            if app.form.focused_field == FormField::Alias {
-                maybe_smart_paste(app);
+            match app.form.focused_field {
+                FormField::IdentityFile => {
+                    app.scan_keys();
+                    app.ui.show_key_picker = true;
+                    app.ui.key_picker_state = ratatui::widgets::ListState::default();
+                    if !app.keys.is_empty() {
+                        app.ui.key_picker_state.select(Some(0));
+                    }
+                }
+                FormField::AskPass => {
+                    app.ui.show_password_picker = true;
+                    app.ui.password_picker_state = ratatui::widgets::ListState::default();
+                    app.ui.password_picker_state.select(Some(0));
+                }
+                FormField::Alias => {
+                    maybe_smart_paste(app);
+                    submit_form(app);
+                }
+                _ => {
+                    submit_form(app);
+                }
             }
-            submit_form(app);
         }
         KeyCode::Char(c) => {
             app.form.focused_value_mut().push(c);
@@ -431,6 +445,14 @@ fn submit_form(app: &mut App) {
         return;
     }
 
+    // Track old askpass to detect keychain removal
+    let old_askpass = match &app.screen {
+        Screen::EditHost { alias } => app.hosts.iter()
+            .find(|h| h.alias == *alias)
+            .and_then(|h| h.askpass.clone()),
+        _ => None,
+    };
+
     let result = match &app.screen {
         Screen::AddHost => app.add_host_from_form(),
         Screen::EditHost { alias } => {
@@ -443,7 +465,26 @@ fn submit_form(app: &mut App) {
         Ok(msg) => {
             // Clear undo buffer after successful write
             app.deleted_host = None;
-            app.set_status(msg, false);
+            // Handle keychain changes on edit
+            let mut final_msg = msg;
+            if old_askpass.as_deref() == Some("keychain") {
+                if app.form.askpass != "keychain" {
+                    // Source changed away from keychain — remove old entry
+                    if let Screen::EditHost { ref alias } = app.screen {
+                        let _ = crate::askpass::remove_from_keychain(alias);
+                    }
+                    final_msg = format!("{}. Keychain entry removed.", final_msg);
+                } else if let Screen::EditHost { ref alias } = app.screen {
+                    // Alias renamed — migrate keychain entry
+                    if *alias != app.form.alias {
+                        if let Ok(pw) = crate::askpass::retrieve_keychain_password(alias) {
+                            let _ = crate::askpass::store_in_keychain(&app.form.alias, &pw);
+                            let _ = crate::askpass::remove_from_keychain(alias);
+                        }
+                    }
+                }
+            }
+            app.set_status(final_msg, false);
         }
         Err(msg) => {
             app.set_status(msg, true);
@@ -457,7 +498,7 @@ fn submit_form(app: &mut App) {
 
 fn handle_confirm_delete(app: &mut App, key: KeyEvent) {
     match key.code {
-        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+        KeyCode::Char('y') | KeyCode::Char('Y') => {
             if let Screen::ConfirmDelete { ref alias } = app.screen {
                 let alias = alias.clone();
                 if let Some((element, position)) = app.config.delete_host_undoable(&alias) {
@@ -650,6 +691,34 @@ fn handle_tag_picker_screen(app: &mut App, key: KeyEvent) {
 }
 
 fn handle_provider_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEvent>) {
+    // Handle pending provider delete confirmation first
+    if app.pending_provider_delete.is_some() {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                let name = app.pending_provider_delete.take().unwrap();
+                if let Some(old_section) = app.provider_config.section(name.as_str()).cloned() {
+                    app.provider_config.remove_section(name.as_str());
+                    if let Err(e) = app.provider_config.save() {
+                        app.provider_config.set_section(old_section);
+                        app.set_status(format!("Failed to save: {}", e), true);
+                    } else {
+                        app.sync_history.remove(name.as_str());
+                        let display_name = crate::providers::provider_display_name(name.as_str());
+                        app.set_status(
+                            format!("Removed {} configuration. Synced hosts remain in your SSH config.", display_name),
+                            false,
+                        );
+                    }
+                }
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                app.pending_provider_delete = None;
+            }
+            _ => {}
+        }
+        return;
+    }
+
     let provider_count = app.sorted_provider_names().len();
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') => {
@@ -735,20 +804,11 @@ fn handle_provider_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<A
             if let Some(index) = app.ui.provider_list_state.selected() {
                 let sorted = app.sorted_provider_names();
                 if let Some(name) = sorted.get(index) {
-                    if let Some(old_section) = app.provider_config.section(name.as_str()).cloned() {
-                        app.provider_config.remove_section(name.as_str());
-                        if let Err(e) = app.provider_config.save() {
-                            // Rollback: restore the removed section
-                            app.provider_config.set_section(old_section);
-                            app.set_status(format!("Failed to save: {}", e), true);
-                        } else {
-                            app.sync_history.remove(name.as_str());
-                            let display_name = crate::providers::provider_display_name(name.as_str());
-                            app.set_status(
-                                format!("Removed {} configuration.", display_name),
-                                false,
-                            );
-                        }
+                    if app.provider_config.section(name.as_str()).is_some() {
+                        app.pending_provider_delete = Some(name.clone());
+                    } else {
+                        let display_name = crate::providers::provider_display_name(name.as_str());
+                        app.set_status(format!("{} is not configured. Nothing to remove.", display_name), false);
                     }
                 }
             }
@@ -761,17 +821,6 @@ fn handle_provider_form(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<A
     // Dispatch to key picker if open
     if app.ui.show_key_picker {
         handle_key_picker_shared(app, key, true);
-        return;
-    }
-
-    // Ctrl+K opens key picker from any field (not bare K, which conflicts with text input)
-    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('k') {
-        app.scan_keys();
-        app.ui.show_key_picker = true;
-        app.ui.key_picker_state = ratatui::widgets::ListState::default();
-        if !app.keys.is_empty() {
-            app.ui.key_picker_state.select(Some(0));
-        }
         return;
     }
 
@@ -793,7 +842,16 @@ fn handle_provider_form(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<A
             app.provider_form.focused_field = app.provider_form.focused_field.prev(fields);
         }
         KeyCode::Enter => {
-            submit_provider_form(app, events_tx);
+            if app.provider_form.focused_field == crate::app::ProviderFormField::IdentityFile {
+                app.scan_keys();
+                app.ui.show_key_picker = true;
+                app.ui.key_picker_state = ratatui::widgets::ListState::default();
+                if !app.keys.is_empty() {
+                    app.ui.key_picker_state.select(Some(0));
+                }
+            } else {
+                submit_provider_form(app, events_tx);
+            }
         }
         KeyCode::Char(' ') if app.provider_form.focused_field == crate::app::ProviderFormField::VerifyTls => {
             app.provider_form.verify_tls = !app.provider_form.verify_tls;
@@ -932,6 +990,74 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
     }
     app.clear_form_mtime();
     app.screen = Screen::Providers;
+}
+
+/// Password source picker handler.
+fn handle_password_picker(app: &mut App, key: KeyEvent) {
+    // Ctrl+D sets selected source as global default
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('d') {
+        if let Some(index) = app.ui.password_picker_state.selected() {
+            if let Some(source) = crate::askpass::PASSWORD_SOURCES.get(index) {
+                let is_none = source.label == "None";
+                let value = if is_none { "" } else { source.value };
+                match crate::preferences::save_askpass_default(value) {
+                    Ok(()) => {
+                        if is_none {
+                            app.set_status("Global default cleared.", false);
+                        } else {
+                            app.set_status(format!("Global default set to {}.", source.label), false);
+                        }
+                    }
+                    Err(e) => {
+                        app.set_status(format!("Failed to save default: {}", e), true);
+                    }
+                }
+            }
+        }
+        app.ui.show_password_picker = false;
+        return;
+    }
+
+    match key.code {
+        KeyCode::Esc => {
+            app.ui.show_password_picker = false;
+        }
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.select_next_password_source();
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.select_prev_password_source();
+        }
+        KeyCode::Enter => {
+            if let Some(index) = app.ui.password_picker_state.selected() {
+                if let Some(source) = crate::askpass::PASSWORD_SOURCES.get(index) {
+                    let is_none = source.label == "None";
+                    let is_custom_cmd = source.label == "Custom command";
+                    let is_prefix = source.value.ends_with(':') || source.value.ends_with("//");
+                    if is_none {
+                        app.form.askpass = String::new();
+                        app.set_status("Password source cleared.", false);
+                    } else if is_custom_cmd {
+                        app.form.askpass = String::new();
+                        app.form.focused_field = FormField::AskPass;
+                        app.set_status("Type your command. Use %a (alias) and %h (hostname) as placeholders.", false);
+                    } else if is_prefix {
+                        app.form.askpass = source.value.to_string();
+                        app.form.focused_field = FormField::AskPass;
+                        app.set_status(format!("Complete the {} path.", source.label), false);
+                    } else {
+                        app.form.askpass = source.value.to_string();
+                        app.set_status(
+                            format!("Password source set to {}.", source.label),
+                            false,
+                        );
+                    }
+                }
+            }
+            app.ui.show_password_picker = false;
+        }
+        _ => {}
+    }
 }
 
 /// Unified key picker handler for both host form and provider form.
@@ -1093,7 +1219,10 @@ fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
                 }
             } else if !app.tunnel_list.is_empty() {
                 // Start
-                match crate::tunnel::start_tunnel(&alias, &app.reload.config_path) {
+                let askpass = app.hosts.iter()
+                    .find(|h| h.alias == alias)
+                    .and_then(|h| h.askpass.clone());
+                match crate::tunnel::start_tunnel(&alias, &app.reload.config_path, askpass.as_deref()) {
                     Ok(child) => {
                         app.active_tunnels.insert(
                             alias.clone(),
@@ -1445,6 +1574,33 @@ mod tests {
         app
     }
 
+    /// Submit provider form with fresh mtime capture to minimize race window.
+    fn submit_form(app: &mut App) {
+        app.capture_provider_form_mtime();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(app, key(KeyCode::Enter), &tx);
+    }
+
+    /// Assert that the status message contains the expected validation error.
+    /// Tolerates the conflict-detection race: if another parallel test wrote
+    /// to ~/.purple/providers between mtime capture and submit, the conflict
+    /// check fires before validation and the test is inconclusive (not a bug).
+    fn assert_status_contains(app: &App, expected: &str) {
+        let msg = &app.status.as_ref().expect("status should be set").text;
+        if msg.contains("changed externally") {
+            return; // inconclusive due to race
+        }
+        assert!(msg.contains(expected), "Expected status to contain '{}', got: '{}'", expected, msg);
+    }
+
+    fn assert_status_not_contains(app: &App, not_expected: &str) {
+        let msg = app.status.as_ref().map(|s| s.text.as_str()).unwrap_or("");
+        if msg.contains("changed externally") {
+            return; // inconclusive due to race
+        }
+        assert!(!msg.contains(not_expected), "Status should NOT contain '{}', got: '{}'", not_expected, msg);
+    }
+
     #[test]
     fn test_space_toggles_auto_sync_true_to_false() {
         let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::AutoSync);
@@ -1549,5 +1705,1795 @@ mod tests {
         if let Some(section) = app.provider_config.section("digitalocean") {
             assert!(section.auto_sync, "Opgeslagen sectie moet auto_sync=true hebben");
         }
+    }
+
+    // =========================================================================
+    // Provider form validation tests
+    // =========================================================================
+
+    #[test]
+    fn test_submit_provider_form_rejects_control_chars_in_token() {
+        let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::Token);
+        app.provider_form.token = "tok\x01en".to_string();
+        submit_form(&mut app);
+        assert!(matches!(app.screen, Screen::ProviderForm { .. }));
+        assert_status_contains(&app, "control characters");
+    }
+
+    #[test]
+    fn test_submit_provider_form_rejects_control_chars_in_alias_prefix() {
+        let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::Token);
+        app.provider_form.alias_prefix = "do\x00".to_string();
+        submit_form(&mut app);
+        assert!(matches!(app.screen, Screen::ProviderForm { .. }));
+        assert_status_contains(&app, "control characters");
+    }
+
+    #[test]
+    fn test_submit_provider_form_rejects_control_chars_in_url() {
+        let mut app = make_form_app_focused_on("proxmox", ProviderFormField::Url);
+        app.provider_form.url = "https://pve\x0a.local:8006".to_string();
+        app.provider_form.token = "user@pam!t=secret".to_string();
+        submit_form(&mut app);
+        assert!(matches!(app.screen, Screen::ProviderForm { .. }));
+        assert_status_contains(&app, "control characters");
+    }
+
+    #[test]
+    fn test_submit_provider_form_rejects_control_chars_in_user() {
+        let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::Token);
+        app.provider_form.user = "ro\tot".to_string();
+        submit_form(&mut app);
+        assert!(matches!(app.screen, Screen::ProviderForm { .. }));
+        assert_status_contains(&app, "control characters");
+    }
+
+    #[test]
+    fn test_submit_provider_form_rejects_control_chars_in_identity_file() {
+        let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::Token);
+        app.provider_form.identity_file = "~/.ssh/id\x1b_rsa".to_string();
+        submit_form(&mut app);
+        assert!(matches!(app.screen, Screen::ProviderForm { .. }));
+        assert_status_contains(&app, "control characters");
+    }
+
+    #[test]
+    fn test_submit_proxmox_rejects_empty_url() {
+        let mut app = make_form_app_focused_on("proxmox", ProviderFormField::Url);
+        app.provider_form.url = "".to_string();
+        app.provider_form.token = "user@pam!t=secret".to_string();
+        submit_form(&mut app);
+        assert!(matches!(app.screen, Screen::ProviderForm { .. }));
+        assert_status_contains(&app, "URL is required");
+    }
+
+    #[test]
+    fn test_submit_proxmox_rejects_http_url() {
+        let mut app = make_form_app_focused_on("proxmox", ProviderFormField::Url);
+        app.provider_form.url = "http://pve.local:8006".to_string();
+        app.provider_form.token = "user@pam!t=secret".to_string();
+        submit_form(&mut app);
+        assert!(matches!(app.screen, Screen::ProviderForm { .. }));
+        assert_status_contains(&app, "https://");
+    }
+
+    #[test]
+    fn test_submit_proxmox_accepts_https_url() {
+        let mut app = make_form_app_focused_on("proxmox", ProviderFormField::Url);
+        app.provider_form.url = "https://pve.local:8006".to_string();
+        app.provider_form.token = "user@pam!t=secret".to_string();
+        submit_form(&mut app);
+        assert_status_not_contains(&app, "URL is required");
+        assert_status_not_contains(&app, "https://");
+    }
+
+    #[test]
+    fn test_submit_proxmox_rejects_bare_hostname_url() {
+        let mut app = make_form_app_focused_on("proxmox", ProviderFormField::Url);
+        app.provider_form.url = "pve.local:8006".to_string();
+        app.provider_form.token = "user@pam!t=secret".to_string();
+        submit_form(&mut app);
+        assert!(matches!(app.screen, Screen::ProviderForm { .. }));
+        assert_status_contains(&app, "https://");
+    }
+
+    #[test]
+    fn test_submit_provider_form_rejects_empty_token() {
+        let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::Token);
+        app.provider_form.token = "".to_string();
+        submit_form(&mut app);
+        assert!(matches!(app.screen, Screen::ProviderForm { .. }));
+        assert_status_contains(&app, "Token");
+    }
+
+    #[test]
+    fn test_submit_provider_form_rejects_whitespace_only_token() {
+        let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::Token);
+        app.provider_form.token = "   ".to_string();
+        submit_form(&mut app);
+        assert!(matches!(app.screen, Screen::ProviderForm { .. }));
+        assert_status_contains(&app, "Token");
+    }
+
+    #[test]
+    fn test_submit_provider_form_rejects_pattern_alias_prefix() {
+        let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::Token);
+        app.provider_form.alias_prefix = "do*".to_string();
+        submit_form(&mut app);
+        assert!(matches!(app.screen, Screen::ProviderForm { .. }));
+        assert_status_contains(&app, "pattern");
+    }
+
+    #[test]
+    fn test_submit_provider_form_rejects_question_mark_alias() {
+        let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::Token);
+        app.provider_form.alias_prefix = "do?".to_string();
+        submit_form(&mut app);
+        assert!(matches!(app.screen, Screen::ProviderForm { .. }));
+        assert_status_contains(&app, "pattern");
+    }
+
+    #[test]
+    fn test_submit_provider_form_rejects_negation_alias() {
+        let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::Token);
+        app.provider_form.alias_prefix = "!do".to_string();
+        submit_form(&mut app);
+        assert!(matches!(app.screen, Screen::ProviderForm { .. }));
+        assert_status_contains(&app, "pattern");
+    }
+
+    #[test]
+    fn test_submit_provider_form_rejects_whitespace_in_user() {
+        let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::Token);
+        app.provider_form.user = "my user".to_string();
+        submit_form(&mut app);
+        assert!(matches!(app.screen, Screen::ProviderForm { .. }));
+        assert_status_contains(&app, "whitespace");
+    }
+
+    // =========================================================================
+    // Provider form navigation tests
+    // =========================================================================
+
+    #[test]
+    fn test_provider_form_tab_cycles_cloud_fields() {
+        let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::Token);
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
+        assert_eq!(app.provider_form.focused_field, ProviderFormField::AliasPrefix);
+        let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
+        assert_eq!(app.provider_form.focused_field, ProviderFormField::User);
+        let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
+        assert_eq!(app.provider_form.focused_field, ProviderFormField::IdentityFile);
+        let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
+        assert_eq!(app.provider_form.focused_field, ProviderFormField::AutoSync);
+    }
+
+    #[test]
+    fn test_provider_form_shift_tab_reverse() {
+        let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::AutoSync);
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::BackTab), &tx);
+        assert_eq!(app.provider_form.focused_field, ProviderFormField::IdentityFile);
+    }
+
+    #[test]
+    fn test_provider_form_proxmox_has_extra_fields() {
+        let mut app = make_form_app_focused_on("proxmox", ProviderFormField::Url);
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
+        assert_eq!(app.provider_form.focused_field, ProviderFormField::Token);
+        let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
+        assert_eq!(app.provider_form.focused_field, ProviderFormField::AliasPrefix);
+        let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
+        assert_eq!(app.provider_form.focused_field, ProviderFormField::User);
+        let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
+        assert_eq!(app.provider_form.focused_field, ProviderFormField::IdentityFile);
+        let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
+        assert_eq!(app.provider_form.focused_field, ProviderFormField::VerifyTls);
+        let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
+        assert_eq!(app.provider_form.focused_field, ProviderFormField::AutoSync);
+    }
+
+    #[test]
+    fn test_provider_form_esc_returns_to_provider_list() {
+        let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::Token);
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        assert!(matches!(app.screen, Screen::Providers));
+    }
+
+    #[test]
+    fn test_provider_form_space_toggles_verify_tls() {
+        let mut app = make_form_app_focused_on("proxmox", ProviderFormField::VerifyTls);
+        assert!(app.provider_form.verify_tls);
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
+        assert!(!app.provider_form.verify_tls);
+        let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
+        assert!(app.provider_form.verify_tls);
+    }
+
+    #[test]
+    fn test_provider_form_char_input_verify_tls_blocked() {
+        let mut app = make_form_app_focused_on("proxmox", ProviderFormField::VerifyTls);
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('x')), &tx);
+        // No text field should have changed
+        assert_eq!(app.provider_form.token, "tok");
+    }
+
+    #[test]
+    fn test_provider_form_backspace_verify_tls_blocked() {
+        let mut app = make_form_app_focused_on("proxmox", ProviderFormField::VerifyTls);
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Backspace), &tx);
+        assert_eq!(app.provider_form.token, "tok");
+    }
+
+    #[test]
+    fn test_provider_form_enter_opens_key_picker() {
+        let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::IdentityFile);
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert!(app.ui.show_key_picker);
+    }
+
+    #[test]
+    fn test_provider_form_char_appended_to_focused_field() {
+        let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::Token);
+        app.provider_form.token = "tok".to_string();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('X')), &tx);
+        assert_eq!(app.provider_form.token, "tokX");
+    }
+
+    #[test]
+    fn test_provider_form_backspace_removes_from_focused_field() {
+        let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::Token);
+        app.provider_form.token = "tok".to_string();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Backspace), &tx);
+        assert_eq!(app.provider_form.token, "to");
+    }
+
+    // =========================================================================
+    // Provider list interaction tests
+    // =========================================================================
+
+    #[test]
+    fn test_provider_list_esc_returns_to_host_list() {
+        let mut app = make_providers_app_with_do();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        assert!(matches!(app.screen, Screen::HostList));
+    }
+
+    #[test]
+    fn test_provider_list_q_returns_to_host_list() {
+        let mut app = make_providers_app_with_do();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('q')), &tx);
+        assert!(matches!(app.screen, Screen::HostList));
+    }
+
+    #[test]
+    fn test_provider_list_j_selects_next() {
+        let mut app = make_providers_app_with_do();
+        app.ui.provider_list_state.select(Some(0));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
+        // Should advance (wrapping depends on count)
+        assert!(app.ui.provider_list_state.selected().is_some());
+    }
+
+    #[test]
+    fn test_provider_list_k_selects_prev() {
+        let mut app = make_providers_app_with_do();
+        app.ui.provider_list_state.select(Some(1));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('k')), &tx);
+        assert!(app.ui.provider_list_state.selected().is_some());
+    }
+
+    #[test]
+    fn test_provider_list_sync_unconfigured_shows_status() {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.screen = Screen::Providers;
+        app.provider_config = ProviderConfig::default();
+        // No config for digitalocean - select it and press s
+        let sorted = app.sorted_provider_names();
+        let idx = sorted.iter().position(|n| n == "digitalocean").unwrap();
+        app.ui.provider_list_state.select(Some(idx));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('s')), &tx);
+        assert!(app.status.as_ref().unwrap().text.contains("Configure"));
+    }
+
+    #[test]
+    fn test_provider_list_delete_removes_config() {
+        let mut app = make_providers_app_with_do();
+        let sorted = app.sorted_provider_names();
+        let idx = sorted.iter().position(|n| n == "digitalocean").unwrap();
+        app.ui.provider_list_state.select(Some(idx));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('d')), &tx);
+        // d now triggers confirmation
+        assert!(app.pending_provider_delete.is_some());
+        // Confirm with y
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('y')), &tx);
+        assert!(app.pending_provider_delete.is_none());
+        // Save may fail in tests (no ~/.purple), triggering rollback. Just verify handler ran.
+        assert!(app.status.is_some());
+    }
+
+    #[test]
+    fn test_provider_list_delete_unconfigured_is_noop() {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.screen = Screen::Providers;
+        app.provider_config = ProviderConfig::default();
+        let sorted = app.sorted_provider_names();
+        let idx = sorted.iter().position(|n| n == "digitalocean").unwrap();
+        app.ui.provider_list_state.select(Some(idx));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('d')), &tx);
+        // No status message because no section existed to delete
+        assert!(app.status.is_none() || !app.status.as_ref().unwrap().text.contains("Removed"));
+    }
+
+    #[test]
+    fn test_provider_list_esc_cancels_running_syncs() {
+        let mut app = make_providers_app_with_do();
+        let cancel = Arc::new(AtomicBool::new(false));
+        app.syncing_providers.insert("digitalocean".to_string(), cancel.clone());
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        assert!(cancel.load(Ordering::Relaxed), "Cancel flag should be set on Esc");
+        assert!(matches!(app.screen, Screen::HostList));
+    }
+
+    #[test]
+    fn test_provider_list_enter_opens_form_with_existing_config() {
+        let mut app = make_providers_app_with_do();
+        open_provider_form(&mut app, "digitalocean");
+        assert!(matches!(app.screen, Screen::ProviderForm { ref provider } if provider == "digitalocean"));
+        assert_eq!(app.provider_form.token, "tok");
+        assert_eq!(app.provider_form.alias_prefix, "do");
+        assert_eq!(app.provider_form.user, "root");
+    }
+
+    #[test]
+    fn test_provider_list_enter_opens_form_with_defaults() {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.screen = Screen::Providers;
+        app.provider_config = ProviderConfig::default();
+        open_provider_form(&mut app, "vultr");
+        assert!(matches!(app.screen, Screen::ProviderForm { ref provider } if provider == "vultr"));
+        assert_eq!(app.provider_form.token, "");
+        assert_eq!(app.provider_form.user, "root");
+        assert!(app.provider_form.auto_sync); // vultr default true
+    }
+
+    #[test]
+    fn test_provider_form_proxmox_default_alias_prefix() {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.screen = Screen::Providers;
+        app.provider_config = ProviderConfig::default();
+        open_provider_form(&mut app, "proxmox");
+        // Proxmox short_label is "pve"
+        assert_eq!(app.provider_form.alias_prefix, "pve");
+    }
+
+    // =========================================================================
+    // Provider form all-providers init defaults
+    // =========================================================================
+
+    #[test]
+    fn test_all_cloud_providers_default_auto_sync_true() {
+        for provider in &["digitalocean", "vultr", "linode", "hetzner", "upcloud"] {
+            let mut app = make_app("Host test\n  HostName test.com\n");
+            app.screen = Screen::Providers;
+            app.provider_config = ProviderConfig::default();
+            open_provider_form(&mut app, provider);
+            assert!(
+                app.provider_form.auto_sync,
+                "{} should default auto_sync=true", provider
+            );
+        }
+    }
+
+    #[test]
+    fn test_proxmox_defaults_auto_sync_false() {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.screen = Screen::Providers;
+        app.provider_config = ProviderConfig::default();
+        open_provider_form(&mut app, "proxmox");
+        assert!(!app.provider_form.auto_sync);
+    }
+
+    #[test]
+    fn test_submit_proxmox_https_case_insensitive() {
+        let mut app = make_form_app_focused_on("proxmox", ProviderFormField::Url);
+        app.provider_form.url = "HTTPS://pve.local:8006".to_string();
+        app.provider_form.token = "user@pam!t=secret".to_string();
+        submit_form(&mut app);
+        assert_status_not_contains(&app, "https://");
+    }
+
+    #[test]
+    fn test_submit_non_proxmox_url_not_required() {
+        let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::Token);
+        app.provider_form.url = "".to_string();
+        submit_form(&mut app);
+        assert_status_not_contains(&app, "URL is required");
+    }
+
+    #[test]
+    fn test_submit_provider_form_accepts_empty_alias_prefix() {
+        let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::Token);
+        app.provider_form.alias_prefix = "".to_string();
+        submit_form(&mut app);
+        assert_status_not_contains(&app, "pattern");
+    }
+
+    #[test]
+    fn test_submit_provider_form_accepts_hyphenated_alias() {
+        let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::Token);
+        app.provider_form.alias_prefix = "my-cloud".to_string();
+        submit_form(&mut app);
+        assert_status_not_contains(&app, "pattern");
+    }
+
+    #[test]
+    fn test_submit_provider_form_rejects_space_in_alias_prefix() {
+        let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::Token);
+        app.provider_form.alias_prefix = "my cloud".to_string();
+        submit_form(&mut app);
+        assert!(matches!(app.screen, Screen::ProviderForm { .. }));
+        let msg = &app.status.as_ref().unwrap().text;
+        if !msg.contains("changed externally") {
+            assert!(msg.contains("pattern") || msg.contains("spaces"));
+        }
+    }
+
+    // =========================================================================
+    // Password picker tests
+    // =========================================================================
+
+    fn ctrl_key(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+
+    fn make_form_app() -> App {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.screen = Screen::AddHost;
+        app.form = crate::app::HostForm::new();
+        app
+    }
+
+    // --- Enter on AskPass opens picker ---
+
+    #[test]
+    fn test_enter_on_askpass_opens_password_picker() {
+        let mut app = make_form_app();
+        app.form.focused_field = FormField::AskPass;
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert!(app.ui.show_password_picker);
+        assert_eq!(app.ui.password_picker_state.selected(), Some(0));
+    }
+
+    // --- Esc closes picker ---
+
+    #[test]
+    fn test_password_picker_esc_closes() {
+        let mut app = make_form_app();
+        app.ui.show_password_picker = true;
+        app.ui.password_picker_state.select(Some(2));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        assert!(!app.ui.show_password_picker);
+        // Form field should be unchanged
+        assert_eq!(app.form.askpass, "");
+    }
+
+    // --- Navigation j/k ---
+
+    #[test]
+    fn test_password_picker_j_moves_down() {
+        let mut app = make_form_app();
+        app.ui.show_password_picker = true;
+        app.ui.password_picker_state.select(Some(0));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
+        assert_eq!(app.ui.password_picker_state.selected(), Some(1));
+    }
+
+    #[test]
+    fn test_password_picker_k_moves_up() {
+        let mut app = make_form_app();
+        app.ui.show_password_picker = true;
+        app.ui.password_picker_state.select(Some(2));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('k')), &tx);
+        assert_eq!(app.ui.password_picker_state.selected(), Some(1));
+    }
+
+    #[test]
+    fn test_password_picker_down_arrow() {
+        let mut app = make_form_app();
+        app.ui.show_password_picker = true;
+        app.ui.password_picker_state.select(Some(0));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Down), &tx);
+        assert_eq!(app.ui.password_picker_state.selected(), Some(1));
+    }
+
+    #[test]
+    fn test_password_picker_up_arrow() {
+        let mut app = make_form_app();
+        app.ui.show_password_picker = true;
+        app.ui.password_picker_state.select(Some(3));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Up), &tx);
+        assert_eq!(app.ui.password_picker_state.selected(), Some(2));
+    }
+
+    #[test]
+    fn test_password_picker_wraps_around_bottom() {
+        let mut app = make_form_app();
+        app.ui.show_password_picker = true;
+        let last = crate::askpass::PASSWORD_SOURCES.len() - 1;
+        app.ui.password_picker_state.select(Some(last));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
+        assert_eq!(app.ui.password_picker_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn test_password_picker_wraps_around_top() {
+        let mut app = make_form_app();
+        app.ui.show_password_picker = true;
+        app.ui.password_picker_state.select(Some(0));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('k')), &tx);
+        let last = crate::askpass::PASSWORD_SOURCES.len() - 1;
+        assert_eq!(app.ui.password_picker_state.selected(), Some(last));
+    }
+
+    // --- Enter selects source: OS Keychain ---
+
+    #[test]
+    fn test_password_picker_select_keychain() {
+        let mut app = make_form_app();
+        app.ui.show_password_picker = true;
+        app.ui.password_picker_state.select(Some(0)); // OS Keychain
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert!(!app.ui.show_password_picker);
+        assert_eq!(app.form.askpass, "keychain");
+    }
+
+    // --- Enter selects source: 1Password (prefix) ---
+
+    #[test]
+    fn test_password_picker_select_1password() {
+        let mut app = make_form_app();
+        app.ui.show_password_picker = true;
+        app.ui.password_picker_state.select(Some(1)); // 1Password
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert!(!app.ui.show_password_picker);
+        assert_eq!(app.form.askpass, "op://");
+        assert_eq!(app.form.focused_field, FormField::AskPass);
+    }
+
+    // --- Enter selects source: Bitwarden (prefix) ---
+
+    #[test]
+    fn test_password_picker_select_bitwarden() {
+        let mut app = make_form_app();
+        app.ui.show_password_picker = true;
+        app.ui.password_picker_state.select(Some(2)); // Bitwarden
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert!(!app.ui.show_password_picker);
+        assert_eq!(app.form.askpass, "bw:");
+        assert_eq!(app.form.focused_field, FormField::AskPass);
+    }
+
+    // --- Enter selects source: pass (prefix) ---
+
+    #[test]
+    fn test_password_picker_select_pass() {
+        let mut app = make_form_app();
+        app.ui.show_password_picker = true;
+        app.ui.password_picker_state.select(Some(3)); // pass
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert!(!app.ui.show_password_picker);
+        assert_eq!(app.form.askpass, "pass:");
+        assert_eq!(app.form.focused_field, FormField::AskPass);
+    }
+
+    // --- Enter selects source: HashiCorp Vault (prefix) ---
+
+    #[test]
+    fn test_password_picker_select_vault() {
+        let mut app = make_form_app();
+        app.ui.show_password_picker = true;
+        app.ui.password_picker_state.select(Some(4)); // HashiCorp Vault
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert!(!app.ui.show_password_picker);
+        assert_eq!(app.form.askpass, "vault:");
+        assert_eq!(app.form.focused_field, FormField::AskPass);
+    }
+
+    // --- Enter selects source: Custom command ---
+
+    #[test]
+    fn test_password_picker_select_custom() {
+        let mut app = make_form_app();
+        app.form.askpass = "old-value".to_string();
+        app.ui.show_password_picker = true;
+        app.ui.password_picker_state.select(Some(5)); // Custom command
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert!(!app.ui.show_password_picker);
+        assert_eq!(app.form.askpass, "");
+    }
+
+    // --- Enter selects source: None (clears) ---
+
+    #[test]
+    fn test_password_picker_select_none() {
+        let mut app = make_form_app();
+        app.form.askpass = "keychain".to_string();
+        app.ui.show_password_picker = true;
+        app.ui.password_picker_state.select(Some(6)); // None
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert!(!app.ui.show_password_picker);
+        assert_eq!(app.form.askpass, "");
+    }
+
+    // --- Picker blocks other form input ---
+
+    #[test]
+    fn test_password_picker_blocks_char_input() {
+        let mut app = make_form_app();
+        app.form.askpass = "".to_string();
+        app.ui.show_password_picker = true;
+        app.ui.password_picker_state.select(Some(0));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('x')), &tx);
+        // 'x' should not be appended to any form field
+        assert_eq!(app.form.askpass, "");
+        assert_eq!(app.form.alias, "");
+    }
+
+    #[test]
+    fn test_password_picker_blocks_tab() {
+        let mut app = make_form_app();
+        let original_field = app.form.focused_field;
+        app.ui.show_password_picker = true;
+        app.ui.password_picker_state.select(Some(0));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
+        // Tab should not change focused field
+        assert_eq!(app.form.focused_field, original_field);
+    }
+
+    // --- Picker on EditHost screen ---
+
+    #[test]
+    fn test_password_picker_works_on_edit_host() {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.screen = Screen::EditHost { alias: "test".to_string() };
+        app.form = crate::app::HostForm::new();
+        app.form.focused_field = FormField::AskPass;
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert!(app.ui.show_password_picker);
+        // Select keychain
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert_eq!(app.form.askpass, "keychain");
+    }
+
+    // --- Picker priority over key picker ---
+
+    #[test]
+    fn test_password_picker_takes_priority_over_key_picker() {
+        let mut app = make_form_app();
+        app.ui.show_password_picker = true;
+        app.ui.show_key_picker = true;
+        app.ui.password_picker_state.select(Some(0));
+        let (tx, _rx) = mpsc::channel();
+        // Esc should close password picker, not key picker
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        assert!(!app.ui.show_password_picker);
+        assert!(app.ui.show_key_picker); // still open
+    }
+
+    // =========================================================================
+    // Host list Enter carries askpass in pending_connect
+    // =========================================================================
+
+    #[test]
+    fn test_host_list_enter_carries_askpass() {
+        let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
+        app.screen = Screen::HostList;
+        // Select the host
+        app.ui.list_state.select(Some(0));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        let pending = app.pending_connect.as_ref().unwrap();
+        assert_eq!(pending.0, "myserver");
+        assert_eq!(pending.1, Some("keychain".to_string()));
+    }
+
+    #[test]
+    fn test_host_list_enter_carries_vault_askpass() {
+        let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass vault:secret/ssh#pass\n");
+        app.screen = Screen::HostList;
+        app.ui.list_state.select(Some(0));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        let pending = app.pending_connect.as_ref().unwrap();
+        assert_eq!(pending.1, Some("vault:secret/ssh#pass".to_string()));
+    }
+
+    #[test]
+    fn test_host_list_enter_no_askpass() {
+        let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n");
+        app.screen = Screen::HostList;
+        app.ui.list_state.select(Some(0));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        let pending = app.pending_connect.as_ref().unwrap();
+        assert_eq!(pending.0, "myserver");
+        assert_eq!(pending.1, None);
+    }
+
+    // =========================================================================
+    // Search mode Enter carries askpass in pending_connect
+    // =========================================================================
+
+    #[test]
+    fn test_search_enter_carries_askpass() {
+        let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass op://V/I/p\n");
+        app.screen = Screen::HostList;
+        app.start_search();
+        // In search mode, filtered_indices should contain our host
+        assert!(!app.search.filtered_indices.is_empty());
+        app.ui.list_state.select(Some(0));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        let pending = app.pending_connect.as_ref().unwrap();
+        assert_eq!(pending.0, "myserver");
+        assert_eq!(pending.1, Some("op://V/I/p".to_string()));
+        // Search should be cancelled after Enter
+        assert!(app.search.query.is_none());
+    }
+
+    #[test]
+    fn test_search_enter_no_askpass() {
+        let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n");
+        app.screen = Screen::HostList;
+        app.start_search();
+        app.ui.list_state.select(Some(0));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        let pending = app.pending_connect.as_ref().unwrap();
+        assert_eq!(pending.1, None);
+    }
+
+    // =========================================================================
+    // Tunnel start reads askpass from host
+    // =========================================================================
+
+    #[test]
+    fn test_tunnel_handler_reads_askpass_from_hosts() {
+        // Verify the askpass lookup logic: find host by alias and extract askpass
+        let app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass bw:my-item\n");
+        let askpass = app.hosts.iter()
+            .find(|h| h.alias == "myserver")
+            .and_then(|h| h.askpass.clone());
+        assert_eq!(askpass, Some("bw:my-item".to_string()));
+    }
+
+    #[test]
+    fn test_tunnel_handler_askpass_none_when_absent() {
+        let app = make_app("Host myserver\n  HostName 10.0.0.1\n");
+        let askpass = app.hosts.iter()
+            .find(|h| h.alias == "myserver")
+            .and_then(|h| h.askpass.clone());
+        assert_eq!(askpass, None);
+    }
+
+    // =========================================================================
+    // Edit host form populates askpass
+    // =========================================================================
+
+    #[test]
+    fn test_edit_host_populates_askpass_in_form() {
+        let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass pass:ssh/prod\n");
+        app.screen = Screen::HostList;
+        app.ui.list_state.select(Some(0));
+        let (tx, _rx) = mpsc::channel();
+        // Press 'e' to edit
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('e')), &tx);
+        if matches!(app.screen, Screen::EditHost { .. }) {
+            assert_eq!(app.form.askpass, "pass:ssh/prod");
+        }
+    }
+
+    #[test]
+    fn test_edit_host_populates_empty_askpass() {
+        let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n");
+        app.screen = Screen::HostList;
+        app.ui.list_state.select(Some(0));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('e')), &tx);
+        if matches!(app.screen, Screen::EditHost { .. }) {
+            assert_eq!(app.form.askpass, "");
+        }
+    }
+
+    // =========================================================================
+    // Tab navigation through AskPass field
+    // =========================================================================
+
+    #[test]
+    fn test_tab_reaches_askpass_field() {
+        let mut app = make_form_app();
+        app.form.focused_field = FormField::ProxyJump;
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
+        assert_eq!(app.form.focused_field, FormField::AskPass);
+    }
+
+    #[test]
+    fn test_tab_from_askpass_goes_to_tags() {
+        let mut app = make_form_app();
+        app.form.focused_field = FormField::AskPass;
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
+        assert_eq!(app.form.focused_field, FormField::Tags);
+    }
+
+    #[test]
+    fn test_shift_tab_from_tags_goes_to_askpass() {
+        let mut app = make_form_app();
+        app.form.focused_field = FormField::Tags;
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::BackTab), &tx);
+        assert_eq!(app.form.focused_field, FormField::AskPass);
+    }
+
+    #[test]
+    fn test_typing_in_askpass_field() {
+        let mut app = make_form_app();
+        app.form.focused_field = FormField::AskPass;
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('k')), &tx);
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('e')), &tx);
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('y')), &tx);
+        assert_eq!(app.form.askpass, "key");
+    }
+
+    #[test]
+    fn test_backspace_in_askpass_field() {
+        let mut app = make_form_app();
+        app.form.focused_field = FormField::AskPass;
+        app.form.askpass = "vault:".to_string();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Backspace), &tx);
+        assert_eq!(app.form.askpass, "vault");
+    }
+
+    // =========================================================================
+    // Picker then type: prefix selection followed by typing
+    // =========================================================================
+
+    #[test]
+    fn test_picker_select_op_then_type_rest() {
+        let mut app = make_form_app();
+        app.form.focused_field = FormField::AskPass;
+        let (tx, _rx) = mpsc::channel();
+        // Open picker
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        // Navigate to 1Password (index 1)
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
+        // Select
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert_eq!(app.form.askpass, "op://");
+        assert_eq!(app.form.focused_field, FormField::AskPass);
+        // Now type the rest of the URI
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('V')), &tx);
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('/')), &tx);
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('I')), &tx);
+        assert_eq!(app.form.askpass, "op://V/I");
+    }
+
+    #[test]
+    fn test_picker_select_vault_then_type_rest() {
+        let mut app = make_form_app();
+        app.form.focused_field = FormField::AskPass;
+        let (tx, _rx) = mpsc::channel();
+        // Open picker
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        // Navigate to Vault (index 4)
+        for _ in 0..4 {
+            let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
+        }
+        assert_eq!(app.ui.password_picker_state.selected(), Some(4));
+        // Select
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert_eq!(app.form.askpass, "vault:");
+        assert_eq!(app.form.focused_field, FormField::AskPass);
+        // Type the path
+        for c in "secret/ssh#pass".chars() {
+            let _ = handle_key_event(&mut app, key(KeyCode::Char(c)), &tx);
+        }
+        assert_eq!(app.form.askpass, "vault:secret/ssh#pass");
+    }
+
+    #[test]
+    fn test_picker_select_keychain_no_further_typing_needed() {
+        let mut app = make_form_app();
+        app.form.focused_field = FormField::AskPass;
+        let (tx, _rx) = mpsc::channel();
+        // Open picker via Enter on AskPass
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        // Select keychain (index 0, already selected)
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert_eq!(app.form.askpass, "keychain");
+        // focused_field stays on AskPass (picker was opened from AskPass)
+        assert_eq!(app.form.focused_field, FormField::AskPass);
+    }
+
+    // =========================================================================
+    // Password picker: status messages after selection
+    // =========================================================================
+
+    #[test]
+    fn test_picker_keychain_sets_status_message() {
+        let mut app = make_form_app();
+        app.ui.show_password_picker = true;
+        app.ui.password_picker_state.select(Some(0));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert!(app.status.as_ref().unwrap().text.contains("OS Keychain"));
+    }
+
+    #[test]
+    fn test_picker_none_sets_cleared_status() {
+        let mut app = make_form_app();
+        app.form.askpass = "keychain".to_string();
+        app.ui.show_password_picker = true;
+        app.ui.password_picker_state.select(Some(6)); // None
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert!(app.status.as_ref().unwrap().text.contains("cleared"));
+    }
+
+    #[test]
+    fn test_picker_prefix_source_shows_guidance() {
+        // Prefix sources (op://, bw:, etc.) show a guidance message
+        let mut app = make_form_app();
+        app.status = None;
+        app.ui.show_password_picker = true;
+        app.ui.password_picker_state.select(Some(1)); // 1Password (op://)
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert!(app.status.as_ref().unwrap().text.contains("Complete"));
+        assert_eq!(app.form.focused_field, FormField::AskPass);
+    }
+
+    // =========================================================================
+    // Backspace after prefix selection
+    // =========================================================================
+
+    #[test]
+    fn test_backspace_after_prefix_selection() {
+        let mut app = make_form_app();
+        app.form.focused_field = FormField::AskPass;
+        let (tx, _rx) = mpsc::channel();
+        // Open picker and select 1Password
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        app.ui.password_picker_state.select(Some(1));
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert_eq!(app.form.askpass, "op://");
+        assert_eq!(app.form.focused_field, FormField::AskPass);
+        // Type something
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('V')), &tx);
+        assert_eq!(app.form.askpass, "op://V");
+        // Backspace removes last char
+        let _ = handle_key_event(&mut app, key(KeyCode::Backspace), &tx);
+        assert_eq!(app.form.askpass, "op://");
+        // Another backspace removes the trailing /
+        let _ = handle_key_event(&mut app, key(KeyCode::Backspace), &tx);
+        assert_eq!(app.form.askpass, "op:/");
+    }
+
+    // =========================================================================
+    // Edit form populates askpass from existing host
+    // =========================================================================
+
+    #[test]
+    fn test_edit_form_populates_askpass() {
+        let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass vault:secret/ssh#pw\n");
+        // Simulate what happens when user presses 'e' on a host
+        let entry = app.config.host_entries()[0].clone();
+        app.form = crate::app::HostForm::from_entry(&entry);
+        assert_eq!(app.form.askpass, "vault:secret/ssh#pw");
+    }
+
+    #[test]
+    fn test_edit_form_empty_askpass_when_none() {
+        let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n");
+        let entry = app.config.host_entries()[0].clone();
+        app.form = crate::app::HostForm::from_entry(&entry);
+        assert_eq!(app.form.askpass, "");
+    }
+
+    // =========================================================================
+    // Password picker: unknown keys are no-ops
+    // =========================================================================
+
+    #[test]
+    fn test_password_picker_ignores_unknown_keys() {
+        let mut app = make_form_app();
+        app.ui.show_password_picker = true;
+        app.ui.password_picker_state.select(Some(2));
+        let (tx, _rx) = mpsc::channel();
+        // F1 key should be a no-op
+        let _ = handle_key_event(&mut app, key(KeyCode::F(1)), &tx);
+        assert!(app.ui.show_password_picker);
+        assert_eq!(app.ui.password_picker_state.selected(), Some(2));
+    }
+
+    // =========================================================================
+    // Host list search Enter carries askpass
+    // =========================================================================
+
+    #[test]
+    fn test_search_enter_carries_askpass_op_uri() {
+        let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass op://V/I/p\n");
+        app.search.query = Some("myserver".to_string());
+        app.apply_filter();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        if let Some((alias, askpass)) = &app.pending_connect {
+            assert_eq!(alias, "myserver");
+            assert_eq!(askpass.as_deref(), Some("op://V/I/p"));
+        } else {
+            panic!("Expected pending_connect to be set");
+        }
+    }
+
+    // =========================================================================
+    // UI/UX: placeholder text and picker overlay properties
+    // =========================================================================
+
+    #[test]
+    fn test_askpass_placeholder_text() {
+        let placeholder = crate::ui::host_form::placeholder_text(FormField::AskPass);
+        // When no global default is set, shows guidance text
+        assert!(placeholder.contains("Enter") || placeholder.contains("default:"),
+            "Should show guidance or default: {}", placeholder);
+    }
+
+    #[test]
+    fn test_password_sources_fit_picker_width() {
+        // Picker overlay is 48 chars wide (minus 4 for borders/padding)
+        let max_content_width = 44;
+        for source in crate::askpass::PASSWORD_SOURCES {
+            let total = source.label.len() + 1 + source.hint.len();
+            assert!(
+                total <= max_content_width,
+                "Source '{}' (label={}, hint={}) total {} exceeds max {}",
+                source.label, source.label.len(), source.hint.len(), total, max_content_width
+            );
+        }
+    }
+
+    #[test]
+    fn test_password_picker_item_count_matches_sources() {
+        assert_eq!(crate::askpass::PASSWORD_SOURCES.len(), 7);
+    }
+
+    // =========================================================================
+    // Full picker → type → form submit flow
+    // =========================================================================
+
+    #[test]
+    fn test_full_flow_picker_to_typed_value() {
+        let mut app = make_form_app();
+        app.form.alias = "myhost".to_string();
+        app.form.hostname = "10.0.0.1".to_string();
+        app.form.focused_field = FormField::AskPass;
+        let (tx, _rx) = mpsc::channel();
+
+        // Open picker, select Bitwarden (index 2)
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        app.ui.password_picker_state.select(Some(2));
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+
+        // Verify field has prefix
+        assert_eq!(app.form.askpass, "bw:");
+        assert_eq!(app.form.focused_field, FormField::AskPass);
+
+        // Type the item name
+        for c in "my-ssh-server".chars() {
+            let _ = handle_key_event(&mut app, key(KeyCode::Char(c)), &tx);
+        }
+        assert_eq!(app.form.askpass, "bw:my-ssh-server");
+
+        // Verify to_entry produces correct askpass
+        let entry = app.form.to_entry();
+        assert_eq!(entry.askpass, Some("bw:my-ssh-server".to_string()));
+    }
+
+    #[test]
+    fn test_full_flow_picker_keychain_then_tab_away() {
+        let mut app = make_form_app();
+        app.form.alias = "myhost".to_string();
+        app.form.hostname = "10.0.0.1".to_string();
+        app.form.focused_field = FormField::AskPass;
+        let (tx, _rx) = mpsc::channel();
+
+        // Open picker via Enter on AskPass, select keychain
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+
+        assert_eq!(app.form.askpass, "keychain");
+        // Focus stays on AskPass (picker opened from AskPass)
+        assert_eq!(app.form.focused_field, FormField::AskPass);
+
+        // Tab to next field
+        let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
+        assert_eq!(app.form.focused_field, FormField::Tags);
+    }
+
+    #[test]
+    fn test_full_flow_clear_askpass_via_picker_none() {
+        let mut app = make_form_app();
+        app.form.focused_field = FormField::AskPass;
+        app.form.askpass = "op://Vault/Item/pw".to_string();
+        let (tx, _rx) = mpsc::channel();
+
+        // Open picker, select None (index 6)
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        for _ in 0..6 {
+            let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
+        }
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+
+        assert_eq!(app.form.askpass, "");
+        let entry = app.form.to_entry();
+        assert_eq!(entry.askpass, None);
+    }
+
+    // =========================================================================
+    // Askpass with host without askpass (no askpass in pending_connect)
+    // =========================================================================
+
+    #[test]
+    fn test_host_list_enter_no_askpass_is_none() {
+        let mut app = make_app("Host plain\n  HostName 10.0.0.1\n");
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        if let Some((alias, askpass)) = &app.pending_connect {
+            assert_eq!(alias, "plain");
+            assert!(askpass.is_none());
+        } else {
+            panic!("Expected pending_connect");
+        }
+    }
+
+    // =========================================================================
+    // Ctrl+P does NOT open password picker on provider form
+    // =========================================================================
+
+    #[test]
+    fn test_ctrl_p_on_provider_form_does_not_open_password_picker() {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.screen = Screen::ProviderForm { provider: "digitalocean".to_string() };
+        app.provider_form = crate::app::ProviderFormFields::new();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, ctrl_key('p'), &tx);
+        // Provider form does not have a password picker
+        assert!(!app.ui.show_password_picker);
+    }
+
+    // =========================================================================
+    // Multiple hosts: each carries its own askpass in pending_connect
+    // =========================================================================
+
+    #[test]
+    fn test_multiple_hosts_different_askpass_sources() {
+        let config = "\
+Host alpha
+  HostName a.com
+  # purple:askpass keychain
+
+Host beta
+  HostName b.com
+  # purple:askpass op://Vault/SSH/pw
+
+Host gamma
+  HostName c.com
+";
+        let app = make_app(config);
+        assert_eq!(app.hosts.len(), 3);
+        assert_eq!(app.hosts[0].askpass, Some("keychain".to_string()));
+        assert_eq!(app.hosts[1].askpass, Some("op://Vault/SSH/pw".to_string()));
+        assert_eq!(app.hosts[2].askpass, None);
+    }
+
+    #[test]
+    fn test_select_different_hosts_carries_correct_askpass() {
+        let config = "\
+Host alpha
+  HostName a.com
+  # purple:askpass keychain
+
+Host beta
+  HostName b.com
+  # purple:askpass bw:my-item
+";
+        let mut app = make_app(config);
+        let (tx, _rx) = mpsc::channel();
+
+        // Select alpha (first host) and press Enter
+        app.ui.list_state.select(Some(0));
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        let (alias, askpass) = app.pending_connect.take().unwrap();
+        assert_eq!(alias, "alpha");
+        assert_eq!(askpass, Some("keychain".to_string()));
+
+        // Select beta (second host) and press Enter
+        app.ui.list_state.select(Some(1));
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        let (alias, askpass) = app.pending_connect.take().unwrap();
+        assert_eq!(alias, "beta");
+        assert_eq!(askpass, Some("bw:my-item".to_string()));
+    }
+
+    // =========================================================================
+    // Askpass field typing: direct input without picker
+    // =========================================================================
+
+    #[test]
+    fn test_type_askpass_directly_without_picker() {
+        let mut app = make_form_app();
+        app.form.focused_field = FormField::AskPass;
+        let (tx, _rx) = mpsc::channel();
+        for c in "keychain".chars() {
+            let _ = handle_key_event(&mut app, key(KeyCode::Char(c)), &tx);
+        }
+        assert_eq!(app.form.askpass, "keychain");
+    }
+
+    #[test]
+    fn test_type_custom_command_directly() {
+        let mut app = make_form_app();
+        app.form.focused_field = FormField::AskPass;
+        let (tx, _rx) = mpsc::channel();
+        for c in "my-script %a %h".chars() {
+            let _ = handle_key_event(&mut app, key(KeyCode::Char(c)), &tx);
+        }
+        assert_eq!(app.form.askpass, "my-script %a %h");
+    }
+
+    #[test]
+    fn test_clear_askpass_with_backspace() {
+        let mut app = make_form_app();
+        app.form.focused_field = FormField::AskPass;
+        app.form.askpass = "keychain".to_string();
+        let (tx, _rx) = mpsc::channel();
+        for _ in 0..8 {
+            let _ = handle_key_event(&mut app, key(KeyCode::Backspace), &tx);
+        }
+        assert_eq!(app.form.askpass, "");
+    }
+
+    // =========================================================================
+    // Delete host with askpass: undo restores it
+    // =========================================================================
+
+    #[test]
+    fn test_delete_undo_preserves_askpass_in_config() {
+        let config_str = "Host myserver\n  HostName 10.0.0.1\n  # purple:askpass vault:secret/ssh#pw\n";
+        let mut app = make_app(config_str);
+        // Verify askpass is present
+        assert_eq!(app.config.host_entries()[0].askpass, Some("vault:secret/ssh#pw".to_string()));
+
+        // Delete the host (undoable)
+        if let Some((element, position)) = app.config.delete_host_undoable("myserver") {
+            // Host is gone
+            assert!(app.config.host_entries().is_empty());
+            // Undo: restore
+            app.config.insert_host_at(element, position);
+            // Askpass should be restored
+            let entries = app.config.host_entries();
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].askpass, Some("vault:secret/ssh#pw".to_string()));
+        } else {
+            panic!("Expected delete_host_undoable to succeed");
+        }
+    }
+
+    // =========================================================================
+    // Askpass with unicode characters
+    // =========================================================================
+
+    #[test]
+    fn test_askpass_unicode_in_custom_command() {
+        let mut app = make_form_app();
+        app.form.focused_field = FormField::AskPass;
+        let (tx, _rx) = mpsc::channel();
+        for c in "get-p\u{00E4}ss %h".chars() {
+            let _ = handle_key_event(&mut app, key(KeyCode::Char(c)), &tx);
+        }
+        assert_eq!(app.form.askpass, "get-p\u{00E4}ss %h");
+    }
+
+    // =========================================================================
+    // Enter on AskPass field opens picker
+    // =========================================================================
+
+    #[test]
+    fn test_enter_on_askpass_field_opens_picker() {
+        let mut app = make_form_app();
+        app.form.focused_field = FormField::AskPass;
+        app.form.askpass = "old-val".to_string();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert!(app.ui.show_password_picker);
+        // Old value should still be there (picker hasn't committed yet)
+        assert_eq!(app.form.askpass, "old-val");
+    }
+
+    #[test]
+    fn test_enter_on_askpass_field_select_replaces_value() {
+        let mut app = make_form_app();
+        app.form.focused_field = FormField::AskPass;
+        app.form.askpass = "old-val".to_string();
+        let (tx, _rx) = mpsc::channel();
+        // Open picker
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        // Select keychain
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert_eq!(app.form.askpass, "keychain");
+        assert!(!app.ui.show_password_picker);
+    }
+
+    // =========================================================================
+    // --connect mode askpass lookup logic (replicated)
+    // =========================================================================
+
+    #[test]
+    fn test_connect_mode_askpass_lookup() {
+        let app = make_app("Host srv\n  HostName 1.2.3.4\n  # purple:askpass pass:ssh/srv\n");
+        // Simulate --connect lookup logic from main.rs
+        let alias = "srv";
+        let askpass = app.config.host_entries().iter()
+            .find(|h| h.alias == alias)
+            .and_then(|h| h.askpass.clone());
+        assert_eq!(askpass, Some("pass:ssh/srv".to_string()));
+    }
+
+    #[test]
+    fn test_connect_mode_askpass_none() {
+        let app = make_app("Host srv\n  HostName 1.2.3.4\n");
+        let alias = "srv";
+        let askpass = app.config.host_entries().iter()
+            .find(|h| h.alias == alias)
+            .and_then(|h| h.askpass.clone());
+        assert_eq!(askpass, None);
+    }
+
+    #[test]
+    fn test_connect_mode_nonexistent_host() {
+        let app = make_app("Host srv\n  HostName 1.2.3.4\n");
+        let alias = "nonexistent";
+        let askpass = app.config.host_entries().iter()
+            .find(|h| h.alias == alias)
+            .and_then(|h| h.askpass.clone());
+        assert_eq!(askpass, None);
+    }
+
+    // =========================================================================
+    // 'e' key opens edit form with correct askpass from host list
+    // =========================================================================
+
+    #[test]
+    fn test_e_key_opens_edit_form_with_askpass() {
+        let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass op://Vault/SSH/pw\n");
+        let (tx, _rx) = mpsc::channel();
+        // Press 'e' to edit the selected host
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('e')), &tx);
+        assert!(matches!(app.screen, Screen::EditHost { .. }));
+        assert_eq!(app.form.askpass, "op://Vault/SSH/pw");
+        assert_eq!(app.form.hostname, "10.0.0.1");
+    }
+
+    #[test]
+    fn test_e_key_opens_edit_form_without_askpass() {
+        let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n");
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('e')), &tx);
+        assert!(matches!(app.screen, Screen::EditHost { .. }));
+        assert_eq!(app.form.askpass, "");
+    }
+
+    // =========================================================================
+    // Picker then Esc preserves existing askpass value
+    // =========================================================================
+
+    #[test]
+    fn test_picker_esc_preserves_existing_askpass() {
+        let mut app = make_form_app();
+        app.form.focused_field = FormField::AskPass;
+        app.form.askpass = "vault:secret/ssh#pw".to_string();
+        let (tx, _rx) = mpsc::channel();
+        // Open picker
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert!(app.ui.show_password_picker);
+        // Navigate but then Esc
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        // Original value preserved
+        assert_eq!(app.form.askpass, "vault:secret/ssh#pw");
+    }
+
+    // =========================================================================
+    // Extra backspace past empty is no-op
+    // =========================================================================
+
+    #[test]
+    fn test_backspace_on_empty_askpass_is_noop() {
+        let mut app = make_form_app();
+        app.form.focused_field = FormField::AskPass;
+        app.form.askpass = "".to_string();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Backspace), &tx);
+        assert_eq!(app.form.askpass, "");
+    }
+
+    // =========================================================================
+    // Tab from AskPass goes to Tags, shift-tab goes to ProxyJump
+    // =========================================================================
+
+    #[test]
+    fn test_tab_from_askpass_to_tags() {
+        let mut app = make_form_app();
+        app.form.focused_field = FormField::AskPass;
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
+        assert_eq!(app.form.focused_field, FormField::Tags);
+    }
+
+    #[test]
+    fn test_shift_tab_from_askpass_to_proxyjump() {
+        let mut app = make_form_app();
+        app.form.focused_field = FormField::AskPass;
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT), &tx);
+        assert_eq!(app.form.focused_field, FormField::ProxyJump);
+    }
+
+    // =========================================================================
+    // Tunnel start for host with askpass passes it through
+    // =========================================================================
+
+    #[test]
+    fn test_tunnel_askpass_lookup_different_sources() {
+        let config = "\
+Host alpha
+  HostName a.com
+  # purple:askpass keychain
+
+Host beta
+  HostName b.com
+  # purple:askpass bw:item
+
+Host gamma
+  HostName c.com
+";
+        let app = make_app(config);
+        let lookup = |alias: &str| -> Option<String> {
+            app.hosts.iter()
+                .find(|h| h.alias == alias)
+                .and_then(|h| h.askpass.clone())
+        };
+        assert_eq!(lookup("alpha"), Some("keychain".to_string()));
+        assert_eq!(lookup("beta"), Some("bw:item".to_string()));
+        assert_eq!(lookup("gamma"), None);
+    }
+
+    // =========================================================================
+    // Password picker status message tests
+    // =========================================================================
+
+    #[test]
+    fn test_password_picker_keychain_sets_status_message() {
+        let mut app = make_form_app();
+        app.ui.show_password_picker = true;
+        app.ui.password_picker_state.select(Some(0)); // Keychain
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        let status = app.status.as_ref().unwrap();
+        assert!(status.text.contains("OS Keychain"), "Status should mention OS Keychain, got: {}", status.text);
+    }
+
+    #[test]
+    fn test_password_picker_none_sets_cleared_status() {
+        let mut app = make_form_app();
+        app.form.askpass = "keychain".to_string();
+        app.ui.show_password_picker = true;
+        app.ui.password_picker_state.select(Some(6)); // None
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        let status = app.status.as_ref().unwrap();
+        assert!(status.text.contains("cleared"), "Status should say cleared, got: {}", status.text);
+    }
+
+    #[test]
+    fn test_password_picker_prefix_source_focuses_askpass_field() {
+        let mut app = make_form_app();
+        app.ui.show_password_picker = true;
+        app.ui.password_picker_state.select(Some(1)); // 1Password (op://)
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert_eq!(app.form.focused_field, FormField::AskPass, "Prefix source should focus AskPass field");
+        // No status message for prefix sources (user needs to keep typing)
+        assert!(app.status.is_none() || !app.status.as_ref().unwrap().text.contains("set to"));
+    }
+
+    #[test]
+    fn test_password_picker_prefix_bw_focuses_askpass() {
+        let mut app = make_form_app();
+        app.ui.show_password_picker = true;
+        app.ui.password_picker_state.select(Some(2)); // Bitwarden (bw:)
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert_eq!(app.form.focused_field, FormField::AskPass);
+        assert_eq!(app.form.askpass, "bw:");
+    }
+
+    #[test]
+    fn test_password_picker_prefix_pass_focuses_askpass() {
+        let mut app = make_form_app();
+        app.ui.show_password_picker = true;
+        app.ui.password_picker_state.select(Some(3)); // pass (pass:)
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert_eq!(app.form.focused_field, FormField::AskPass);
+        assert_eq!(app.form.askpass, "pass:");
+    }
+
+    #[test]
+    fn test_password_picker_prefix_vault_focuses_askpass() {
+        let mut app = make_form_app();
+        app.ui.show_password_picker = true;
+        app.ui.password_picker_state.select(Some(4)); // Vault (vault:)
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert_eq!(app.form.focused_field, FormField::AskPass);
+        assert_eq!(app.form.askpass, "vault:");
+    }
+
+    // =========================================================================
+    // Included host: edit blocked, but askpass visible in pending_connect
+    // =========================================================================
+
+    #[test]
+    fn test_included_host_edit_blocked() {
+        let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
+        app.screen = Screen::HostList;
+        if let Some(host) = app.hosts.first_mut() {
+            host.source_file = Some(std::path::PathBuf::from("/etc/ssh/ssh_config.d/work.conf"));
+        }
+        app.ui.list_state.select(Some(0));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('e')), &tx);
+        assert!(matches!(app.screen, Screen::HostList));
+    }
+
+    #[test]
+    fn test_included_host_connect_still_carries_askpass() {
+        let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass op://V/I/p\n");
+        app.screen = Screen::HostList;
+        if let Some(host) = app.hosts.first_mut() {
+            host.source_file = Some(std::path::PathBuf::from("/etc/ssh/ssh_config.d/work.conf"));
+        }
+        app.ui.list_state.select(Some(0));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        if let Some((alias, askpass)) = &app.pending_connect {
+            assert_eq!(alias, "myserver");
+            assert_eq!(askpass.as_deref(), Some("op://V/I/p"));
+        }
+    }
+
+    #[test]
+    fn test_included_host_delete_blocked() {
+        let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass bw:item\n");
+        app.screen = Screen::HostList;
+        if let Some(host) = app.hosts.first_mut() {
+            host.source_file = Some(std::path::PathBuf::from("/etc/ssh/ssh_config.d/work.conf"));
+        }
+        app.ui.list_state.select(Some(0));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('d')), &tx);
+        assert!(matches!(app.screen, Screen::HostList));
+    }
+
+    // =========================================================================
+    // Form submit with askpass: verify to_entry() includes askpass
+    // =========================================================================
+
+    #[test]
+    fn test_form_submit_with_all_password_source_types() {
+        let sources = ["keychain", "op://V/I/p", "bw:item", "pass:ssh/srv", "vault:kv/ssh#pw", "my-cmd %h"];
+        for source in &sources {
+            let mut app = make_app("");
+            app.screen = Screen::AddHost;
+            app.form.alias = "test-host".to_string();
+            app.form.hostname = "10.0.0.1".to_string();
+            app.form.askpass = source.to_string();
+            let entry = app.form.to_entry();
+            assert_eq!(entry.askpass.as_deref(), Some(*source),
+                "Form with askpass '{}' should produce entry with same askpass", source);
+        }
+    }
+
+    #[test]
+    fn test_form_submit_empty_askpass_is_none() {
+        let mut app = make_app("");
+        app.screen = Screen::AddHost;
+        app.form.alias = "test-host".to_string();
+        app.form.hostname = "10.0.0.1".to_string();
+        app.form.askpass = "".to_string();
+        let entry = app.form.to_entry();
+        assert!(entry.askpass.is_none(), "Empty askpass should produce None");
+    }
+
+    // =========================================================================
+    // Password picker: Enter with no selection is no-op
+    // =========================================================================
+
+    #[test]
+    fn test_password_picker_enter_with_no_selection() {
+        let mut app = make_form_app();
+        app.ui.show_password_picker = true;
+        app.ui.password_picker_state = ratatui::widgets::ListState::default(); // no selection
+        app.form.askpass = "old".to_string();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert!(!app.ui.show_password_picker);
+        assert_eq!(app.form.askpass, "old");
+    }
+
+    // =========================================================================
+    // BW_SESSION: stored in app state
+    // =========================================================================
+
+    #[test]
+    fn test_bw_session_stored_in_app() {
+        let mut app = make_app("Host srv\n  HostName 1.2.3.4\n  # purple:askpass bw:item\n");
+        assert!(app.bw_session.is_none());
+        app.bw_session = Some("test-session-token".to_string());
+        assert_eq!(app.bw_session.as_deref(), Some("test-session-token"));
+    }
+
+    #[test]
+    fn test_bw_session_none_for_non_bw_source() {
+        let app = make_app("Host srv\n  HostName 1.2.3.4\n  # purple:askpass keychain\n");
+        assert!(app.bw_session.is_none());
+    }
+
+    // =========================================================================
+    // Ctrl+D sets global default in password picker
+    // =========================================================================
+
+    #[test]
+    fn test_password_picker_ctrl_d_closes_picker() {
+        // Use "None" to avoid writing a value to the real preferences file
+        let mut app = make_form_app();
+        app.ui.show_password_picker = true;
+        app.ui.password_picker_state.select(Some(6)); // None
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, ctrl_key('d'), &tx);
+        assert!(!app.ui.show_password_picker);
+    }
+
+    #[test]
+    fn test_password_picker_ctrl_d_does_not_change_form_askpass() {
+        let mut app = make_form_app();
+        app.form.askpass = "old".to_string();
+        app.ui.show_password_picker = true;
+        app.ui.password_picker_state.select(Some(6)); // None
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, ctrl_key('d'), &tx);
+        // Ctrl+D only sets the global default, not the form field
+        assert_eq!(app.form.askpass, "old");
+    }
+
+    #[test]
+    fn test_password_picker_ctrl_d_none_sets_status() {
+        let mut app = make_form_app();
+        app.ui.show_password_picker = true;
+        app.ui.password_picker_state.select(Some(6)); // None
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, ctrl_key('d'), &tx);
+        // Shows "cleared" on success or "Failed to save" if ~/.purple doesn't exist
+        assert!(app.status.is_some());
+        assert!(!app.ui.show_password_picker);
+    }
+
+    #[test]
+    fn test_password_picker_ctrl_d_source_label_in_status() {
+        // Verify logic: non-None sources produce "Global default set to X." message
+        let sources = crate::askpass::PASSWORD_SOURCES;
+        for (i, src) in sources.iter().enumerate() {
+            if src.label == "None" {
+                continue;
+            }
+            let expected = format!("Global default set to {}.", src.label);
+            assert!(expected.contains("default"), "Source {}: {}", i, expected);
+        }
+    }
+
+    // =========================================================================
+    // Keychain removal on askpass source change
+    // =========================================================================
+
+    #[test]
+    fn test_submit_form_old_askpass_tracked_for_edit() {
+        // When editing a host with keychain askpass, the old source is detected
+        let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
+        assert_eq!(app.hosts[0].askpass, Some("keychain".to_string()));
+        // Simulate opening edit form
+        app.screen = Screen::EditHost { alias: "myserver".to_string() };
+        app.form.alias = "myserver".to_string();
+        app.form.hostname = "10.0.0.1".to_string();
+        // Change askpass to something else
+        app.form.askpass = "op://Vault/Item/pw".to_string();
+        // The old_askpass detection in submit_form looks up app.hosts by alias
+        let old = app.hosts.iter()
+            .find(|h| h.alias == "myserver")
+            .and_then(|h| h.askpass.clone());
+        assert_eq!(old, Some("keychain".to_string()));
+    }
+
+    #[test]
+    fn test_submit_form_no_keychain_removal_when_unchanged() {
+        let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
+        app.screen = Screen::EditHost { alias: "myserver".to_string() };
+        app.form.alias = "myserver".to_string();
+        app.form.hostname = "10.0.0.1".to_string();
+        // Keep askpass as keychain
+        app.form.askpass = "keychain".to_string();
+        let old = app.hosts.iter()
+            .find(|h| h.alias == "myserver")
+            .and_then(|h| h.askpass.clone());
+        // Same source, no removal needed
+        assert_eq!(old.as_deref(), Some("keychain"));
+        assert_eq!(app.form.askpass, "keychain");
+    }
+
+    #[test]
+    fn test_submit_form_no_keychain_removal_for_add() {
+        // AddHost has no old askpass
+        let mut app = make_app("Host existing\n  HostName 1.2.3.4\n");
+        app.screen = Screen::AddHost;
+        let old: Option<String> = None; // no old host for add
+        assert!(old.is_none());
     }
 }

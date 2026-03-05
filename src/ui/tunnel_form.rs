@@ -1,6 +1,6 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::text::Span;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
@@ -18,9 +18,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     let is_dynamic = app.tunnel_form.tunnel_type == TunnelType::Dynamic;
 
-    // Fixed-size overlay
+    // Overlay: percentage-based width, fixed height
     let height: u16 = if is_dynamic { 10 } else { 15 };
-    let form_area = super::centered_rect_fixed(50, height, area);
+    let form_area = super::centered_rect(70, 80, area);
+    let form_area = super::centered_rect_fixed(form_area.width, height, area);
 
     frame.render_widget(Clear, form_area);
 
@@ -83,15 +84,17 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         );
     }
 
-    // Footer with status right-aligned
+    // Footer with status
     let footer_idx = chunks.len() - 1;
     super::render_footer_with_status(frame, chunks[footer_idx], vec![
         Span::styled(" Enter", theme::primary_action()),
-        Span::styled(" save  ", theme::muted()),
-        Span::styled("Left/Right", theme::accent_bold()),
-        Span::styled(" type  ", theme::muted()),
-        Span::styled("Tab/S-Tab", theme::accent_bold()),
-        Span::styled(" navigate  ", theme::muted()),
+        Span::styled(" save ", theme::muted()),
+        Span::styled("\u{2502} ", theme::muted()),
+        Span::styled("Tab", theme::accent_bold()),
+        Span::styled(" next ", theme::muted()),
+        Span::styled("L/R", theme::accent_bold()),
+        Span::styled(" type ", theme::muted()),
+        Span::styled("\u{2502} ", theme::muted()),
         Span::styled("Esc", theme::accent_bold()),
         Span::styled(" cancel", theme::muted()),
     ], app);
@@ -111,13 +114,20 @@ fn render_type_field(frame: &mut Frame, area: Rect, form: &crate::app::TunnelFor
         .borders(Borders::ALL)
         .border_style(border_style);
 
-    let type_display = format!("< {} >", form.tunnel_type.label());
-    let style = if is_focused {
-        theme::bold()
+    let type_label = form.tunnel_type.label();
+    let content = if is_focused {
+        let inner_width = area.width.saturating_sub(2) as usize;
+        let val_width = type_label.len();
+        let gap = inner_width.saturating_sub(val_width + 3);
+        Line::from(vec![
+            Span::styled(type_label, theme::bold()),
+            Span::raw(" ".repeat(gap)),
+            Span::styled("\u{25C2} \u{25B8}", theme::muted()),
+        ])
     } else {
-        ratatui::style::Style::default()
+        Line::from(Span::raw(type_label))
     };
-    let paragraph = Paragraph::new(Span::styled(type_display, style)).block(block);
+    let paragraph = Paragraph::new(content).block(block);
     frame.render_widget(paragraph, area);
 }
 

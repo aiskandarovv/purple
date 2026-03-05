@@ -120,6 +120,7 @@ fn is_bare_ip(host: &str) -> bool {
 }
 
 /// Result of parsing a known_hosts line.
+#[allow(clippy::large_enum_variant)]
 enum KnownHostResult {
     /// Successfully parsed into a HostEntry.
     Parsed(HostEntry),

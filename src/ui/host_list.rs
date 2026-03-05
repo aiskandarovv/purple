@@ -80,7 +80,7 @@ fn render_display_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::
     let update_title = app.update_available.as_ref().map(|ver| {
         Line::from(Span::styled(
             format!(" v{} available — run '{}' ", ver, app.update_hint),
-            theme::bold(),
+            theme::update_badge(),
         ))
     });
 
@@ -93,7 +93,7 @@ fn render_display_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::
             block = block.title_top(update.right_aligned());
         }
         let empty_msg =
-            Paragraph::new("  It's quiet in here... Press 'a' to add your first host.")
+            Paragraph::new("  It's quiet in here... Press 'a' to add a host or 'S' for cloud sync.")
                 .style(theme::muted())
                 .block(block);
         frame.render_widget(empty_msg, area);
@@ -110,17 +110,38 @@ fn render_display_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::
         .clamp(8, 20);
     let content_width = (area.width as usize).saturating_sub(4);
 
+    // Count hosts per group for group headers
+    let group_counts: std::collections::HashMap<&str, usize> = {
+        let mut counts = std::collections::HashMap::new();
+        let mut current_group: Option<&str> = None;
+        for item in &app.display_list {
+            match item {
+                HostListItem::GroupHeader(text) => {
+                    current_group = Some(text.as_str());
+                }
+                HostListItem::Host { .. } => {
+                    if let Some(group) = current_group {
+                        *counts.entry(group).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+        counts
+    };
+
     let items: Vec<ListItem> = app
         .display_list
         .iter()
         .map(|item| match item {
             HostListItem::GroupHeader(text) => {
                 let upper = text.to_uppercase();
-                let label_width = upper.width() + 4; // "── " + text + " "
+                let count = group_counts.get(text.as_str()).copied().unwrap_or(0);
+                let label = format!("{} ({})", upper, count);
+                let label_width = label.width() + 4; // "── " + label + " "
                 let fill = content_width.saturating_sub(label_width);
                 let line = Line::from(vec![
                     Span::styled("── ", theme::muted()),
-                    Span::styled(upper, theme::section_header()),
+                    Span::styled(label, theme::section_header()),
                     Span::styled(format!(" {}", "─".repeat(fill)), theme::muted()),
                 ]);
                 ListItem::new(line)
@@ -316,6 +337,13 @@ fn build_host_item<'a>(
         }
     }
 
+    // Password source indicator
+    if host.askpass.is_some() {
+        let indicator = " [P]";
+        right_len += indicator.len();
+        right_spans.push(Span::styled(indicator, theme::muted()));
+    }
+
     // Tunnel indicator
     if host.tunnel_count > 0 {
         let (indicator, style) = if tunnel_active {
@@ -382,21 +410,20 @@ fn render_search_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) 
 fn footer_spans<'a>() -> Vec<Span<'a>> {
     vec![
         Span::styled(" Enter", theme::primary_action()),
-        Span::styled(" connect  ", theme::muted()),
+        Span::styled(" connect ", theme::muted()),
+        Span::styled("\u{2502} ", theme::muted()),
         Span::styled("/", theme::accent_bold()),
-        Span::styled(" search  ", theme::muted()),
+        Span::styled(" search ", theme::muted()),
         Span::styled("#", theme::accent_bold()),
-        Span::styled(" filter tag  ", theme::muted()),
-        Span::styled("s", theme::accent_bold()),
-        Span::styled(" sort  ", theme::muted()),
-        Span::styled("g", theme::accent_bold()),
-        Span::styled(" group  ", theme::muted()),
+        Span::styled(" tag ", theme::muted()),
+        Span::styled("\u{2502} ", theme::muted()),
         Span::styled("a", theme::accent_bold()),
-        Span::styled(" add  ", theme::muted()),
+        Span::styled(" add ", theme::muted()),
         Span::styled("e", theme::accent_bold()),
-        Span::styled(" edit  ", theme::muted()),
+        Span::styled(" edit ", theme::muted()),
         Span::styled("d", theme::accent_bold()),
-        Span::styled(" delete  ", theme::muted()),
+        Span::styled(" del ", theme::muted()),
+        Span::styled("\u{2502} ", theme::muted()),
         Span::styled("?", theme::accent_bold()),
         Span::styled(" help", theme::muted()),
     ]
@@ -405,7 +432,8 @@ fn footer_spans<'a>() -> Vec<Span<'a>> {
 fn search_footer_spans<'a>() -> Vec<Span<'a>> {
     vec![
         Span::styled(" Enter", theme::primary_action()),
-        Span::styled(" connect  ", theme::muted()),
+        Span::styled(" connect ", theme::muted()),
+        Span::styled("\u{2502} ", theme::muted()),
         Span::styled("Esc", theme::accent_bold()),
         Span::styled(" cancel", theme::muted()),
     ]

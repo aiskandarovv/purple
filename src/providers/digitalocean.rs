@@ -171,6 +171,328 @@ mod tests {
         assert!(public_ip.is_none());
     }
 
+    // Helper: apply the same IP selection logic as fetch_hosts_cancellable
+    fn select_droplet_ip(droplet: &Droplet) -> Option<String> {
+        droplet
+            .networks
+            .v4
+            .iter()
+            .find(|n| n.net_type == "public")
+            .or_else(|| droplet.networks.v6.iter().find(|n| n.net_type == "public"))
+            .map(|n| n.ip_address.clone())
+    }
+
+    #[test]
+    fn test_droplet_private_only_skipped() {
+        let json = r#"{
+            "droplets": [
+                {
+                    "id": 99,
+                    "name": "private-only",
+                    "networks": {
+                        "v4": [{"ip_address": "10.132.0.2", "type": "private"}]
+                    },
+                    "tags": []
+                }
+            ],
+            "meta": {"total": 1}
+        }"#;
+        let resp: DropletResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(select_droplet_ip(&resp.droplets[0]), None);
+    }
+
+    #[test]
+    fn test_droplet_empty_networks_skipped() {
+        let json = r#"{
+            "droplets": [
+                {
+                    "id": 100,
+                    "name": "no-networks",
+                    "networks": {"v4": []},
+                    "tags": []
+                }
+            ],
+            "meta": {"total": 1}
+        }"#;
+        let resp: DropletResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(select_droplet_ip(&resp.droplets[0]), None);
+    }
+
+    #[test]
+    fn test_droplet_prefers_v4_over_v6() {
+        let json = r#"{
+            "droplets": [
+                {
+                    "id": 101,
+                    "name": "dual-stack",
+                    "networks": {
+                        "v4": [{"ip_address": "1.2.3.4", "type": "public"}],
+                        "v6": [{"ip_address": "2604:a880::1", "type": "public"}]
+                    },
+                    "tags": []
+                }
+            ],
+            "meta": {"total": 1}
+        }"#;
+        let resp: DropletResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(select_droplet_ip(&resp.droplets[0]), Some("1.2.3.4".to_string()));
+    }
+
+    #[test]
+    fn test_droplet_tags_preserved() {
+        let json = r#"{
+            "droplets": [
+                {
+                    "id": 102,
+                    "name": "tagged",
+                    "networks": {"v4": [{"ip_address": "1.2.3.4", "type": "public"}]},
+                    "tags": ["web", "production", "us-east"]
+                }
+            ],
+            "meta": {"total": 1}
+        }"#;
+        let resp: DropletResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.droplets[0].tags, vec!["web", "production", "us-east"]);
+    }
+
+    #[test]
+    fn test_droplet_id_is_u64() {
+        let json = r#"{
+            "droplets": [{"id": 999999999, "name": "big-id", "networks": {"v4": []}, "tags": []}],
+            "meta": {"total": 1}
+        }"#;
+        let resp: DropletResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.droplets[0].id, 999999999);
+    }
+
+    #[test]
+    fn test_droplet_v6_default_empty() {
+        let json = r#"{
+            "droplets": [
+                {
+                    "id": 103,
+                    "name": "no-v6",
+                    "networks": {"v4": [{"ip_address": "5.6.7.8", "type": "public"}]},
+                    "tags": []
+                }
+            ],
+            "meta": {"total": 1}
+        }"#;
+        let resp: DropletResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.droplets[0].networks.v6.is_empty());
+    }
+
+    #[test]
+    fn test_pagination_continues_when_total_exceeds_fetched() {
+        let json = r#"{
+            "droplets": [{"id": 1, "name": "a", "networks": {"v4": []}, "tags": []}],
+            "meta": {"total": 500}
+        }"#;
+        let resp: DropletResponse = serde_json::from_str(json).unwrap();
+        let page = 1u64;
+        let per_page = 200u64;
+        let fetched = page * per_page;
+        // Should continue: fetched (200) < total (500)
+        assert!(fetched < resp.meta.total);
+    }
+
+    #[test]
+    fn test_pagination_stops_when_fetched_reaches_total() {
+        let json = r#"{
+            "droplets": [{"id": 1, "name": "a", "networks": {"v4": []}, "tags": []}],
+            "meta": {"total": 200}
+        }"#;
+        let resp: DropletResponse = serde_json::from_str(json).unwrap();
+        let page = 1u64;
+        let per_page = 200u64;
+        let fetched = page * per_page;
+        // Should stop: fetched (200) >= total (200)
+        assert!(fetched >= resp.meta.total);
+    }
+
+    #[test]
+    fn test_empty_droplet_list_stops_pagination() {
+        let json = r#"{
+            "droplets": [],
+            "meta": {"total": 0}
+        }"#;
+        let resp: DropletResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.droplets.is_empty());
+    }
+
+    #[test]
+    fn test_droplet_multiple_public_v4_uses_first() {
+        let json = r#"{
+            "droplets": [
+                {
+                    "id": 104,
+                    "name": "multi-public",
+                    "networks": {
+                        "v4": [
+                            {"ip_address": "1.2.3.4", "type": "public"},
+                            {"ip_address": "5.6.7.8", "type": "public"}
+                        ]
+                    },
+                    "tags": []
+                }
+            ],
+            "meta": {"total": 1}
+        }"#;
+        let resp: DropletResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(select_droplet_ip(&resp.droplets[0]), Some("1.2.3.4".to_string()));
+    }
+
+    #[test]
+    fn test_droplet_private_v4_public_v6_uses_v6() {
+        // No public IPv4, but there is a public IPv6
+        let json = r#"{
+            "droplets": [
+                {
+                    "id": 105,
+                    "name": "private-v4-public-v6",
+                    "networks": {
+                        "v4": [{"ip_address": "10.132.0.5", "type": "private"}],
+                        "v6": [{"ip_address": "2604:a880::1", "type": "public"}]
+                    },
+                    "tags": []
+                }
+            ],
+            "meta": {"total": 1}
+        }"#;
+        let resp: DropletResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(select_droplet_ip(&resp.droplets[0]), Some("2604:a880::1".to_string()));
+    }
+
+    #[test]
+    fn test_droplet_default_tags_empty() {
+        // When tags key is missing entirely, should default to empty
+        let json = r#"{
+            "droplets": [
+                {"id": 106, "name": "no-tags-key", "networks": {"v4": [{"ip_address": "1.2.3.4", "type": "public"}]}}
+            ],
+            "meta": {"total": 1}
+        }"#;
+        let resp: DropletResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.droplets[0].tags.is_empty());
+    }
+
+    #[test]
+    fn test_droplet_private_v6_not_used() {
+        // Private v6 should not be picked as public
+        let json = r#"{
+            "droplets": [
+                {
+                    "id": 107,
+                    "name": "private-v6",
+                    "networks": {
+                        "v4": [],
+                        "v6": [{"ip_address": "fd00::1", "type": "private"}]
+                    },
+                    "tags": []
+                }
+            ],
+            "meta": {"total": 1}
+        }"#;
+        let resp: DropletResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(select_droplet_ip(&resp.droplets[0]), None);
+    }
+
+    #[test]
+    fn test_droplet_large_id() {
+        let json = r#"{
+            "droplets": [{"id": 999999999999, "name": "big", "networks": {"v4": [{"ip_address": "1.2.3.4", "type": "public"}]}, "tags": []}],
+            "meta": {"total": 1}
+        }"#;
+        let resp: DropletResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.droplets[0].id, 999999999999);
+    }
+
+    #[test]
+    fn test_droplet_multiple_private_v4_no_public() {
+        // Multiple private IPs but no public - should return None
+        let json = r#"{
+            "droplets": [
+                {
+                    "id": 108,
+                    "name": "multi-private",
+                    "networks": {
+                        "v4": [
+                            {"ip_address": "10.132.0.1", "type": "private"},
+                            {"ip_address": "10.132.0.2", "type": "private"}
+                        ]
+                    },
+                    "tags": []
+                }
+            ],
+            "meta": {"total": 1}
+        }"#;
+        let resp: DropletResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(select_droplet_ip(&resp.droplets[0]), None);
+    }
+
+    // --- Resilience: extra/unknown fields are ignored by serde ---
+
+    #[test]
+    fn test_droplet_extra_fields_ignored() {
+        // Real DO API returns many more fields. Verify unknown fields don't break parsing.
+        let json = r#"{
+            "droplets": [
+                {
+                    "id": 200,
+                    "name": "full-response",
+                    "status": "active",
+                    "size_slug": "s-1vcpu-1gb",
+                    "region": {"slug": "nyc3", "name": "New York 3"},
+                    "image": {"id": 12345, "name": "Ubuntu 22.04"},
+                    "created_at": "2024-01-01T00:00:00Z",
+                    "disk": 25,
+                    "memory": 1024,
+                    "vcpus": 1,
+                    "networks": {
+                        "v4": [{"ip_address": "1.2.3.4", "type": "public", "netmask": "255.255.240.0", "gateway": "1.2.0.1"}],
+                        "v6": [{"ip_address": "2604::1", "type": "public", "netmask": 64, "gateway": "2604::"}]
+                    },
+                    "tags": ["web"],
+                    "volume_ids": ["abc"],
+                    "features": ["backups"]
+                }
+            ],
+            "meta": {"total": 1}
+        }"#;
+        let resp: DropletResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.droplets[0].name, "full-response");
+        assert_eq!(select_droplet_ip(&resp.droplets[0]), Some("1.2.3.4".to_string()));
+    }
+
+    #[test]
+    fn test_network_ip_extra_fields_ignored() {
+        // NetworkIp may have extra fields like netmask, gateway
+        let json = r#"{
+            "droplets": [{
+                "id": 201,
+                "name": "extra-net",
+                "networks": {
+                    "v4": [{"ip_address": "5.6.7.8", "type": "public", "netmask": "255.255.240.0", "gateway": "5.6.0.1"}]
+                },
+                "tags": []
+            }],
+            "meta": {"total": 1}
+        }"#;
+        let resp: DropletResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.droplets[0].networks.v4[0].ip_address, "5.6.7.8");
+    }
+
+    #[test]
+    fn test_meta_extra_fields_ignored() {
+        let json = r#"{
+            "droplets": [],
+            "meta": {"total": 0},
+            "links": {"pages": {}}
+        }"#;
+        let resp: DropletResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.meta.total, 0);
+    }
+
     #[test]
     fn test_ipv6_only_droplet_uses_v6() {
         let json = r#"{

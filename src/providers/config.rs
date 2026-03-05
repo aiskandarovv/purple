@@ -529,9 +529,9 @@ verify_tls=false
             auto_sync: true, // non-default for proxmox
         });
         // Simulate save by rebuilding content string (same logic as save())
-        let content = format!(
+        let content =
             "[proxmox]\ntoken=tok\nalias_prefix=pve\nuser=root\nurl=https://pve:8006\nauto_sync=true\n"
-        );
+        .to_string();
         let reparsed = ProviderConfig::parse(&content);
         assert!(reparsed.sections[0].auto_sync);
 
@@ -539,5 +539,508 @@ verify_tls=false
         let content2 = "[digitalocean]\ntoken=tok\nalias_prefix=do\nuser=root\nauto_sync=false\n";
         let reparsed2 = ProviderConfig::parse(content2);
         assert!(!reparsed2.sections[0].auto_sync);
+    }
+
+    // =========================================================================
+    // configured_providers accessor
+    // =========================================================================
+
+    #[test]
+    fn test_configured_providers_empty() {
+        let config = ProviderConfig::default();
+        assert!(config.configured_providers().is_empty());
+    }
+
+    #[test]
+    fn test_configured_providers_returns_all() {
+        let content = "[digitalocean]\ntoken=a\n\n[vultr]\ntoken=b\n";
+        let config = ProviderConfig::parse(content);
+        assert_eq!(config.configured_providers().len(), 2);
+    }
+
+    // =========================================================================
+    // Parse edge cases
+    // =========================================================================
+
+    #[test]
+    fn test_parse_unknown_keys_ignored() {
+        let content = "[digitalocean]\ntoken=abc\nfoo=bar\nunknown_key=value\n";
+        let config = ProviderConfig::parse(content);
+        assert_eq!(config.sections.len(), 1);
+        assert_eq!(config.sections[0].token, "abc");
+    }
+
+    #[test]
+    fn test_parse_unknown_provider_still_parsed() {
+        let content = "[aws]\ntoken=secret\n";
+        let config = ProviderConfig::parse(content);
+        assert_eq!(config.sections.len(), 1);
+        assert_eq!(config.sections[0].provider, "aws");
+    }
+
+    #[test]
+    fn test_parse_whitespace_in_section_name() {
+        let content = "[ digitalocean ]\ntoken=abc\n";
+        let config = ProviderConfig::parse(content);
+        assert_eq!(config.sections.len(), 1);
+        assert_eq!(config.sections[0].provider, "digitalocean");
+    }
+
+    #[test]
+    fn test_parse_value_with_equals() {
+        // Token might contain = signs (base64)
+        let content = "[digitalocean]\ntoken=abc=def==\n";
+        let config = ProviderConfig::parse(content);
+        assert_eq!(config.sections[0].token, "abc=def==");
+    }
+
+    #[test]
+    fn test_parse_whitespace_around_key_value() {
+        let content = "[digitalocean]\n  token = my-token  \n";
+        let config = ProviderConfig::parse(content);
+        assert_eq!(config.sections[0].token, "my-token");
+    }
+
+    #[test]
+    fn test_parse_key_field_sets_identity_file() {
+        let content = "[digitalocean]\ntoken=abc\nkey=~/.ssh/id_rsa\n";
+        let config = ProviderConfig::parse(content);
+        assert_eq!(config.sections[0].identity_file, "~/.ssh/id_rsa");
+    }
+
+    #[test]
+    fn test_section_lookup_missing() {
+        let config = ProviderConfig::parse("[digitalocean]\ntoken=abc\n");
+        assert!(config.section("vultr").is_none());
+    }
+
+    #[test]
+    fn test_section_lookup_found() {
+        let config = ProviderConfig::parse("[digitalocean]\ntoken=abc\n");
+        let section = config.section("digitalocean").unwrap();
+        assert_eq!(section.token, "abc");
+    }
+
+    #[test]
+    fn test_remove_nonexistent_section_noop() {
+        let mut config = ProviderConfig::parse("[digitalocean]\ntoken=abc\n");
+        config.remove_section("vultr");
+        assert_eq!(config.sections.len(), 1);
+    }
+
+    // =========================================================================
+    // Default alias_prefix from short_label
+    // =========================================================================
+
+    #[test]
+    fn test_default_alias_prefix_digitalocean() {
+        let config = ProviderConfig::parse("[digitalocean]\ntoken=abc\n");
+        assert_eq!(config.sections[0].alias_prefix, "do");
+    }
+
+    #[test]
+    fn test_default_alias_prefix_upcloud() {
+        let config = ProviderConfig::parse("[upcloud]\ntoken=abc\n");
+        assert_eq!(config.sections[0].alias_prefix, "uc");
+    }
+
+    #[test]
+    fn test_default_alias_prefix_proxmox() {
+        let config = ProviderConfig::parse("[proxmox]\ntoken=abc\n");
+        assert_eq!(config.sections[0].alias_prefix, "pve");
+    }
+
+    #[test]
+    fn test_alias_prefix_override() {
+        let config = ProviderConfig::parse("[digitalocean]\ntoken=abc\nalias_prefix=ocean\n");
+        assert_eq!(config.sections[0].alias_prefix, "ocean");
+    }
+
+    // =========================================================================
+    // Default user is root
+    // =========================================================================
+
+    #[test]
+    fn test_default_user_is_root() {
+        let config = ProviderConfig::parse("[digitalocean]\ntoken=abc\n");
+        assert_eq!(config.sections[0].user, "root");
+    }
+
+    #[test]
+    fn test_user_override() {
+        let config = ProviderConfig::parse("[digitalocean]\ntoken=abc\nuser=admin\n");
+        assert_eq!(config.sections[0].user, "admin");
+    }
+
+    // =========================================================================
+    // Proxmox URL scheme validation context
+    // =========================================================================
+
+    #[test]
+    fn test_proxmox_url_parsed() {
+        let config = ProviderConfig::parse("[proxmox]\ntoken=abc\nurl=https://pve.local:8006\n");
+        assert_eq!(config.sections[0].url, "https://pve.local:8006");
+    }
+
+    #[test]
+    fn test_non_proxmox_url_parsed_but_ignored() {
+        // URL field is parsed for all providers, but only Proxmox uses it
+        let config = ProviderConfig::parse("[digitalocean]\ntoken=abc\nurl=https://api.do.com\n");
+        assert_eq!(config.sections[0].url, "https://api.do.com");
+    }
+
+    // =========================================================================
+    // Duplicate sections
+    // =========================================================================
+
+    #[test]
+    fn test_duplicate_section_first_wins() {
+        let content = "[digitalocean]\ntoken=first\n\n[digitalocean]\ntoken=second\n";
+        let config = ProviderConfig::parse(content);
+        assert_eq!(config.sections.len(), 1);
+        assert_eq!(config.sections[0].token, "first");
+    }
+
+    // =========================================================================
+    // verify_tls parsing
+    // =========================================================================
+
+    // =========================================================================
+    // auto_sync default per provider
+    // =========================================================================
+
+    #[test]
+    fn test_auto_sync_default_proxmox_false() {
+        let config = ProviderConfig::parse("[proxmox]\ntoken=abc\n");
+        assert!(!config.sections[0].auto_sync);
+    }
+
+    #[test]
+    fn test_auto_sync_default_all_others_true() {
+        for provider in &["digitalocean", "vultr", "linode", "hetzner", "upcloud"] {
+            let content = format!("[{}]\ntoken=abc\n", provider);
+            let config = ProviderConfig::parse(&content);
+            assert!(config.sections[0].auto_sync, "auto_sync should default to true for {}", provider);
+        }
+    }
+
+    #[test]
+    fn test_auto_sync_override_proxmox_to_true() {
+        let config = ProviderConfig::parse("[proxmox]\ntoken=abc\nauto_sync=true\n");
+        assert!(config.sections[0].auto_sync);
+    }
+
+    #[test]
+    fn test_auto_sync_override_do_to_false() {
+        let config = ProviderConfig::parse("[digitalocean]\ntoken=abc\nauto_sync=false\n");
+        assert!(!config.sections[0].auto_sync);
+    }
+
+    // =========================================================================
+    // set_section and remove_section
+    // =========================================================================
+
+    #[test]
+    fn test_set_section_adds_new() {
+        let mut config = ProviderConfig::default();
+        let section = ProviderSection {
+            provider: "vultr".to_string(),
+            token: "tok".to_string(),
+            alias_prefix: "vultr".to_string(),
+            user: "root".to_string(),
+            identity_file: String::new(),
+            url: String::new(),
+            verify_tls: true,
+            auto_sync: true,
+        };
+        config.set_section(section);
+        assert_eq!(config.sections.len(), 1);
+        assert_eq!(config.sections[0].provider, "vultr");
+    }
+
+    #[test]
+    fn test_set_section_replaces_existing() {
+        let mut config = ProviderConfig::parse("[vultr]\ntoken=old\n");
+        assert_eq!(config.sections[0].token, "old");
+        let section = ProviderSection {
+            provider: "vultr".to_string(),
+            token: "new".to_string(),
+            alias_prefix: "vultr".to_string(),
+            user: "root".to_string(),
+            identity_file: String::new(),
+            url: String::new(),
+            verify_tls: true,
+            auto_sync: true,
+        };
+        config.set_section(section);
+        assert_eq!(config.sections.len(), 1);
+        assert_eq!(config.sections[0].token, "new");
+    }
+
+    #[test]
+    fn test_remove_section_keeps_others() {
+        let mut config = ProviderConfig::parse("[vultr]\ntoken=abc\n\n[linode]\ntoken=def\n");
+        assert_eq!(config.sections.len(), 2);
+        config.remove_section("vultr");
+        assert_eq!(config.sections.len(), 1);
+        assert_eq!(config.sections[0].provider, "linode");
+    }
+
+    // =========================================================================
+    // Comments and blank lines
+    // =========================================================================
+
+    #[test]
+    fn test_comments_ignored() {
+        let content = "# This is a comment\n[digitalocean]\n# Another comment\ntoken=abc\n";
+        let config = ProviderConfig::parse(content);
+        assert_eq!(config.sections.len(), 1);
+        assert_eq!(config.sections[0].token, "abc");
+    }
+
+    #[test]
+    fn test_blank_lines_ignored() {
+        let content = "\n\n[digitalocean]\n\ntoken=abc\n\n";
+        let config = ProviderConfig::parse(content);
+        assert_eq!(config.sections.len(), 1);
+        assert_eq!(config.sections[0].token, "abc");
+    }
+
+    // =========================================================================
+    // Multiple providers
+    // =========================================================================
+
+    #[test]
+    fn test_multiple_providers() {
+        let content = "[digitalocean]\ntoken=do-tok\n\n[vultr]\ntoken=vultr-tok\n\n[proxmox]\ntoken=pve-tok\nurl=https://pve:8006\n";
+        let config = ProviderConfig::parse(content);
+        assert_eq!(config.sections.len(), 3);
+        assert_eq!(config.sections[0].provider, "digitalocean");
+        assert_eq!(config.sections[1].provider, "vultr");
+        assert_eq!(config.sections[2].provider, "proxmox");
+        assert_eq!(config.sections[2].url, "https://pve:8006");
+    }
+
+    // =========================================================================
+    // Token with special characters
+    // =========================================================================
+
+    #[test]
+    fn test_token_with_equals_sign() {
+        // API tokens can contain = signs (e.g., base64)
+        let content = "[digitalocean]\ntoken=dop_v1_abc123==\n";
+        let config = ProviderConfig::parse(content);
+        // split_once('=') splits at first =, so "dop_v1_abc123==" is preserved
+        assert_eq!(config.sections[0].token, "dop_v1_abc123==");
+    }
+
+    #[test]
+    fn test_proxmox_token_with_exclamation() {
+        let content = "[proxmox]\ntoken=user@pam!api-token=12345678-abcd\nurl=https://pve:8006\n";
+        let config = ProviderConfig::parse(content);
+        assert_eq!(config.sections[0].token, "user@pam!api-token=12345678-abcd");
+    }
+
+    // =========================================================================
+    // Parse serialization roundtrip
+    // =========================================================================
+
+    #[test]
+    fn test_serialize_roundtrip_single_provider() {
+        let content = "[digitalocean]\ntoken=abc\nalias_prefix=do\nuser=root\n";
+        let config = ProviderConfig::parse(content);
+        let mut serialized = String::new();
+        for section in &config.sections {
+            serialized.push_str(&format!("[{}]\n", section.provider));
+            serialized.push_str(&format!("token={}\n", section.token));
+            serialized.push_str(&format!("alias_prefix={}\n", section.alias_prefix));
+            serialized.push_str(&format!("user={}\n", section.user));
+        }
+        let reparsed = ProviderConfig::parse(&serialized);
+        assert_eq!(reparsed.sections.len(), 1);
+        assert_eq!(reparsed.sections[0].token, "abc");
+        assert_eq!(reparsed.sections[0].alias_prefix, "do");
+        assert_eq!(reparsed.sections[0].user, "root");
+    }
+
+    // =========================================================================
+    // verify_tls parsing variants
+    // =========================================================================
+
+    #[test]
+    fn test_verify_tls_values() {
+        for (val, expected) in [
+            ("false", false), ("False", false), ("FALSE", false),
+            ("0", false), ("no", false), ("No", false), ("NO", false),
+            ("true", true), ("True", true), ("1", true), ("yes", true),
+            ("anything", true), // any unrecognized value defaults to true
+        ] {
+            let content = format!("[digitalocean]\ntoken=t\nverify_tls={}\n", val);
+            let config = ProviderConfig::parse(&content);
+            assert_eq!(
+                config.sections[0].verify_tls, expected,
+                "verify_tls={} should be {}",
+                val, expected
+            );
+        }
+    }
+
+    // =========================================================================
+    // auto_sync parsing variants
+    // =========================================================================
+
+    #[test]
+    fn test_auto_sync_values() {
+        for (val, expected) in [
+            ("false", false), ("False", false), ("FALSE", false),
+            ("0", false), ("no", false), ("No", false),
+            ("true", true), ("1", true), ("yes", true),
+        ] {
+            let content = format!("[digitalocean]\ntoken=t\nauto_sync={}\n", val);
+            let config = ProviderConfig::parse(&content);
+            assert_eq!(
+                config.sections[0].auto_sync, expected,
+                "auto_sync={} should be {}",
+                val, expected
+            );
+        }
+    }
+
+    // =========================================================================
+    // Default values
+    // =========================================================================
+
+    #[test]
+    fn test_default_user_root_when_not_specified() {
+        let content = "[digitalocean]\ntoken=abc\n";
+        let config = ProviderConfig::parse(content);
+        assert_eq!(config.sections[0].user, "root");
+    }
+
+    #[test]
+    fn test_default_alias_prefix_from_short_label() {
+        // DigitalOcean short_label is "do"
+        let content = "[digitalocean]\ntoken=abc\n";
+        let config = ProviderConfig::parse(content);
+        assert_eq!(config.sections[0].alias_prefix, "do");
+    }
+
+    #[test]
+    fn test_default_alias_prefix_unknown_provider() {
+        // Unknown provider uses the section name as default prefix
+        let content = "[unknown_cloud]\ntoken=abc\n";
+        let config = ProviderConfig::parse(content);
+        assert_eq!(config.sections[0].alias_prefix, "unknown_cloud");
+    }
+
+    #[test]
+    fn test_default_identity_file_empty() {
+        let content = "[digitalocean]\ntoken=abc\n";
+        let config = ProviderConfig::parse(content);
+        assert!(config.sections[0].identity_file.is_empty());
+    }
+
+    #[test]
+    fn test_default_url_empty() {
+        let content = "[digitalocean]\ntoken=abc\n";
+        let config = ProviderConfig::parse(content);
+        assert!(config.sections[0].url.is_empty());
+    }
+
+    // =========================================================================
+    // configured_providers and section methods
+    // =========================================================================
+
+    #[test]
+    fn test_configured_providers_returns_all_sections() {
+        let content = "[digitalocean]\ntoken=a\n\n[vultr]\ntoken=b\n";
+        let config = ProviderConfig::parse(content);
+        assert_eq!(config.configured_providers().len(), 2);
+    }
+
+    #[test]
+    fn test_section_by_name() {
+        let content = "[digitalocean]\ntoken=do-tok\n\n[vultr]\ntoken=vultr-tok\n";
+        let config = ProviderConfig::parse(content);
+        let do_section = config.section("digitalocean").unwrap();
+        assert_eq!(do_section.token, "do-tok");
+        let vultr_section = config.section("vultr").unwrap();
+        assert_eq!(vultr_section.token, "vultr-tok");
+    }
+
+    #[test]
+    fn test_section_not_found() {
+        let config = ProviderConfig::parse("");
+        assert!(config.section("nonexistent").is_none());
+    }
+
+    // =========================================================================
+    // Key without value
+    // =========================================================================
+
+    #[test]
+    fn test_line_without_equals_ignored() {
+        let content = "[digitalocean]\ntoken=abc\ngarbage_line\nuser=admin\n";
+        let config = ProviderConfig::parse(content);
+        assert_eq!(config.sections[0].token, "abc");
+        assert_eq!(config.sections[0].user, "admin");
+    }
+
+    #[test]
+    fn test_unknown_key_ignored() {
+        let content = "[digitalocean]\ntoken=abc\nfoo=bar\nbaz=qux\nuser=admin\n";
+        let config = ProviderConfig::parse(content);
+        assert_eq!(config.sections[0].token, "abc");
+        assert_eq!(config.sections[0].user, "admin");
+    }
+
+    // =========================================================================
+    // Whitespace handling
+    // =========================================================================
+
+    #[test]
+    fn test_whitespace_around_section_name() {
+        let content = "[  digitalocean  ]\ntoken=abc\n";
+        let config = ProviderConfig::parse(content);
+        assert_eq!(config.sections[0].provider, "digitalocean");
+    }
+
+    #[test]
+    fn test_whitespace_around_key_value() {
+        let content = "[digitalocean]\n  token  =  abc  \n  user  =  admin  \n";
+        let config = ProviderConfig::parse(content);
+        assert_eq!(config.sections[0].token, "abc");
+        assert_eq!(config.sections[0].user, "admin");
+    }
+
+    // =========================================================================
+    // set_section edge cases
+    // =========================================================================
+
+    #[test]
+    fn test_set_section_multiple_adds() {
+        let mut config = ProviderConfig::default();
+        for name in ["digitalocean", "vultr", "hetzner"] {
+            config.set_section(ProviderSection {
+                provider: name.to_string(),
+                token: format!("{}-tok", name),
+                alias_prefix: name.to_string(),
+                user: "root".to_string(),
+                identity_file: String::new(),
+                url: String::new(),
+                verify_tls: true,
+                auto_sync: true,
+            });
+        }
+        assert_eq!(config.sections.len(), 3);
+    }
+
+    #[test]
+    fn test_remove_section_all() {
+        let content = "[digitalocean]\ntoken=a\n\n[vultr]\ntoken=b\n";
+        let mut config = ProviderConfig::parse(content);
+        config.remove_section("digitalocean");
+        config.remove_section("vultr");
+        assert!(config.sections.is_empty());
     }
 }

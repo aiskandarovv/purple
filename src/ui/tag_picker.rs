@@ -1,4 +1,5 @@
 use ratatui::Frame;
+use ratatui::layout::{Constraint, Layout};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
 
@@ -7,7 +8,7 @@ use crate::app::App;
 
 pub fn render(frame: &mut Frame, app: &mut App) {
     if app.tag_list.is_empty() {
-        let area = super::centered_rect_fixed(44, 5, frame.area());
+        let area = super::centered_rect_fixed(50, 5, frame.area());
         frame.render_widget(Clear, area);
         let block = Block::default()
             .title(Span::styled(" Filter by Tag ", theme::brand()))
@@ -36,8 +37,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         counts
     };
 
-    let height = (app.tag_list.len() as u16 + 4).min(16);
-    let area = super::centered_rect_fixed(40, height, frame.area());
+    let height = (app.tag_list.len() as u16 + 5).min(frame.area().height.saturating_sub(4));
+    let area = super::centered_rect_fixed(50, height, frame.area());
     frame.render_widget(Clear, area);
 
     let items: Vec<ListItem> = app
@@ -58,10 +59,26 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         .borders(Borders::ALL)
         .border_style(theme::accent());
 
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let chunks = Layout::vertical([
+        Constraint::Min(1),
+        Constraint::Length(1),
+    ])
+    .split(inner);
+
     let list = List::new(items)
-        .block(block)
         .highlight_style(theme::selected())
         .highlight_symbol("  ");
 
-    frame.render_stateful_widget(list, area, &mut app.ui.tag_picker_state);
+    frame.render_stateful_widget(list, chunks[0], &mut app.ui.tag_picker_state);
+
+    let footer = Line::from(vec![
+        Span::styled(" Enter", theme::primary_action()),
+        Span::styled(" select  ", theme::muted()),
+        Span::styled("Esc", theme::accent_bold()),
+        Span::styled(" back", theme::muted()),
+    ]);
+    frame.render_widget(Paragraph::new(footer), chunks[1]);
 }

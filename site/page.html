@@ -3,15 +3,118 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>purple. — SSH config manager and launcher</title>
-<meta name="description" content="Smart, fast SSH launcher for the terminal. TUI host manager with search, tags, tunnels, cloud sync and round-trip fidelity for ~/.ssh/config.">
-<meta property="og:title" content="purple. — SSH config manager and launcher">
-<meta property="og:description" content="Smart, fast SSH launcher for the terminal. TUI with search, tags, tunnels, ping and cloud sync.">
+<title>purple. — SSH config manager and host launcher for the terminal</title>
+<meta name="description" content="Free, open-source SSH config manager, editor and host launcher. TUI with search, tags, tunnels, password management (keychain, 1Password, Bitwarden, pass, Vault), cloud provider sync (DigitalOcean, Vultr, Linode, Hetzner, UpCloud, Proxmox VE) and round-trip fidelity for ~/.ssh/config. Written in Rust. macOS and Linux.">
+<meta name="keywords" content="SSH config manager, SSH launcher, terminal SSH, TUI SSH, SSH host manager, cloud SSH sync, DigitalOcean SSH, Vultr SSH, Linode SSH, Hetzner SSH, UpCloud SSH, Proxmox SSH, SSH tunnel manager, SSH config editor, Rust SSH tool, purple-ssh, SSH password manager, SSH askpass, SSH keychain, 1Password SSH, Bitwarden SSH">
+<meta name="robots" content="index, follow">
+<meta name="author" content="Erick Ochen">
+<meta property="og:title" content="purple. — SSH config manager and host launcher for the terminal">
+<meta property="og:description" content="Free, open-source TUI that turns ~/.ssh/config into a searchable, taggable host launcher. Sync servers from 6 cloud providers. Manage SSH passwords. Written in Rust.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://getpurple.sh">
 <meta property="og:image" content="https://raw.githubusercontent.com/erickochen/purple/master/demo.gif">
+<meta property="og:site_name" content="purple">
 <meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="purple. — SSH config manager and host launcher">
+<meta name="twitter:description" content="Free, open-source TUI for managing SSH configs. Search, tag, sync cloud providers, manage passwords. Written in Rust.">
+<meta name="twitter:image" content="https://raw.githubusercontent.com/erickochen/purple/master/demo.gif">
 <link rel="canonical" href="https://getpurple.sh">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "purple",
+  "alternateName": "purple-ssh",
+  "description": "SSH config manager, editor and host launcher for the terminal. TUI with search, tags, tunnels, password management and cloud provider sync for ~/.ssh/config.",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "macOS, Linux",
+  "url": "https://getpurple.sh",
+  "downloadUrl": "https://getpurple.sh",
+  "installUrl": "https://github.com/erickochen/purple/releases",
+  "softwareVersion": "1.13.0",
+  "programmingLanguage": "Rust",
+  "license": "https://opensource.org/licenses/MIT",
+  "codeRepository": "https://github.com/erickochen/purple",
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "USD"
+  },
+  "author": {
+    "@type": "Person",
+    "name": "Erick Ochen",
+    "url": "https://github.com/erickochen"
+  },
+  "featureList": [
+    "SSH config round-trip fidelity",
+    "Fuzzy search across hosts",
+    "Host tagging and filtering",
+    "SSH tunnel management",
+    "Cloud provider sync: DigitalOcean, Vultr, Linode, Hetzner, UpCloud, Proxmox VE",
+    "Password management: OS Keychain, 1Password, Bitwarden, pass, HashiCorp Vault",
+    "Bulk import from known_hosts",
+    "SSH key management",
+    "Atomic writes with automatic backups",
+    "Shell completions for Bash, zsh, fish"
+  ]
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "Does purple modify my existing SSH config?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Only when you add, edit, delete or sync. All writes are atomic with automatic backups. Auto-sync runs on startup for providers that have it enabled (configurable per provider)."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Will purple break my SSH config comments or formatting?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. purple preserves comments, indentation and unknown directives through every read-write cycle. Consecutive blank lines are collapsed to one."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Does purple need a daemon or background process?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. purple is a single Rust binary. Run it, use it, close it. No runtime, no daemon, no async framework."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Does purple send my SSH config anywhere?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "No. Your config never leaves your machine. Provider sync calls cloud APIs to fetch server lists. The TUI checks GitHub for new releases on startup (cached for 24 hours). No config data is transmitted."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How does SSH password management work in purple?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Set a password source per host via the TUI or a global default. When you connect, purple acts as SSH_ASKPASS and retrieves the password automatically. Supported sources: OS Keychain, 1Password, Bitwarden, pass, HashiCorp Vault and custom commands."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Can I use purple with SSH Include files?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. Hosts from Include files are displayed in the TUI but never modified. purple resolves Include directives recursively (up to depth 5) with tilde and glob expansion."
+      }
+    }
+  ]
+}
+</script>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
@@ -92,6 +195,12 @@ h1 span { color: #9333ea; }
   border-radius: 8px;
   border: 1px solid #2a2a2a;
 }
+h2 {
+  font-size: 1.2rem;
+  font-weight: 600;
+  margin-bottom: 16px;
+  color: #e0e0e0;
+}
 .features {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -106,6 +215,35 @@ h1 span { color: #9333ea; }
   color: #e0e0e0;
   font-weight: 600;
 }
+section {
+  margin-bottom: 56px;
+}
+section p {
+  color: #888;
+  font-size: 0.9rem;
+  margin-bottom: 12px;
+}
+section code {
+  background: #161616;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+}
+.providers {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: #888;
+  margin-bottom: 12px;
+}
+.providers div {
+  background: #161616;
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+  padding: 8px 12px;
+  text-align: center;
+}
 footer {
   color: #444;
   font-size: 0.8rem;
@@ -118,19 +256,31 @@ footer a {
   transition: all 0.15s;
 }
 footer a:hover { color: #9333ea; border-color: #9333ea; }
+.faq dt {
+  color: #e0e0e0;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.faq dd {
+  color: #888;
+  font-size: 0.9rem;
+  margin-bottom: 20px;
+  margin-left: 0;
+}
 @media (max-width: 540px) {
   main { padding: 48px 16px 40px; }
   h1 { font-size: 2.2rem; }
   .install-box { padding: 16px; }
   .install-box code { font-size: 0.85rem; }
   .features { grid-template-columns: 1fr; }
+  .providers { grid-template-columns: 1fr 1fr; }
 }
 </style>
 </head>
 <body>
 <main>
   <h1>purple<span>.</span></h1>
-  <p class="tagline">SSH config manager and launcher for the terminal</p>
+  <p class="tagline">SSH config manager and host launcher for the terminal</p>
 
   <div class="install-box">
     <code><span class="dim">$</span> curl -fsSL getpurple.sh | sh</code>
@@ -146,23 +296,71 @@ footer a:hover { color: #9333ea; border-color: #9333ea; }
 
   <div class="demo">
     <img src="https://raw.githubusercontent.com/erickochen/purple/master/demo.gif"
-         alt="purple TUI demo" loading="lazy">
+         alt="purple SSH config manager TUI demo: searching hosts, connecting via SSH and syncing cloud providers in the terminal" loading="lazy" width="800" height="500">
   </div>
 
+  <h2>Features</h2>
   <div class="features">
-    <div><strong>Search</strong> — fuzzy find across aliases, hostnames and tags</div>
+    <div><strong>Search</strong> — fuzzy find across aliases, hostnames, users and tags</div>
     <div><strong>Tags</strong> — organize hosts with #tags and filter instantly</div>
-    <div><strong>Tunnels</strong> — manage SSH port forwards per host</div>
-    <div><strong>Ping</strong> — check host reachability from the TUI</div>
-    <div><strong>Cloud sync</strong> — DigitalOcean, Vultr, Linode, Hetzner, UpCloud, Proxmox VE</div>
-    <div><strong>Round-trip</strong> — preserves comments, formatting and unknown directives</div>
-    <div><strong>Self-update</strong> — run purple update, with startup version check</div>
+    <div><strong>Tunnels</strong> — manage SSH port forwards (local, remote, dynamic) per host</div>
+    <div><strong>Ping</strong> — TCP connectivity check from the TUI</div>
+    <div><strong>Round-trip fidelity</strong> — preserves comments, formatting and unknown directives</div>
+    <div><strong>Bulk import</strong> — from hosts files or ~/.ssh/known_hosts</div>
+    <div><strong>Passwords</strong> — OS Keychain, 1Password, Bitwarden, pass, Vault integration</div>
+    <div><strong>SSH keys</strong> — browse keys with metadata and linked hosts</div>
+    <div><strong>Cloud sync</strong> — pull servers from 6 cloud providers into your config</div>
+    <div><strong>Self-update</strong> — run <code>purple update</code></div>
+    <div><strong>Atomic writes</strong> — temp file, chmod 600, rename. Automatic backups</div>
+    <div><strong>Completions</strong> — bash, zsh and fish via <code>purple --completions</code></div>
   </div>
 
-  </main>
+  <section>
+    <h2>Cloud provider sync</h2>
+    <p>Pull servers from six cloud providers directly into your <code>~/.ssh/config</code>. Sync adds new hosts, updates changed IPs and merges tags. Tags you add manually are preserved across syncs.</p>
+    <div class="providers">
+      <div>DigitalOcean</div>
+      <div>Vultr</div>
+      <div>Linode</div>
+      <div>Hetzner</div>
+      <div>UpCloud</div>
+      <div>Proxmox VE</div>
+    </div>
+    <p>Preview changes with <code>--dry-run</code>. Remove deleted hosts with <code>--remove</code>. Replace local tags with <code>--reset-tags</code>.</p>
+  </section>
+
+  <section>
+    <h2>Your config, respected</h2>
+    <p>purple reads and writes <code>~/.ssh/config</code> directly with full round-trip fidelity. Comments, indentation, unknown directives, CRLF line endings and Include files are all preserved. Every write is atomic (temp file, chmod 600, rename) with automatic backups.</p>
+  </section>
+
+  <section>
+    <h2>Built with Rust</h2>
+    <p>Single binary. No runtime, no daemon, no async framework. 2400+ tests. Zero clippy warnings. MIT licensed.</p>
+  </section>
+
+  <section>
+    <h2>FAQ</h2>
+    <dl class="faq">
+      <dt>Does purple modify my existing SSH config?</dt>
+      <dd>Only when you add, edit, delete or sync. All writes are atomic with automatic backups. Auto-sync runs on startup for providers that have it enabled (configurable per provider).</dd>
+      <dt>Will purple break my comments or formatting?</dt>
+      <dd>No. purple preserves comments, indentation and unknown directives through every read-write cycle.</dd>
+      <dt>Does purple need a daemon or background process?</dt>
+      <dd>No. It is a single Rust binary. Run it, use it, close it.</dd>
+      <dt>Does purple send my SSH config anywhere?</dt>
+      <dd>No. Your config never leaves your machine. Provider sync calls cloud APIs to fetch server lists. No config data is transmitted.</dd>
+      <dt>How does password management work?</dt>
+      <dd>Set a password source per host via the TUI or a global default. When you connect, purple acts as SSH_ASKPASS and retrieves the password automatically. Supported sources: OS Keychain, 1Password, Bitwarden, pass, HashiCorp Vault and custom commands.</dd>
+      <dt>Can I use purple with Include files?</dt>
+      <dd>Yes. Hosts from Include files are displayed in the TUI but never modified. purple resolves Include directives recursively (up to depth 5) with tilde and glob expansion.</dd>
+    </dl>
+  </section>
+
+</main>
 
 <footer>
-  <a href="https://github.com/erickochen/purple">GitHub</a>
+  <a href="https://github.com/erickochen/purple">GitHub</a> · <a href="https://crates.io/crates/purple-ssh">crates.io</a> · MIT License
 </footer>
 
 <script>

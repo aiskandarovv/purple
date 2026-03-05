@@ -7,7 +7,7 @@ use crate::app::App;
 
 pub fn render(frame: &mut Frame, _app: &App, alias: &str) {
 
-    let area = super::centered_rect_fixed(44, 7, frame.area());
+    let area = super::centered_rect_fixed(48, 7, frame.area());
 
     // Clear background
     frame.render_widget(Clear, area);
@@ -25,7 +25,7 @@ pub fn render(frame: &mut Frame, _app: &App, alias: &str) {
         )),
         Line::from(""),
         Line::from(vec![
-            Span::styled("    Enter", theme::danger()),
+            Span::styled("    y", theme::danger()),
             Span::styled(" yes   ", theme::muted()),
             Span::styled("Esc", theme::accent_bold()),
             Span::styled(" no", theme::muted()),

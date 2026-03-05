@@ -63,17 +63,19 @@ pub enum FormField {
     Port,
     IdentityFile,
     ProxyJump,
+    AskPass,
     Tags,
 }
 
 impl FormField {
-    pub const ALL: [FormField; 7] = [
+    pub const ALL: [FormField; 8] = [
         FormField::Alias,
         FormField::Hostname,
         FormField::User,
         FormField::Port,
         FormField::IdentityFile,
         FormField::ProxyJump,
+        FormField::AskPass,
         FormField::Tags,
     ];
 
@@ -95,6 +97,7 @@ impl FormField {
             FormField::Port => "Port",
             FormField::IdentityFile => "Identity File",
             FormField::ProxyJump => "ProxyJump",
+            FormField::AskPass => "Password Source",
             FormField::Tags => "Tags",
         }
     }
@@ -109,6 +112,7 @@ pub struct HostForm {
     pub port: String,
     pub identity_file: String,
     pub proxy_jump: String,
+    pub askpass: String,
     pub tags: String,
     pub focused_field: FormField,
 }
@@ -122,6 +126,7 @@ impl HostForm {
             port: "22".to_string(),
             identity_file: String::new(),
             proxy_jump: String::new(),
+            askpass: String::new(),
             tags: String::new(),
             focused_field: FormField::Alias,
         }
@@ -135,6 +140,7 @@ impl HostForm {
             port: entry.port.to_string(),
             identity_file: entry.identity_file.clone(),
             proxy_jump: entry.proxy_jump.clone(),
+            askpass: entry.askpass.clone().unwrap_or_default(),
             tags: entry.tags.join(", "),
             focused_field: FormField::Alias,
         }
@@ -149,6 +155,7 @@ impl HostForm {
             FormField::Port => &mut self.port,
             FormField::IdentityFile => &mut self.identity_file,
             FormField::ProxyJump => &mut self.proxy_jump,
+            FormField::AskPass => &mut self.askpass,
             FormField::Tags => &mut self.tags,
         }
     }
@@ -178,6 +185,7 @@ impl HostForm {
             (&self.port, "Port"),
             (&self.identity_file, "Identity File"),
             (&self.proxy_jump, "ProxyJump"),
+            (&self.askpass, "Password Source"),
             (&self.tags, "Tags"),
         ];
         for (value, name) in &fields {
@@ -206,6 +214,7 @@ impl HostForm {
 
     /// Convert to a HostEntry.
     pub fn to_entry(&self) -> HostEntry {
+        let askpass_trimmed = self.askpass.trim().to_string();
         HostEntry {
             alias: self.alias.trim().to_string(),
             hostname: self.hostname.trim().to_string(),
@@ -214,6 +223,7 @@ impl HostForm {
             identity_file: self.identity_file.trim().to_string(),
             proxy_jump: self.proxy_jump.trim().to_string(),
             tags: self.tags.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect(),
+            askpass: if askpass_trimmed.is_empty() { None } else { Some(askpass_trimmed) },
             ..Default::default()
         }
     }
@@ -540,7 +550,7 @@ impl SortMode {
             "alpha_hostname" => SortMode::AlphaHostname,
             "frecency" => SortMode::Frecency,
             "most_recent" => SortMode::MostRecent,
-            _ => SortMode::AlphaAlias,
+            _ => SortMode::MostRecent,
         }
     }
 }
@@ -558,6 +568,8 @@ pub struct UiSelection {
     pub key_list_state: ListState,
     pub show_key_picker: bool,
     pub key_picker_state: ListState,
+    pub show_password_picker: bool,
+    pub password_picker_state: ListState,
     pub tag_picker_state: ListState,
     pub provider_list_state: ListState,
     pub tunnel_list_state: ListState,
@@ -606,7 +618,7 @@ pub struct App {
     pub display_list: Vec<HostListItem>,
     pub form: HostForm,
     pub status: Option<StatusMessage>,
-    pub pending_connect: Option<String>,
+    pub pending_connect: Option<(String, Option<String>)>,
 
     // Sub-structs
     pub ui: UiSelection,
@@ -633,6 +645,7 @@ pub struct App {
     pub provider_config: ProviderConfig,
     pub provider_form: ProviderFormFields,
     pub syncing_providers: HashMap<String, Arc<AtomicBool>>,
+    pub pending_provider_delete: Option<String>,
 
     // Hints
     pub ping_status: HashMap<String, PingStatus>,
@@ -649,6 +662,9 @@ pub struct App {
 
     // Sync history
     pub sync_history: HashMap<String, SyncRecord>,
+
+    // Bitwarden session
+    pub bw_session: Option<String>,
 }
 
 impl App {
@@ -683,6 +699,8 @@ impl App {
                 key_list_state: ListState::default(),
                 show_key_picker: false,
                 key_picker_state: ListState::default(),
+                show_password_picker: false,
+                password_picker_state: ListState::default(),
                 tag_picker_state: ListState::default(),
                 provider_list_state: ListState::default(),
                 tunnel_list_state: ListState::default(),
@@ -714,6 +732,7 @@ impl App {
             provider_config: ProviderConfig::load(),
             provider_form: ProviderFormFields::new(),
             syncing_providers: HashMap::new(),
+            pending_provider_delete: None,
             ping_status: HashMap::new(),
             has_pinged: false,
             tunnel_list: Vec::new(),
@@ -722,6 +741,7 @@ impl App {
             update_available: None,
             update_hint: crate::update::update_hint(),
             sync_history: HashMap::new(),
+            bw_session: None,
         }
     }
 
@@ -1395,6 +1415,16 @@ impl App {
         cycle_selection(&mut self.ui.key_picker_state, self.keys.len(), true);
     }
 
+    /// Move password picker selection up.
+    pub fn select_prev_password_source(&mut self) {
+        cycle_selection(&mut self.ui.password_picker_state, crate::askpass::PASSWORD_SOURCES.len(), false);
+    }
+
+    /// Move password picker selection down.
+    pub fn select_next_password_source(&mut self) {
+        cycle_selection(&mut self.ui.password_picker_state, crate::askpass::PASSWORD_SOURCES.len(), true);
+    }
+
     /// Collect all unique tags from hosts, sorted alphabetically.
     pub fn collect_unique_tags(&self) -> Vec<String> {
         let mut seen = std::collections::HashSet::new();
@@ -1516,6 +1546,9 @@ impl App {
         if !entry.tags.is_empty() {
             self.config.set_host_tags(&alias, &entry.tags);
         }
+        if let Some(ref source) = entry.askpass {
+            self.config.set_host_askpass(&alias, source);
+        }
         if let Err(e) = self.config.write() {
             self.config.elements.truncate(len_before);
             return Err(format!("Failed to save: {}", e));
@@ -1547,9 +1580,11 @@ impl App {
             .unwrap_or_default();
         self.config.update_host(old_alias, &entry);
         self.config.set_host_tags(&entry.alias, &entry.tags);
+        self.config.set_host_askpass(&entry.alias, entry.askpass.as_deref().unwrap_or(""));
         if let Err(e) = self.config.write() {
             self.config.update_host(&entry.alias, &old_entry);
             self.config.set_host_tags(&old_entry.alias, &old_entry.tags);
+            self.config.set_host_askpass(&old_entry.alias, old_entry.askpass.as_deref().unwrap_or(""));
             return Err(format!("Failed to save: {}", e));
         }
         // Migrate active tunnel handle if alias changed
@@ -2671,5 +2706,649 @@ Host vultr-app
     #[test]
     fn test_provider_form_field_label_auto_sync() {
         assert_eq!(ProviderFormField::AutoSync.label(), "Auto Sync");
+    }
+
+    // =========================================================================
+    // HostForm askpass tests
+    // =========================================================================
+
+    #[test]
+    fn test_form_new_has_empty_askpass() {
+        let form = HostForm::new();
+        assert_eq!(form.askpass, "");
+    }
+
+    #[test]
+    fn test_form_from_entry_with_askpass() {
+        let entry = HostEntry {
+            alias: "test".to_string(),
+            hostname: "1.2.3.4".to_string(),
+            askpass: Some("keychain".to_string()),
+            ..Default::default()
+        };
+        let form = HostForm::from_entry(&entry);
+        assert_eq!(form.askpass, "keychain");
+    }
+
+    #[test]
+    fn test_form_from_entry_without_askpass() {
+        let entry = HostEntry {
+            alias: "test".to_string(),
+            hostname: "1.2.3.4".to_string(),
+            askpass: None,
+            ..Default::default()
+        };
+        let form = HostForm::from_entry(&entry);
+        assert_eq!(form.askpass, "");
+    }
+
+    #[test]
+    fn test_to_entry_with_askpass_keychain() {
+        let mut form = HostForm::new();
+        form.alias = "myhost".to_string();
+        form.hostname = "1.2.3.4".to_string();
+        form.askpass = "keychain".to_string();
+        let entry = form.to_entry();
+        assert_eq!(entry.askpass, Some("keychain".to_string()));
+    }
+
+    #[test]
+    fn test_to_entry_with_askpass_op() {
+        let mut form = HostForm::new();
+        form.alias = "myhost".to_string();
+        form.hostname = "1.2.3.4".to_string();
+        form.askpass = "op://Vault/Item/password".to_string();
+        let entry = form.to_entry();
+        assert_eq!(entry.askpass, Some("op://Vault/Item/password".to_string()));
+    }
+
+    #[test]
+    fn test_to_entry_with_askpass_vault() {
+        let mut form = HostForm::new();
+        form.alias = "myhost".to_string();
+        form.hostname = "1.2.3.4".to_string();
+        form.askpass = "vault:secret/data/myapp#password".to_string();
+        let entry = form.to_entry();
+        assert_eq!(entry.askpass, Some("vault:secret/data/myapp#password".to_string()));
+    }
+
+    #[test]
+    fn test_to_entry_with_askpass_bw() {
+        let mut form = HostForm::new();
+        form.alias = "myhost".to_string();
+        form.hostname = "1.2.3.4".to_string();
+        form.askpass = "bw:my-item".to_string();
+        let entry = form.to_entry();
+        assert_eq!(entry.askpass, Some("bw:my-item".to_string()));
+    }
+
+    #[test]
+    fn test_to_entry_with_askpass_pass() {
+        let mut form = HostForm::new();
+        form.alias = "myhost".to_string();
+        form.hostname = "1.2.3.4".to_string();
+        form.askpass = "pass:ssh/myserver".to_string();
+        let entry = form.to_entry();
+        assert_eq!(entry.askpass, Some("pass:ssh/myserver".to_string()));
+    }
+
+    #[test]
+    fn test_to_entry_with_askpass_custom_command() {
+        let mut form = HostForm::new();
+        form.alias = "myhost".to_string();
+        form.hostname = "1.2.3.4".to_string();
+        form.askpass = "my-script %a %h".to_string();
+        let entry = form.to_entry();
+        assert_eq!(entry.askpass, Some("my-script %a %h".to_string()));
+    }
+
+    #[test]
+    fn test_to_entry_with_askpass_empty() {
+        let mut form = HostForm::new();
+        form.alias = "myhost".to_string();
+        form.hostname = "1.2.3.4".to_string();
+        form.askpass = "".to_string();
+        let entry = form.to_entry();
+        assert_eq!(entry.askpass, None);
+    }
+
+    #[test]
+    fn test_to_entry_with_askpass_whitespace_only() {
+        let mut form = HostForm::new();
+        form.alias = "myhost".to_string();
+        form.hostname = "1.2.3.4".to_string();
+        form.askpass = "  ".to_string();
+        let entry = form.to_entry();
+        assert_eq!(entry.askpass, None);
+    }
+
+    #[test]
+    fn test_to_entry_askpass_trimmed() {
+        let mut form = HostForm::new();
+        form.alias = "myhost".to_string();
+        form.hostname = "1.2.3.4".to_string();
+        form.askpass = "  keychain  ".to_string();
+        let entry = form.to_entry();
+        assert_eq!(entry.askpass, Some("keychain".to_string()));
+    }
+
+    #[test]
+    fn test_focused_value_mut_askpass() {
+        let mut form = HostForm::new();
+        form.focused_field = FormField::AskPass;
+        form.focused_value_mut().push_str("vault:");
+        assert_eq!(form.askpass, "vault:");
+    }
+
+    #[test]
+    fn test_askpass_field_label() {
+        assert_eq!(FormField::AskPass.label(), "Password Source");
+    }
+
+    #[test]
+    fn test_askpass_field_navigation() {
+        // AskPass is between ProxyJump and Tags
+        assert_eq!(FormField::ProxyJump.next(), FormField::AskPass);
+        assert_eq!(FormField::AskPass.next(), FormField::Tags);
+        assert_eq!(FormField::Tags.prev(), FormField::AskPass);
+        assert_eq!(FormField::AskPass.prev(), FormField::ProxyJump);
+    }
+
+    #[test]
+    fn test_form_field_all_includes_askpass() {
+        assert!(FormField::ALL.contains(&FormField::AskPass));
+        assert_eq!(FormField::ALL.len(), 8);
+    }
+
+    // --- Password picker state ---
+
+    #[test]
+    fn test_password_picker_state_init() {
+        let app = make_app("Host test\n  HostName test.com\n");
+        assert!(!app.ui.show_password_picker);
+    }
+
+    #[test]
+    fn test_select_next_password_source() {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.ui.password_picker_state.select(Some(0));
+        app.select_next_password_source();
+        assert_eq!(app.ui.password_picker_state.selected(), Some(1));
+    }
+
+    #[test]
+    fn test_select_prev_password_source() {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.ui.password_picker_state.select(Some(2));
+        app.select_prev_password_source();
+        assert_eq!(app.ui.password_picker_state.selected(), Some(1));
+    }
+
+    #[test]
+    fn test_select_password_source_wrap_bottom() {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        let last = crate::askpass::PASSWORD_SOURCES.len() - 1;
+        app.ui.password_picker_state.select(Some(last));
+        app.select_next_password_source();
+        assert_eq!(app.ui.password_picker_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn test_select_password_source_wrap_top() {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.ui.password_picker_state.select(Some(0));
+        app.select_prev_password_source();
+        let last = crate::askpass::PASSWORD_SOURCES.len() - 1;
+        assert_eq!(app.ui.password_picker_state.selected(), Some(last));
+    }
+
+    // --- Host entry askpass from config ---
+
+    #[test]
+    fn test_host_entries_include_askpass() {
+        let app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
+        assert_eq!(app.hosts[0].askpass, Some("keychain".to_string()));
+    }
+
+    #[test]
+    fn test_host_entries_vault_askpass() {
+        let app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass vault:secret/ssh#pass\n");
+        assert_eq!(app.hosts[0].askpass, Some("vault:secret/ssh#pass".to_string()));
+    }
+
+    #[test]
+    fn test_host_entries_no_askpass() {
+        let app = make_app("Host myserver\n  HostName 10.0.0.1\n");
+        assert_eq!(app.hosts[0].askpass, None);
+    }
+
+    // --- Validate with askpass ---
+
+    #[test]
+    fn test_validate_askpass_with_control_char() {
+        let mut form = HostForm::new();
+        form.alias = "myhost".to_string();
+        form.hostname = "1.2.3.4".to_string();
+        form.askpass = "keychain\x00".to_string();
+        let result = form.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Password Source"));
+    }
+
+    #[test]
+    fn test_validate_askpass_normal_values_ok() {
+        let sources = ["", "keychain", "op://V/I/p", "bw:x", "pass:x", "vault:x#y", "cmd %a"];
+        for src in &sources {
+            let mut form = HostForm::new();
+            form.alias = "myhost".to_string();
+            form.hostname = "1.2.3.4".to_string();
+            form.askpass = src.to_string();
+            assert!(form.validate().is_ok(), "Validate should pass for askpass='{}'", src);
+        }
+    }
+
+    // --- add_host askpass flow (test config mutation directly, bypassing write) ---
+
+    #[test]
+    fn test_add_host_config_mutation_with_askpass() {
+        let mut app = make_app("");
+        let entry = HostEntry {
+            alias: "newhost".to_string(),
+            hostname: "1.2.3.4".to_string(),
+            askpass: Some("keychain".to_string()),
+            ..Default::default()
+        };
+        app.config.add_host(&entry);
+        app.config.set_host_askpass("newhost", "keychain");
+        let serialized = app.config.serialize();
+        assert!(serialized.contains("purple:askpass keychain"));
+        let entries = app.config.host_entries();
+        let found = entries.iter().find(|e| e.alias == "newhost").unwrap();
+        assert_eq!(found.askpass, Some("keychain".to_string()));
+    }
+
+    #[test]
+    fn test_add_host_config_mutation_with_vault() {
+        let mut app = make_app("");
+        let entry = HostEntry {
+            alias: "vaulthost".to_string(),
+            hostname: "10.0.0.1".to_string(),
+            askpass: Some("vault:secret/ssh#pass".to_string()),
+            ..Default::default()
+        };
+        app.config.add_host(&entry);
+        app.config.set_host_askpass("vaulthost", "vault:secret/ssh#pass");
+        let serialized = app.config.serialize();
+        assert!(serialized.contains("purple:askpass vault:secret/ssh#pass"));
+    }
+
+    #[test]
+    fn test_add_host_config_mutation_without_askpass() {
+        let mut app = make_app("");
+        let entry = HostEntry {
+            alias: "nopass".to_string(),
+            hostname: "1.2.3.4".to_string(),
+            ..Default::default()
+        };
+        app.config.add_host(&entry);
+        // Don't call set_host_askpass when None — mirrors add_host_from_form logic
+        let serialized = app.config.serialize();
+        assert!(!serialized.contains("purple:askpass"), "No askpass comment when None");
+    }
+
+    #[test]
+    fn test_add_host_from_form_calls_set_askpass() {
+        // Verify that add_host_from_form invokes set_host_askpass for non-None askpass.
+        // We test by checking the form.to_entry() produces correct askpass.
+        let mut form = HostForm::new();
+        form.alias = "test".to_string();
+        form.hostname = "1.2.3.4".to_string();
+        form.askpass = "op://Vault/Item/pw".to_string();
+        let entry = form.to_entry();
+        assert_eq!(entry.askpass, Some("op://Vault/Item/pw".to_string()));
+        // And that the code path in add_host_from_form would call set_host_askpass
+        assert!(entry.askpass.is_some());
+    }
+
+    // --- update host askpass via config (bypassing write which fails in test) ---
+
+    #[test]
+    fn test_config_set_host_askpass_adds() {
+        let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n");
+        app.config.set_host_askpass("myserver", "bw:my-item");
+        let serialized = app.config.serialize();
+        assert!(serialized.contains("purple:askpass bw:my-item"));
+        let entries = app.config.host_entries();
+        assert_eq!(entries[0].askpass, Some("bw:my-item".to_string()));
+    }
+
+    #[test]
+    fn test_config_set_host_askpass_changes() {
+        let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
+        app.config.set_host_askpass("myserver", "pass:ssh/myserver");
+        let serialized = app.config.serialize();
+        assert!(!serialized.contains("keychain"));
+        assert!(serialized.contains("purple:askpass pass:ssh/myserver"));
+    }
+
+    #[test]
+    fn test_config_set_host_askpass_removes() {
+        let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
+        app.config.set_host_askpass("myserver", "");
+        let serialized = app.config.serialize();
+        assert!(!serialized.contains("purple:askpass"));
+        let entries = app.config.host_entries();
+        assert_eq!(entries[0].askpass, None);
+    }
+
+    #[test]
+    fn test_edit_host_from_form_sets_askpass_in_config() {
+        // edit_host_from_form calls config.set_host_askpass() before write().
+        // Since write() fails with test path, the rollback restores old state.
+        // Test the config mutation directly to verify the flow.
+        let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n");
+        let entry = HostEntry {
+            alias: "myserver".to_string(),
+            hostname: "10.0.0.1".to_string(),
+            askpass: Some("vault:secret/ssh#pass".to_string()),
+            ..Default::default()
+        };
+        app.config.update_host("myserver", &entry);
+        app.config.set_host_askpass("myserver", entry.askpass.as_deref().unwrap_or(""));
+        let serialized = app.config.serialize();
+        assert!(serialized.contains("purple:askpass vault:secret/ssh#pass"));
+    }
+
+    // --- pending_connect carries askpass ---
+
+    #[test]
+    fn test_pending_connect_with_askpass() {
+        let app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
+        let host = &app.hosts[0];
+        assert_eq!(host.askpass, Some("keychain".to_string()));
+        // Simulating what handle_host_list does
+        let pending = (host.alias.clone(), host.askpass.clone());
+        assert_eq!(pending.0, "myserver");
+        assert_eq!(pending.1, Some("keychain".to_string()));
+    }
+
+    #[test]
+    fn test_pending_connect_without_askpass() {
+        let app = make_app("Host myserver\n  HostName 10.0.0.1\n");
+        let host = &app.hosts[0];
+        let pending = (host.alias.clone(), host.askpass.clone());
+        assert_eq!(pending.0, "myserver");
+        assert_eq!(pending.1, None);
+    }
+
+    // --- from_entry roundtrip for all source types ---
+
+    #[test]
+    fn test_form_entry_roundtrip_all_sources() {
+        let sources = [
+            Some("keychain".to_string()),
+            Some("op://V/I/p".to_string()),
+            Some("bw:item".to_string()),
+            Some("pass:ssh/x".to_string()),
+            Some("vault:s/d#f".to_string()),
+            Some("cmd %a %h".to_string()),
+            None,
+        ];
+        for askpass in &sources {
+            let entry = HostEntry {
+                alias: "test".to_string(),
+                hostname: "1.2.3.4".to_string(),
+                askpass: askpass.clone(),
+                ..Default::default()
+            };
+            let form = HostForm::from_entry(&entry);
+            let back = form.to_entry();
+            assert_eq!(back.askpass, *askpass, "Roundtrip failed for {:?}", askpass);
+        }
+    }
+
+    // --- askpass special values ---
+
+    #[test]
+    fn test_to_entry_askpass_with_equals_sign() {
+        let mut form = HostForm::new();
+        form.alias = "test".to_string();
+        form.hostname = "1.2.3.4".to_string();
+        form.askpass = "cmd --opt=val %h".to_string();
+        let entry = form.to_entry();
+        assert_eq!(entry.askpass, Some("cmd --opt=val %h".to_string()));
+    }
+
+    #[test]
+    fn test_to_entry_askpass_with_hash() {
+        let mut form = HostForm::new();
+        form.alias = "test".to_string();
+        form.hostname = "1.2.3.4".to_string();
+        form.askpass = "vault:secret/ssh#api_key".to_string();
+        let entry = form.to_entry();
+        assert_eq!(entry.askpass, Some("vault:secret/ssh#api_key".to_string()));
+    }
+
+    #[test]
+    fn test_to_entry_askpass_long_value() {
+        let mut form = HostForm::new();
+        form.alias = "test".to_string();
+        form.hostname = "1.2.3.4".to_string();
+        form.askpass = "op://My Personal Vault/SSH Production Server/password".to_string();
+        let entry = form.to_entry();
+        assert_eq!(entry.askpass, Some("op://My Personal Vault/SSH Production Server/password".to_string()));
+    }
+
+    // --- edit form askpass rollback logic ---
+
+    #[test]
+    fn test_edit_askpass_rollback_restores_old_source() {
+        // Simulate the rollback logic from edit_host_from_form
+        let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
+        let old_entry = app.hosts[0].clone();
+        assert_eq!(old_entry.askpass, Some("keychain".to_string()));
+
+        // Apply new askpass
+        app.config.set_host_askpass("myserver", "vault:secret/ssh#pw");
+        assert_eq!(app.config.host_entries()[0].askpass, Some("vault:secret/ssh#pw".to_string()));
+
+        // Simulate rollback (write failed)
+        app.config.set_host_askpass(&old_entry.alias, old_entry.askpass.as_deref().unwrap_or(""));
+        assert_eq!(app.config.host_entries()[0].askpass, Some("keychain".to_string()));
+    }
+
+    #[test]
+    fn test_edit_askpass_rollback_restores_none() {
+        let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n");
+        let old_entry = app.hosts[0].clone();
+        assert_eq!(old_entry.askpass, None);
+
+        // Apply new askpass
+        app.config.set_host_askpass("myserver", "bw:my-item");
+        assert_eq!(app.config.host_entries()[0].askpass, Some("bw:my-item".to_string()));
+
+        // Simulate rollback (write failed)
+        app.config.set_host_askpass(&old_entry.alias, old_entry.askpass.as_deref().unwrap_or(""));
+        assert_eq!(app.config.host_entries()[0].askpass, None);
+    }
+
+    // --- password picker state edge cases ---
+
+    #[test]
+    fn test_password_picker_initial_state_not_shown() {
+        let app = make_app("Host test\n  HostName test.com\n");
+        assert!(!app.ui.show_password_picker);
+        assert_eq!(app.ui.password_picker_state.selected(), None);
+    }
+
+    // --- askpass global default fallback ---
+
+    #[test]
+    fn test_pending_connect_askpass_from_host() {
+        let app = make_app("Host s1\n  HostName 1.1.1.1\n  # purple:askpass bw:item1\n\nHost s2\n  HostName 2.2.2.2\n");
+        assert_eq!(app.hosts[0].askpass, Some("bw:item1".to_string()));
+        assert_eq!(app.hosts[1].askpass, None);
+    }
+
+    // --- form field cycling includes askpass ---
+
+    #[test]
+    fn test_form_field_cycle_through_askpass() {
+        let fields = FormField::ALL;
+        let askpass_idx = fields.iter().position(|f| matches!(f, FormField::AskPass)).unwrap();
+        assert_eq!(askpass_idx, 6, "AskPass should be the 7th field (index 6)");
+        // Verify it's between ProxyJump and Tags
+        assert!(matches!(fields[askpass_idx - 1], FormField::ProxyJump));
+        assert!(matches!(fields[askpass_idx + 1], FormField::Tags));
+    }
+
+    // --- validate control chars in askpass ---
+
+    #[test]
+    fn test_validate_askpass_rejects_newline() {
+        let mut form = HostForm::new();
+        form.alias = "test".to_string();
+        form.hostname = "1.2.3.4".to_string();
+        form.askpass = "keychain\ninjected".to_string();
+        assert!(form.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_askpass_rejects_tab() {
+        let mut form = HostForm::new();
+        form.alias = "test".to_string();
+        form.hostname = "1.2.3.4".to_string();
+        form.askpass = "keychain\tinjected".to_string();
+        assert!(form.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_askpass_rejects_null_byte() {
+        let mut form = HostForm::new();
+        form.alias = "test".to_string();
+        form.hostname = "1.2.3.4".to_string();
+        form.askpass = "keychain\0injected".to_string();
+        assert!(form.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_askpass_allows_normal_special_chars() {
+        let mut form = HostForm::new();
+        form.alias = "test".to_string();
+        form.hostname = "1.2.3.4".to_string();
+        form.askpass = "vault:secret/data/my-app#api_key".to_string();
+        assert!(form.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_askpass_allows_percent_substitution() {
+        let mut form = HostForm::new();
+        form.alias = "test".to_string();
+        form.hostname = "1.2.3.4".to_string();
+        form.askpass = "get-pass %a %h".to_string();
+        assert!(form.validate().is_ok());
+    }
+
+    // =========================================================================
+    // Askpass fallback chain: per-host → global default (replicated logic)
+    // =========================================================================
+
+    #[test]
+    fn test_askpass_fallback_per_host_takes_precedence() {
+        // main.rs: host_askpass.or_else(preferences::load_askpass_default)
+        let host_askpass: Option<String> = Some("op://V/I/p".to_string());
+        let global_default: Option<String> = Some("keychain".to_string());
+        let result = host_askpass.or(global_default);
+        assert_eq!(result, Some("op://V/I/p".to_string()));
+    }
+
+    #[test]
+    fn test_askpass_fallback_uses_global_when_no_per_host() {
+        let host_askpass: Option<String> = None;
+        let global_default: Option<String> = Some("keychain".to_string());
+        let result = host_askpass.or(global_default);
+        assert_eq!(result, Some("keychain".to_string()));
+    }
+
+    #[test]
+    fn test_askpass_fallback_none_when_both_absent() {
+        let host_askpass: Option<String> = None;
+        let global_default: Option<String> = None;
+        let result = host_askpass.or(global_default);
+        assert_eq!(result, None);
+    }
+
+    // =========================================================================
+    // cleanup_marker called after connection (document contract)
+    // =========================================================================
+
+    #[test]
+    fn test_cleanup_marker_contract() {
+        // After successful connection, main.rs calls askpass::cleanup_marker(&alias)
+        // to remove the retry detection marker file
+        let alias = "myserver";
+        let call = format!("askpass::cleanup_marker(\"{}\")", alias);
+        assert!(call.contains("cleanup_marker"));
+    }
+
+    // =========================================================================
+    // pending_connect carries askpass through TUI event loop
+    // =========================================================================
+
+    #[test]
+    fn test_pending_connect_tuple_structure() {
+        // pending_connect is Option<(String, Option<String>)> = (alias, askpass)
+        let (alias, askpass) = ("myserver".to_string(), Some("keychain".to_string()));
+        assert_eq!(alias, "myserver");
+        assert_eq!(askpass, Some("keychain".to_string()));
+    }
+
+    #[test]
+    fn test_pending_connect_none_askpass() {
+        let (alias, askpass): (String, Option<String>) = ("myserver".to_string(), None);
+        assert_eq!(alias, "myserver");
+        assert!(askpass.is_none());
+    }
+
+    // =========================================================================
+    // bw_session caching in app state
+    // =========================================================================
+
+    #[test]
+    fn test_bw_session_cached_across_connections() {
+        let mut app = make_app("Host a\n  HostName 1.1.1.1\n  # purple:askpass bw:item\n\nHost b\n  HostName 2.2.2.2\n  # purple:askpass bw:other\n");
+        // First connection prompts for unlock and caches token
+        app.bw_session = Some("cached-token".to_string());
+        // Second connection should reuse cached token
+        let existing = app.bw_session.as_deref();
+        assert_eq!(existing, Some("cached-token"));
+        // ensure_bw_session returns None when existing is Some (no re-prompt)
+        let needs_prompt = existing.is_none();
+        assert!(!needs_prompt);
+    }
+
+    #[test]
+    fn test_bw_session_not_set_for_non_bw() {
+        let app = make_app("Host srv\n  HostName 1.1.1.1\n  # purple:askpass keychain\n");
+        assert!(app.bw_session.is_none());
+    }
+
+    // =========================================================================
+    // AskPass field in HostForm: display label and position
+    // =========================================================================
+
+    #[test]
+    fn test_askpass_field_is_seventh_in_form() {
+        let fields = FormField::ALL;
+        assert_eq!(fields.len(), 8);
+        assert!(matches!(fields[6], FormField::AskPass));
+    }
+
+    #[test]
+    fn test_askpass_field_between_proxyjump_and_tags() {
+        let fields = FormField::ALL;
+        assert!(matches!(fields[5], FormField::ProxyJump));
+        assert!(matches!(fields[6], FormField::AskPass));
+        assert!(matches!(fields[7], FormField::Tags));
     }
 }

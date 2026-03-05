@@ -1,52 +1,67 @@
 use ratatui::Frame;
+use ratatui::layout::{Constraint, Layout};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
 use super::theme;
 
 pub fn render(frame: &mut Frame) {
-    let area = super::centered_rect_fixed(50, 27, frame.area());
+    let width: u16 = 44;
+    let help_lines = help_text();
+    let height = (help_lines.len() as u16 + 4).min(frame.area().height.saturating_sub(2));
+    let area = super::centered_rect_fixed(width, height, frame.area());
 
-    // Clear background
     frame.render_widget(Clear, area);
 
-    let title = Line::from(vec![
-        Span::styled(" purple. ", theme::brand_badge()),
-        Span::raw(" Cheat Sheet "),
-    ]);
+    let title = Span::styled(" Cheat Sheet ", theme::brand());
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
         .border_style(theme::accent());
 
-    let help_text = vec![
-        Line::from(Span::styled("  Navigate", theme::section_header())),
-        help_line("  j/k       ", "Move down / up"),
-        help_line("  /         ", "Search / filter hosts"),
-        help_line("  #         ", "Filter by tag"),
-        help_line("  s         ", "Cycle sort mode"),
-        help_line("  g         ", "Group by provider"),
-        Line::from(""),
-        Line::from(Span::styled("  Manage", theme::section_header())),
-        help_line("  Enter     ", "Connect to host"),
-        help_line("  a e d c   ", "Add / edit / delete / clone"),
-        help_line("  t         ", "Tag host"),
-        help_line("  u         ", "Undo last delete"),
-        help_line("  S         ", "Cloud provider sync"),
-        Line::from(""),
-        Line::from(Span::styled("  Tools", theme::section_header())),
-        help_line("  i         ", "Inspect host details"),
-        help_line("  T         ", "Manage host tunnels"),
-        help_line("  p / P     ", "Ping host / ping all"),
-        help_line("  y / x     ", "Copy command / config block"),
-        help_line("  K         ", "SSH key list"),
-        Line::from(""),
-        help_line("  q / Esc   ", "Quit"),
-        help_line("  Ctrl+C    ", "Quit (from anywhere)"),
-    ];
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
 
-    let paragraph = Paragraph::new(help_text).block(block);
-    frame.render_widget(paragraph, area);
+    let chunks = Layout::vertical([
+        Constraint::Min(1),
+        Constraint::Length(1),
+    ])
+    .split(inner);
+
+    frame.render_widget(Paragraph::new(help_lines), chunks[0]);
+
+    let footer = Line::from(vec![
+        Span::styled(" Esc", theme::accent_bold()),
+        Span::styled(" close", theme::muted()),
+    ]);
+    frame.render_widget(Paragraph::new(footer), chunks[1]);
+}
+
+fn help_text() -> Vec<Line<'static>> {
+    vec![
+        Line::from(Span::styled(" Navigate", theme::section_header())),
+        help_line(" j/k      ", "up / down"),
+        help_line(" /        ", "search"),
+        help_line(" #        ", "filter by tag"),
+        help_line(" s        ", "cycle sort"),
+        help_line(" g        ", "group by provider"),
+        Line::from(""),
+        Line::from(Span::styled(" Manage", theme::section_header())),
+        help_line(" Enter    ", "connect"),
+        help_line(" a e d c  ", "add / edit / delete / clone"),
+        help_line(" t        ", "tag host"),
+        help_line(" u        ", "undo delete"),
+        Line::from(""),
+        Line::from(Span::styled(" Tools", theme::section_header())),
+        help_line(" i        ", "inspect directives"),
+        help_line(" T        ", "tunnels"),
+        help_line(" S        ", "cloud providers"),
+        help_line(" K        ", "SSH keys"),
+        help_line(" p / P    ", "ping / ping all"),
+        help_line(" y / x    ", "copy cmd / config"),
+        Line::from(""),
+        help_line(" q / Esc  ", "quit / close"),
+    ]
 }
 
 fn help_line<'a>(key: &'a str, desc: &'a str) -> Line<'a> {

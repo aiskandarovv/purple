@@ -17,10 +17,12 @@ pub fn render(frame: &mut Frame, app: &App, index: usize) {
     let max_visible = 15;
     let visible = directive_count.min(max_visible);
     // 2 (border) + 1 (blank) + 1 (header) + 1 (separator) + directives + 1 (overflow) + source + 1 (blank)
+    let askpass_lines = if host.askpass.is_some() { 2 } else { 0 };
     let source_lines = if host.source_file.is_some() { 2 } else { 0 };
     let overflow_line = if directive_count > max_visible { 1 } else { 0 };
-    let height = (6 + visible.max(1) + overflow_line + source_lines) as u16;
-    let area = super::centered_rect_fixed(58, height, frame.area());
+    let height = (6 + visible.max(1) + overflow_line + askpass_lines + source_lines) as u16;
+    let width = frame.area().width.clamp(58, 80);
+    let area = super::centered_rect_fixed(width, height, frame.area());
 
     frame.render_widget(Clear, area);
 
@@ -44,7 +46,7 @@ pub fn render(frame: &mut Frame, app: &App, index: usize) {
     } else {
         for (key, value) in directives.iter().take(max_visible) {
             lines.push(Line::from(vec![
-                Span::styled(format!("  {:<16}", key), theme::muted()),
+                Span::styled(format!("  {:<22}", key), theme::muted()),
                 Span::styled(value.to_string(), theme::bold()),
             ]));
         }
@@ -56,10 +58,18 @@ pub fn render(frame: &mut Frame, app: &App, index: usize) {
         }
     }
 
+    if let Some(ref askpass) = host.askpass {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled(format!("  {:<22}", "Password"), theme::muted()),
+            Span::styled(askpass.to_string(), theme::bold()),
+        ]));
+    }
+
     if let Some(ref source) = host.source_file {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
-            Span::styled("  Source          ", theme::muted()),
+            Span::styled(format!("  {:<22}", "Source"), theme::muted()),
             Span::styled(source.display().to_string(), theme::bold()),
         ]));
     }

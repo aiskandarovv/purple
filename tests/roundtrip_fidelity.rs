@@ -1163,6 +1163,588 @@ Host beta
 }
 
 // ============================================================================
+// 7b. ASKPASS COMMENT
+// ============================================================================
+
+#[test]
+fn askpass_roundtrip_parse_and_read() {
+    let input = "\
+Host myserver
+  HostName 10.0.0.1
+  # purple:askpass keychain
+";
+    let config = parse_str(input);
+    let entries = config.host_entries();
+    assert_eq!(entries[0].askpass, Some("keychain".to_string()));
+}
+
+#[test]
+fn askpass_op_uri_parse() {
+    let input = "\
+Host myserver
+  HostName 10.0.0.1
+  # purple:askpass op://Vault/Item/password
+";
+    let config = parse_str(input);
+    let entries = config.host_entries();
+    assert_eq!(entries[0].askpass, Some("op://Vault/Item/password".to_string()));
+}
+
+#[test]
+fn askpass_pass_source_parse() {
+    let input = "\
+Host myserver
+  HostName 10.0.0.1
+  # purple:askpass pass:ssh/myserver
+";
+    let config = parse_str(input);
+    let entries = config.host_entries();
+    assert_eq!(entries[0].askpass, Some("pass:ssh/myserver".to_string()));
+}
+
+#[test]
+fn askpass_custom_command_parse() {
+    let input = "\
+Host myserver
+  HostName 10.0.0.1
+  # purple:askpass my-script %a %h
+";
+    let config = parse_str(input);
+    let entries = config.host_entries();
+    assert_eq!(entries[0].askpass, Some("my-script %a %h".to_string()));
+}
+
+#[test]
+fn askpass_bitwarden_source_parse() {
+    let input = "\
+Host myserver
+  HostName 10.0.0.1
+  # purple:askpass bw:my-server-id
+";
+    let config = parse_str(input);
+    let entries = config.host_entries();
+    assert_eq!(entries[0].askpass, Some("bw:my-server-id".to_string()));
+}
+
+#[test]
+fn askpass_none_when_absent() {
+    let input = "\
+Host myserver
+  HostName 10.0.0.1
+";
+    let config = parse_str(input);
+    let entries = config.host_entries();
+    assert_eq!(entries[0].askpass, None);
+}
+
+#[test]
+fn set_host_askpass_writes_comment() {
+    let input = "\
+Host myserver
+  HostName 10.0.0.1
+";
+    let mut config = parse_str(input);
+    config.set_host_askpass("myserver", "keychain");
+    let output = config.serialize();
+    assert!(output.contains("# purple:askpass keychain"), "output: {}", output);
+    let entries = config.host_entries();
+    assert_eq!(entries[0].askpass, Some("keychain".to_string()));
+}
+
+#[test]
+fn set_host_askpass_replaces_existing() {
+    let input = "\
+Host myserver
+  HostName 10.0.0.1
+  # purple:askpass keychain
+";
+    let mut config = parse_str(input);
+    config.set_host_askpass("myserver", "op://Vault/Item/pw");
+    let output = config.serialize();
+    assert!(!output.contains("keychain"), "old source should be removed");
+    assert!(output.contains("# purple:askpass op://Vault/Item/pw"));
+}
+
+#[test]
+fn set_host_askpass_empty_removes() {
+    let input = "\
+Host myserver
+  HostName 10.0.0.1
+  # purple:askpass keychain
+";
+    let mut config = parse_str(input);
+    config.set_host_askpass("myserver", "");
+    let output = config.serialize();
+    assert!(!output.contains("purple:askpass"), "askpass comment should be removed");
+    let entries = config.host_entries();
+    assert_eq!(entries[0].askpass, None);
+}
+
+#[test]
+fn askpass_placed_before_blank_separator() {
+    let input = "\
+Host alpha
+  HostName a.com
+
+Host beta
+  HostName b.com
+";
+    let mut config = parse_str(input);
+    config.set_host_askpass("alpha", "keychain");
+    let output = config.serialize();
+
+    let lines: Vec<&str> = output.lines().collect();
+    let askpass_pos = lines.iter().position(|l| l.contains("purple:askpass")).unwrap();
+    let blank_pos = lines.iter().position(|l| l.is_empty()).unwrap();
+
+    assert!(
+        askpass_pos < blank_pos,
+        "Askpass should be placed before the blank separator line.\n{}",
+        visible(&output)
+    );
+}
+
+// -- Vault source parsing and round-trip --
+
+#[test]
+fn askpass_vault_source_parse() {
+    let input = "\
+Host myserver
+  HostName 10.0.0.1
+  # purple:askpass vault:secret/data/myapp#password
+";
+    let config = parse_str(input);
+    let entries = config.host_entries();
+    assert_eq!(entries[0].askpass, Some("vault:secret/data/myapp#password".to_string()));
+}
+
+#[test]
+fn askpass_vault_no_field_parse() {
+    let input = "\
+Host myserver
+  HostName 10.0.0.1
+  # purple:askpass vault:secret/data/myapp
+";
+    let config = parse_str(input);
+    let entries = config.host_entries();
+    assert_eq!(entries[0].askpass, Some("vault:secret/data/myapp".to_string()));
+}
+
+#[test]
+fn set_host_askpass_vault_writes_comment() {
+    let input = "\
+Host myserver
+  HostName 10.0.0.1
+";
+    let mut config = parse_str(input);
+    config.set_host_askpass("myserver", "vault:secret/ssh/prod#api_key");
+    let output = config.serialize();
+    assert!(output.contains("# purple:askpass vault:secret/ssh/prod#api_key"), "output: {}", output);
+    let entries = config.host_entries();
+    assert_eq!(entries[0].askpass, Some("vault:secret/ssh/prod#api_key".to_string()));
+}
+
+#[test]
+fn askpass_vault_replace_with_other_source() {
+    let input = "\
+Host myserver
+  HostName 10.0.0.1
+  # purple:askpass vault:secret/data/myapp
+";
+    let mut config = parse_str(input);
+    config.set_host_askpass("myserver", "keychain");
+    let output = config.serialize();
+    assert!(!output.contains("vault:"), "old vault source should be removed");
+    assert!(output.contains("# purple:askpass keychain"));
+}
+
+#[test]
+fn askpass_replace_other_with_vault() {
+    let input = "\
+Host myserver
+  HostName 10.0.0.1
+  # purple:askpass keychain
+";
+    let mut config = parse_str(input);
+    config.set_host_askpass("myserver", "vault:kv/ssh/server#pass");
+    let output = config.serialize();
+    assert!(!output.contains("keychain"), "old source should be removed");
+    assert!(output.contains("# purple:askpass vault:kv/ssh/server#pass"));
+}
+
+#[test]
+fn askpass_preserves_indent_four_spaces() {
+    let input = "\
+Host myserver
+    HostName 10.0.0.1
+";
+    let mut config = parse_str(input);
+    config.set_host_askpass("myserver", "keychain");
+    let output = config.serialize();
+    // Should use 4-space indent to match existing directives
+    assert!(
+        output.contains("    # purple:askpass keychain"),
+        "Should preserve 4-space indent. output:\n{}",
+        visible(&output)
+    );
+}
+
+#[test]
+fn askpass_preserves_indent_tab() {
+    let input = "\
+Host myserver
+\tHostName 10.0.0.1
+";
+    let mut config = parse_str(input);
+    config.set_host_askpass("myserver", "pass:ssh/prod");
+    let output = config.serialize();
+    assert!(
+        output.contains("\t# purple:askpass pass:ssh/prod"),
+        "Should preserve tab indent. output:\n{}",
+        visible(&output)
+    );
+}
+
+#[test]
+fn askpass_coexists_with_tags_and_provider() {
+    let input = "\
+Host myserver
+  HostName 10.0.0.1
+  # purple:tags prod,us-east
+  # purple:provider digitalocean:12345
+";
+    let mut config = parse_str(input);
+    config.set_host_askpass("myserver", "op://Vault/SSH/password");
+    let output = config.serialize();
+    assert!(output.contains("# purple:tags prod,us-east"), "tags preserved");
+    assert!(output.contains("# purple:provider digitalocean:12345"), "provider preserved");
+    assert!(output.contains("# purple:askpass op://Vault/SSH/password"), "askpass added");
+    let entries = config.host_entries();
+    assert_eq!(entries[0].askpass, Some("op://Vault/SSH/password".to_string()));
+    assert_eq!(entries[0].tags, vec!["prod", "us-east"]);
+}
+
+#[test]
+fn askpass_with_custom_command_containing_percent() {
+    let input = "\
+Host myserver
+  HostName 10.0.0.1
+";
+    let mut config = parse_str(input);
+    config.set_host_askpass("myserver", "get-pass %a %h");
+    let output = config.serialize();
+    assert!(output.contains("# purple:askpass get-pass %a %h"));
+    let entries = config.host_entries();
+    assert_eq!(entries[0].askpass, Some("get-pass %a %h".to_string()));
+}
+
+#[test]
+fn askpass_set_then_clear_then_set() {
+    let input = "\
+Host myserver
+  HostName 10.0.0.1
+";
+    let mut config = parse_str(input);
+    // Set
+    config.set_host_askpass("myserver", "keychain");
+    assert_eq!(config.host_entries()[0].askpass, Some("keychain".to_string()));
+    // Clear
+    config.set_host_askpass("myserver", "");
+    assert_eq!(config.host_entries()[0].askpass, None);
+    // Set again with different source
+    config.set_host_askpass("myserver", "vault:secret/ssh#pass");
+    assert_eq!(config.host_entries()[0].askpass, Some("vault:secret/ssh#pass".to_string()));
+    let output = config.serialize();
+    // Should have exactly one askpass comment
+    assert_eq!(output.matches("purple:askpass").count(), 1);
+}
+
+#[test]
+fn askpass_multiple_hosts_independent() {
+    let input = "\
+Host alpha
+  HostName a.com
+
+Host beta
+  HostName b.com
+";
+    let mut config = parse_str(input);
+    config.set_host_askpass("alpha", "keychain");
+    config.set_host_askpass("beta", "vault:secret/ssh#pw");
+    let entries = config.host_entries();
+    assert_eq!(entries[0].askpass, Some("keychain".to_string()));
+    assert_eq!(entries[1].askpass, Some("vault:secret/ssh#pw".to_string()));
+}
+
+#[test]
+fn askpass_does_not_affect_other_hosts() {
+    let input = "\
+Host alpha
+  HostName a.com
+  # purple:askpass keychain
+
+Host beta
+  HostName b.com
+";
+    let mut config = parse_str(input);
+    config.set_host_askpass("alpha", "");
+    let entries = config.host_entries();
+    assert_eq!(entries[0].askpass, None);
+    assert_eq!(entries[1].askpass, None); // Beta still has no askpass
+}
+
+#[test]
+fn askpass_all_source_types_roundtrip() {
+    let sources = [
+        "keychain",
+        "op://Vault/Item/password",
+        "bw:my-server-id",
+        "pass:ssh/myserver",
+        "vault:secret/data/myapp#password",
+        "vault:secret/data/myapp",
+        "my-script %a %h",
+        "echo hunter2",
+    ];
+    for source in &sources {
+        let input = "\
+Host myserver
+  HostName 10.0.0.1
+";
+        let mut config = parse_str(input);
+        config.set_host_askpass("myserver", source);
+        let entries = config.host_entries();
+        assert_eq!(
+            entries[0].askpass.as_deref(),
+            Some(*source),
+            "Round-trip failed for source: {}",
+            source
+        );
+    }
+}
+
+// -- Edge cases in askpass parsing and model behavior --
+
+#[test]
+fn askpass_empty_comment_value_is_none() {
+    // "# purple:askpass " with trailing space but no value
+    let input = "\
+Host myserver
+  HostName 10.0.0.1
+  # purple:askpass
+";
+    let config = parse_str(input);
+    let entries = config.host_entries();
+    assert_eq!(entries[0].askpass, None, "Empty askpass value should be None");
+}
+
+#[test]
+fn askpass_only_spaces_after_prefix_is_none() {
+    let input = "\
+Host myserver
+  HostName 10.0.0.1
+  # purple:askpass
+";
+    let config = parse_str(input);
+    let entries = config.host_entries();
+    assert_eq!(entries[0].askpass, None, "Whitespace-only askpass value should be None");
+}
+
+#[test]
+fn askpass_with_leading_trailing_spaces_in_value() {
+    let input = "\
+Host myserver
+  HostName 10.0.0.1
+  # purple:askpass  keychain
+";
+    let config = parse_str(input);
+    let entries = config.host_entries();
+    // The parser trims the value
+    assert_eq!(entries[0].askpass, Some("keychain".to_string()));
+}
+
+#[test]
+fn askpass_value_with_spaces_preserved() {
+    // Custom command with spaces: "my-script %a %h"
+    let input = "\
+Host myserver
+  HostName 10.0.0.1
+  # purple:askpass my-script %a %h
+";
+    let config = parse_str(input);
+    let entries = config.host_entries();
+    assert_eq!(entries[0].askpass, Some("my-script %a %h".to_string()));
+}
+
+#[test]
+fn askpass_not_confused_with_other_purple_comments() {
+    let input = "\
+Host myserver
+  HostName 10.0.0.1
+  # purple:tags prod
+  # purple:provider digitalocean:123
+";
+    let config = parse_str(input);
+    let entries = config.host_entries();
+    assert_eq!(entries[0].askpass, None, "Tags/provider should not be parsed as askpass");
+}
+
+#[test]
+fn askpass_case_sensitive_prefix() {
+    // "# Purple:askpass" should NOT be recognized (wrong case)
+    let input = "\
+Host myserver
+  HostName 10.0.0.1
+  # Purple:askpass keychain
+";
+    let config = parse_str(input);
+    let entries = config.host_entries();
+    assert_eq!(entries[0].askpass, None, "Wrong case prefix should not be parsed");
+}
+
+#[test]
+fn askpass_requires_space_after_prefix() {
+    // "# purple:askpasskeychain" should NOT match
+    let input = "\
+Host myserver
+  HostName 10.0.0.1
+  # purple:askpasskeychain
+";
+    let config = parse_str(input);
+    let entries = config.host_entries();
+    assert_eq!(entries[0].askpass, None, "No space after prefix should not match");
+}
+
+#[test]
+fn set_askpass_on_nonexistent_host_is_noop() {
+    let input = "\
+Host myserver
+  HostName 10.0.0.1
+";
+    let mut config = parse_str(input);
+    config.set_host_askpass("nonexistent", "keychain");
+    let output = config.serialize();
+    assert!(!output.contains("purple:askpass"), "Should not add askpass to nonexistent host");
+}
+
+#[test]
+fn askpass_survives_update_host() {
+    let input = "\
+Host myserver
+  HostName 10.0.0.1
+  User admin
+  # purple:askpass pass:ssh/myserver
+";
+    let mut config = parse_str(input);
+    // Update host with new hostname
+    let mut entry = config.host_entries()[0].clone();
+    entry.hostname = "10.0.0.2".to_string();
+    config.update_host("myserver", &entry);
+    // Askpass should still be there
+    let output = config.serialize();
+    assert!(output.contains("10.0.0.2"), "Hostname should be updated");
+    assert!(output.contains("# purple:askpass pass:ssh/myserver"), "Askpass should survive update");
+}
+
+#[test]
+fn askpass_crlf_roundtrip() {
+    let input = "Host myserver\r\n  HostName 10.0.0.1\r\n  # purple:askpass keychain\r\n";
+    let config = parse_str(input);
+    let entries = config.host_entries();
+    assert_eq!(entries[0].askpass, Some("keychain".to_string()), "CRLF askpass should parse");
+    let output = config.serialize();
+    assert!(output.contains("purple:askpass keychain"), "CRLF askpass should survive serialize");
+}
+
+#[test]
+fn askpass_crlf_set_and_read() {
+    let input = "Host myserver\r\n  HostName 10.0.0.1\r\n";
+    let mut config = parse_str(input);
+    config.set_host_askpass("myserver", "vault:secret/ssh#pw");
+    let entries = config.host_entries();
+    assert_eq!(entries[0].askpass, Some("vault:secret/ssh#pw".to_string()));
+}
+
+#[test]
+fn askpass_survives_add_host_then_update() {
+    let input = "";
+    let mut config = parse_str(input);
+    let entry = purple_ssh::ssh_config::model::HostEntry {
+        alias: "newhost".to_string(),
+        hostname: "10.0.0.1".to_string(),
+        askpass: Some("bw:my-item".to_string()),
+        ..Default::default()
+    };
+    config.add_host(&entry);
+    config.set_host_askpass("newhost", "bw:my-item");
+    assert_eq!(config.host_entries()[0].askpass, Some("bw:my-item".to_string()));
+    // Update hostname
+    let mut updated = config.host_entries()[0].clone();
+    updated.hostname = "10.0.0.2".to_string();
+    config.update_host("newhost", &updated);
+    assert_eq!(config.host_entries()[0].askpass, Some("bw:my-item".to_string()));
+    assert_eq!(config.host_entries()[0].hostname, "10.0.0.2");
+}
+
+#[test]
+fn askpass_survives_provider_style_update() {
+    // Provider sync calls update_host + set_host_tags but NOT set_host_askpass.
+    // Askpass should survive this pattern.
+    let input = "\
+Host do-myserver
+  HostName 10.0.0.1
+  # purple:provider digitalocean:12345
+  # purple:tags web
+  # purple:askpass keychain
+";
+    let mut config = parse_str(input);
+    // Simulate provider sync: update hostname and merge tags
+    let mut entry = config.host_entries()[0].clone();
+    entry.hostname = "10.0.0.2".to_string();
+    config.update_host("do-myserver", &entry);
+    config.set_host_tags("do-myserver", &["web".to_string(), "prod".to_string()]);
+    // Askpass should be preserved (not touched by sync)
+    let updated = config.host_entries()[0].clone();
+    assert_eq!(updated.askpass, Some("keychain".to_string()));
+    assert_eq!(updated.hostname, "10.0.0.2");
+    assert!(updated.tags.contains(&"prod".to_string()));
+}
+
+#[test]
+fn askpass_survives_swap_hosts() {
+    let input = "\
+Host alpha
+  HostName a.com
+  # purple:askpass keychain
+
+Host beta
+  HostName b.com
+  # purple:askpass vault:secret/ssh#pw
+";
+    let mut config = parse_str(input);
+    let swapped = config.swap_hosts("alpha", "beta");
+    assert!(swapped);
+    let entries = config.host_entries();
+    // After swap, the entries are reordered but each keeps its askpass
+    let alpha = entries.iter().find(|e| e.alias == "alpha").unwrap();
+    let beta = entries.iter().find(|e| e.alias == "beta").unwrap();
+    assert_eq!(alpha.askpass, Some("keychain".to_string()));
+    assert_eq!(beta.askpass, Some("vault:secret/ssh#pw".to_string()));
+}
+
+#[test]
+fn askpass_unicode_custom_command_roundtrip() {
+    let input = "\
+Host myserver
+  HostName 10.0.0.1
+";
+    let mut config = parse_str(input);
+    config.set_host_askpass("myserver", "get-p\u{00E4}ss %h");
+    assert_eq!(config.host_entries()[0].askpass, Some("get-p\u{00E4}ss %h".to_string()));
+    let output = config.serialize();
+    assert!(output.contains("get-p\u{00E4}ss %h"));
+}
+
+// ============================================================================
 // 8. SWAP HOSTS
 // ============================================================================
 
@@ -2996,4 +3578,524 @@ fn update_host_equals_separator_with_equals_in_value() {
     let output = config.serialize();
 
     assert_eq_visible("Host myserver\n  HostName=10.0.0.2\n  IdentityFile=~/.ssh/id=staging\n", &output);
+}
+
+// ============================================================================
+// Provider sync integration tests
+// ============================================================================
+
+use purple_ssh::providers::config::ProviderSection;
+use purple_ssh::providers::sync::{sync_provider, sync_provider_with_options};
+use purple_ssh::providers::{Provider, ProviderError, ProviderHost};
+
+struct TestProvider {
+    name: &'static str,
+    label: &'static str,
+}
+
+impl Provider for TestProvider {
+    fn name(&self) -> &str {
+        self.name
+    }
+    fn short_label(&self) -> &str {
+        self.label
+    }
+    fn fetch_hosts_cancellable(
+        &self,
+        _token: &str,
+        _cancel: &std::sync::atomic::AtomicBool,
+    ) -> Result<Vec<ProviderHost>, ProviderError> {
+        Ok(Vec::new())
+    }
+}
+
+fn test_section(provider: &str, prefix: &str) -> ProviderSection {
+    ProviderSection {
+        provider: provider.to_string(),
+        token: "test".to_string(),
+        alias_prefix: prefix.to_string(),
+        user: "root".to_string(),
+        identity_file: String::new(),
+        url: String::new(),
+        verify_tls: true,
+        auto_sync: true,
+    }
+}
+
+#[test]
+fn sync_adds_host_to_empty_config() {
+    let mut config = parse_str("");
+    let section = test_section("digitalocean", "do");
+    let provider = TestProvider { name: "digitalocean", label: "do" };
+    let remote = vec![ProviderHost {
+        server_id: "123".to_string(),
+        name: "web-1".to_string(),
+        ip: "1.2.3.4".to_string(),
+        tags: vec!["prod".to_string()],
+    }];
+    let result = sync_provider(&mut config, &provider, &remote, &section, false, false);
+    assert_eq!(result.added, 1);
+
+    let output = config.serialize();
+    assert!(output.contains("Host do-web-1"), "alias should be do-web-1");
+    assert!(output.contains("HostName 1.2.3.4"), "hostname should be 1.2.3.4");
+    assert!(output.contains("User root"), "user should be root");
+    assert!(output.contains("# purple:provider digitalocean:123"), "provider marker");
+    assert!(output.contains("# purple:tags prod"), "tags");
+}
+
+#[test]
+fn sync_preserves_existing_hosts() {
+    let input = "Host manual-host\n  HostName 10.0.0.1\n  User admin\n";
+    let mut config = parse_str(input);
+    let section = test_section("digitalocean", "do");
+    let provider = TestProvider { name: "digitalocean", label: "do" };
+    let remote = vec![ProviderHost {
+        server_id: "456".to_string(),
+        name: "db-1".to_string(),
+        ip: "5.6.7.8".to_string(),
+        tags: Vec::new(),
+    }];
+    sync_provider(&mut config, &provider, &remote, &section, false, false);
+
+    let output = config.serialize();
+    assert!(output.contains("Host manual-host"), "manual host preserved");
+    assert!(output.contains("HostName 10.0.0.1"), "manual host IP preserved");
+    assert!(output.contains("Host do-db-1"), "synced host added");
+}
+
+#[test]
+fn sync_updates_ip_preserves_formatting() {
+    let input = "Host do-web-1\n  HostName 1.2.3.4\n  User root\n  # purple:provider digitalocean:123\n";
+    let mut config = parse_str(input);
+    let section = test_section("digitalocean", "do");
+    let provider = TestProvider { name: "digitalocean", label: "do" };
+    let remote = vec![ProviderHost {
+        server_id: "123".to_string(),
+        name: "web-1".to_string(),
+        ip: "9.8.7.6".to_string(),
+        tags: Vec::new(),
+    }];
+    let result = sync_provider(&mut config, &provider, &remote, &section, false, false);
+    assert_eq!(result.updated, 1);
+
+    let output = config.serialize();
+    assert!(output.contains("HostName 9.8.7.6"), "IP should be updated");
+    assert!(output.contains("# purple:provider digitalocean:123"), "provider marker preserved");
+}
+
+#[test]
+fn sync_removes_deleted_host() {
+    let input = "\
+Host do-web-1
+  HostName 1.2.3.4
+  User root
+  # purple:provider digitalocean:123
+
+Host do-db-1
+  HostName 5.6.7.8
+  User root
+  # purple:provider digitalocean:456
+";
+    let mut config = parse_str(input);
+    let section = test_section("digitalocean", "do");
+    let provider = TestProvider { name: "digitalocean", label: "do" };
+    // Only web-1 in remote, db-1 should be removed
+    let remote = vec![ProviderHost {
+        server_id: "123".to_string(),
+        name: "web-1".to_string(),
+        ip: "1.2.3.4".to_string(),
+        tags: Vec::new(),
+    }];
+    let result = sync_provider(&mut config, &provider, &remote, &section, true, false);
+    assert_eq!(result.removed, 1);
+    assert_eq!(result.unchanged, 1);
+
+    let output = config.serialize();
+    assert!(output.contains("Host do-web-1"), "web-1 preserved");
+    assert!(!output.contains("Host do-db-1"), "db-1 removed");
+}
+
+#[test]
+fn sync_tag_merge_preserves_existing_tags() {
+    let input = "\
+Host do-web-1
+  HostName 1.2.3.4
+  User root
+  # purple:provider digitalocean:123
+  # purple:tags prod,my-custom
+";
+    let mut config = parse_str(input);
+    let section = test_section("digitalocean", "do");
+    let provider = TestProvider { name: "digitalocean", label: "do" };
+    let remote = vec![ProviderHost {
+        server_id: "123".to_string(),
+        name: "web-1".to_string(),
+        ip: "1.2.3.4".to_string(),
+        tags: vec!["prod".to_string(), "us-east".to_string()],
+    }];
+    let result = sync_provider(&mut config, &provider, &remote, &section, false, false);
+    assert_eq!(result.updated, 1); // new tag "us-east" added
+
+    let output = config.serialize();
+    assert!(output.contains("my-custom"), "local tag preserved");
+    assert!(output.contains("us-east"), "new remote tag added");
+    assert!(output.contains("prod"), "shared tag preserved");
+}
+
+#[test]
+fn sync_reset_tags_replaces_all() {
+    let input = "\
+Host do-web-1
+  HostName 1.2.3.4
+  User root
+  # purple:provider digitalocean:123
+  # purple:tags prod,my-custom
+";
+    let mut config = parse_str(input);
+    let section = test_section("digitalocean", "do");
+    let provider = TestProvider { name: "digitalocean", label: "do" };
+    let remote = vec![ProviderHost {
+        server_id: "123".to_string(),
+        name: "web-1".to_string(),
+        ip: "1.2.3.4".to_string(),
+        tags: vec!["staging".to_string()],
+    }];
+    let result = sync_provider_with_options(&mut config, &provider, &remote, &section, false, false, true);
+    assert_eq!(result.updated, 1);
+
+    let output = config.serialize();
+    assert!(output.contains("staging"), "new tag set");
+    assert!(!output.contains("my-custom"), "local tag replaced");
+}
+
+#[test]
+fn sync_rename_updates_alias_and_provider_marker() {
+    let input = "\
+Host do-old-name
+  HostName 1.2.3.4
+  User root
+  # purple:provider digitalocean:123
+";
+    let mut config = parse_str(input);
+    let section = test_section("digitalocean", "do");
+    let provider = TestProvider { name: "digitalocean", label: "do" };
+    let remote = vec![ProviderHost {
+        server_id: "123".to_string(),
+        name: "new-name".to_string(),
+        ip: "1.2.3.4".to_string(),
+        tags: Vec::new(),
+    }];
+    let result = sync_provider(&mut config, &provider, &remote, &section, false, false);
+    assert_eq!(result.renames.len(), 1);
+    assert_eq!(result.renames[0], ("do-old-name".to_string(), "do-new-name".to_string()));
+
+    let output = config.serialize();
+    assert!(output.contains("Host do-new-name"), "alias renamed");
+    assert!(!output.contains("Host do-old-name"), "old alias gone");
+    assert!(output.contains("# purple:provider digitalocean:123"), "provider marker updated");
+}
+
+#[test]
+fn sync_with_identity_file() {
+    let mut config = parse_str("");
+    let mut section = test_section("digitalocean", "do");
+    section.identity_file = "~/.ssh/do_key".to_string();
+    let provider = TestProvider { name: "digitalocean", label: "do" };
+    let remote = vec![ProviderHost {
+        server_id: "1".to_string(),
+        name: "web".to_string(),
+        ip: "1.2.3.4".to_string(),
+        tags: Vec::new(),
+    }];
+    sync_provider(&mut config, &provider, &remote, &section, false, false);
+
+    let output = config.serialize();
+    assert!(output.contains("IdentityFile ~/.ssh/do_key"), "identity file set");
+}
+
+#[test]
+fn sync_two_providers_coexist() {
+    let mut config = parse_str("");
+    let do_section = test_section("digitalocean", "do");
+    let do_provider = TestProvider { name: "digitalocean", label: "do" };
+    let hetzner_section = test_section("hetzner", "hz");
+    let hetzner_provider = TestProvider { name: "hetzner", label: "hetzner" };
+
+    let do_remote = vec![ProviderHost {
+        server_id: "1".to_string(),
+        name: "do-web".to_string(),
+        ip: "1.1.1.1".to_string(),
+        tags: Vec::new(),
+    }];
+    sync_provider(&mut config, &do_provider, &do_remote, &do_section, false, false);
+
+    let hz_remote = vec![ProviderHost {
+        server_id: "2".to_string(),
+        name: "hz-db".to_string(),
+        ip: "2.2.2.2".to_string(),
+        tags: Vec::new(),
+    }];
+    sync_provider(&mut config, &hetzner_provider, &hz_remote, &hetzner_section, false, false);
+
+    let output = config.serialize();
+    assert!(output.contains("Host do-do-web"), "DO host present");
+    assert!(output.contains("Host hz-hz-db"), "Hetzner host present");
+    assert!(output.contains("# purple:provider digitalocean:1"), "DO marker");
+    assert!(output.contains("# purple:provider hetzner:2"), "Hetzner marker");
+
+    // Remove DO hosts, Hetzner should survive
+    let result = sync_provider(&mut config, &do_provider, &[], &do_section, true, false);
+    assert_eq!(result.removed, 1);
+    let output = config.serialize();
+    assert!(!output.contains("Host do-do-web"), "DO host removed");
+    assert!(output.contains("Host hz-hz-db"), "Hetzner host survived");
+}
+
+#[test]
+fn sync_empty_ip_skipped_but_not_removed() {
+    let input = "\
+Host do-web-1
+  HostName 1.2.3.4
+  User root
+  # purple:provider digitalocean:123
+";
+    let mut config = parse_str(input);
+    let section = test_section("digitalocean", "do");
+    let provider = TestProvider { name: "digitalocean", label: "do" };
+    // Server exists but has empty IP (stopped VM)
+    let remote = vec![ProviderHost {
+        server_id: "123".to_string(),
+        name: "web-1".to_string(),
+        ip: "".to_string(), // empty = no IP
+        tags: Vec::new(),
+    }];
+    let result = sync_provider(&mut config, &provider, &remote, &section, true, false);
+    assert_eq!(result.removed, 0, "should not remove stopped VMs");
+    assert_eq!(result.unchanged, 1);
+
+    let output = config.serialize();
+    assert!(output.contains("Host do-web-1"), "host preserved despite empty IP");
+}
+
+#[test]
+fn sync_preserves_indentation_style() {
+    // Existing host uses 4-space indent. Sync update should preserve it.
+    let input = "\
+Host do-web-1
+    HostName 1.2.3.4
+    User root
+    # purple:provider digitalocean:123
+";
+    let mut config = parse_str(input);
+    let section = test_section("digitalocean", "do");
+    let provider = TestProvider { name: "digitalocean", label: "do" };
+    let remote = vec![ProviderHost {
+        server_id: "123".to_string(),
+        name: "web-1".to_string(),
+        ip: "9.8.7.6".to_string(),
+        tags: Vec::new(),
+    }];
+    sync_provider(&mut config, &provider, &remote, &section, false, false);
+
+    let output = config.serialize();
+    assert!(output.contains("    HostName 9.8.7.6"), "4-space indent preserved on update");
+    assert!(output.contains("    User root"), "other directives unchanged");
+}
+
+#[test]
+fn sync_preserves_comments_inside_host_block() {
+    let input = "\
+Host do-web-1
+  HostName 1.2.3.4
+  # This is a custom comment
+  User root
+  # purple:provider digitalocean:123
+";
+    let mut config = parse_str(input);
+    let section = test_section("digitalocean", "do");
+    let provider = TestProvider { name: "digitalocean", label: "do" };
+    let remote = vec![ProviderHost {
+        server_id: "123".to_string(),
+        name: "web-1".to_string(),
+        ip: "9.8.7.6".to_string(),
+        tags: Vec::new(),
+    }];
+    sync_provider(&mut config, &provider, &remote, &section, false, false);
+
+    let output = config.serialize();
+    assert!(output.contains("# This is a custom comment"), "custom comment preserved");
+}
+
+#[test]
+fn sync_alias_dedup_in_serialized_output() {
+    // Existing manual host conflicts with synced alias
+    let input = "Host do-web\n  HostName 10.0.0.1\n";
+    let mut config = parse_str(input);
+    let section = test_section("digitalocean", "do");
+    let provider = TestProvider { name: "digitalocean", label: "do" };
+    let remote = vec![ProviderHost {
+        server_id: "1".to_string(),
+        name: "web".to_string(),
+        ip: "1.2.3.4".to_string(),
+        tags: Vec::new(),
+    }];
+    sync_provider(&mut config, &provider, &remote, &section, false, false);
+
+    let output = config.serialize();
+    assert!(output.contains("Host do-web\n"), "manual host preserved");
+    assert!(output.contains("Host do-web-2"), "synced host deduped with -2 suffix");
+}
+
+#[test]
+fn sync_group_header_in_output() {
+    let mut config = parse_str("");
+    let section = test_section("digitalocean", "do");
+    let provider = TestProvider { name: "digitalocean", label: "do" };
+    let remote = vec![ProviderHost {
+        server_id: "1".to_string(),
+        name: "web".to_string(),
+        ip: "1.2.3.4".to_string(),
+        tags: Vec::new(),
+    }];
+    sync_provider(&mut config, &provider, &remote, &section, false, false);
+
+    let output = config.serialize();
+    assert!(output.contains("# purple:group DigitalOcean"), "group header present");
+}
+
+#[test]
+fn sync_group_header_removed_after_all_deleted() {
+    let mut config = parse_str("");
+    let section = test_section("digitalocean", "do");
+    let provider = TestProvider { name: "digitalocean", label: "do" };
+    let remote = vec![ProviderHost {
+        server_id: "1".to_string(),
+        name: "web".to_string(),
+        ip: "1.2.3.4".to_string(),
+        tags: Vec::new(),
+    }];
+    sync_provider(&mut config, &provider, &remote, &section, false, false);
+    let output = config.serialize();
+    assert!(output.contains("# purple:group DigitalOcean"));
+
+    // Remove all
+    sync_provider(&mut config, &provider, &[], &section, true, false);
+    let output = config.serialize();
+    assert!(!output.contains("# purple:group DigitalOcean"), "header cleaned up");
+}
+
+#[test]
+fn sync_multiple_tags_serialized_comma_separated() {
+    let mut config = parse_str("");
+    let section = test_section("digitalocean", "do");
+    let provider = TestProvider { name: "digitalocean", label: "do" };
+    let remote = vec![ProviderHost {
+        server_id: "1".to_string(),
+        name: "web".to_string(),
+        ip: "1.2.3.4".to_string(),
+        tags: vec!["prod".to_string(), "us-east".to_string(), "web".to_string()],
+    }];
+    sync_provider(&mut config, &provider, &remote, &section, false, false);
+
+    let output = config.serialize();
+    assert!(output.contains("# purple:tags prod,us-east,web"), "tags comma-separated");
+}
+
+#[test]
+fn sync_rename_prefix_change_serialized() {
+    let input = "\
+Host do-web-1
+  HostName 1.2.3.4
+  User root
+  # purple:provider digitalocean:123
+";
+    let mut config = parse_str(input);
+    let mut section = test_section("digitalocean", "ocean");
+    section.user = "root".to_string();
+    let provider = TestProvider { name: "digitalocean", label: "do" };
+    let remote = vec![ProviderHost {
+        server_id: "123".to_string(),
+        name: "web-1".to_string(),
+        ip: "1.2.3.4".to_string(),
+        tags: Vec::new(),
+    }];
+    sync_provider(&mut config, &provider, &remote, &section, false, false);
+
+    let output = config.serialize();
+    assert!(output.contains("Host ocean-web-1"), "alias uses new prefix");
+    assert!(!output.contains("Host do-web-1"), "old alias gone");
+}
+
+#[test]
+fn sync_unknown_directives_preserved_on_ip_update() {
+    let input = "\
+Host do-web-1
+  HostName 1.2.3.4
+  User root
+  ProxyJump bastion
+  ForwardAgent yes
+  # purple:provider digitalocean:123
+";
+    let mut config = parse_str(input);
+    let section = test_section("digitalocean", "do");
+    let provider = TestProvider { name: "digitalocean", label: "do" };
+    let remote = vec![ProviderHost {
+        server_id: "123".to_string(),
+        name: "web-1".to_string(),
+        ip: "9.8.7.6".to_string(),
+        tags: Vec::new(),
+    }];
+    sync_provider(&mut config, &provider, &remote, &section, false, false);
+
+    let output = config.serialize();
+    assert!(output.contains("HostName 9.8.7.6"), "IP updated");
+    assert!(output.contains("ProxyJump bastion"), "unknown directive preserved");
+    assert!(output.contains("ForwardAgent yes"), "unknown directive preserved");
+}
+
+#[test]
+fn sync_dry_run_serialized_unchanged() {
+    let input = "Host do-web-1\n  HostName 1.2.3.4\n  User root\n  # purple:provider digitalocean:123\n";
+    let mut config = parse_str(input);
+    let section = test_section("digitalocean", "do");
+    let provider = TestProvider { name: "digitalocean", label: "do" };
+    let remote = vec![ProviderHost {
+        server_id: "123".to_string(),
+        name: "web-1".to_string(),
+        ip: "9.9.9.9".to_string(),
+        tags: Vec::new(),
+    }];
+    let result = sync_provider(&mut config, &provider, &remote, &section, false, true);
+    assert_eq!(result.updated, 1);
+
+    let output = config.serialize();
+    assert!(output.contains("HostName 1.2.3.4"), "IP unchanged in dry-run");
+    assert!(!output.contains("9.9.9.9"), "new IP not applied in dry-run");
+}
+
+#[test]
+fn sync_large_batch_serialized() {
+    let mut config = parse_str("");
+    let section = test_section("digitalocean", "do");
+    let provider = TestProvider { name: "digitalocean", label: "do" };
+    let remote: Vec<ProviderHost> = (0..20)
+        .map(|i| ProviderHost {
+            server_id: format!("{}", i),
+            name: format!("server-{}", i),
+            ip: format!("10.0.0.{}", i),
+            tags: Vec::new(),
+        })
+        .collect();
+    let result = sync_provider(&mut config, &provider, &remote, &section, false, false);
+    assert_eq!(result.added, 20);
+
+    let output = config.serialize();
+    for i in 0..20 {
+        assert!(
+            output.contains(&format!("Host do-server-{}", i)),
+            "host {} present",
+            i
+        );
+    }
 }

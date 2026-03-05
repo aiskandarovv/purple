@@ -78,14 +78,30 @@ pub fn selected() -> Style {
     Style::default().add_modifier(Modifier::REVERSED)
 }
 
-/// Error message.
+/// Error message. Red when color is available.
 pub fn error() -> Style {
-    Style::default().add_modifier(Modifier::BOLD)
+    match COLOR_MODE.load(Ordering::Acquire) {
+        0 => Style::default().add_modifier(Modifier::BOLD),
+        2 => Style::default()
+            .fg(Color::Rgb(239, 68, 68))
+            .add_modifier(Modifier::BOLD),
+        _ => Style::default()
+            .fg(Color::Red)
+            .add_modifier(Modifier::BOLD),
+    }
 }
 
-/// Success message.
+/// Success message. Green when color is available.
 pub fn success() -> Style {
-    Style::default().add_modifier(Modifier::BOLD)
+    match COLOR_MODE.load(Ordering::Acquire) {
+        0 => Style::default().add_modifier(Modifier::BOLD),
+        2 => Style::default()
+            .fg(Color::Rgb(34, 197, 94))
+            .add_modifier(Modifier::BOLD),
+        _ => Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD),
+    }
 }
 
 /// Danger action key (delete confirmation).
@@ -111,4 +127,21 @@ pub fn border_danger() -> Style {
 /// Bold text (labels, emphasis).
 pub fn bold() -> Style {
     Style::default().add_modifier(Modifier::BOLD)
+}
+
+/// Update available badge. Purple background to stand out in the title bar.
+pub fn update_badge() -> Style {
+    match COLOR_MODE.load(Ordering::Acquire) {
+        0 => Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED),
+        2 => Style::default()
+            .fg(Color::White)
+            .bg(Color::Rgb(147, 51, 234))
+            .add_modifier(Modifier::BOLD)
+            .remove_modifier(Modifier::DIM),
+        _ => Style::default()
+            .fg(Color::White)
+            .bg(Color::Magenta)
+            .add_modifier(Modifier::BOLD)
+            .remove_modifier(Modifier::DIM),
+    }
 }

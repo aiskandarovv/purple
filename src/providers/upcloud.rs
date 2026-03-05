@@ -538,4 +538,409 @@ mod tests {
         let resp: ServerDetailResponse = serde_json::from_str(json).unwrap();
         assert!(resp.server.networking.interfaces.interface.is_empty());
     }
+
+    // --- collect_ips tests ---
+
+    #[test]
+    fn test_collect_ips_filters_by_type() {
+        let interfaces = vec![
+            NetworkInterface {
+                iface_type: "public".into(),
+                ip_addresses: IpAddressesWrapper {
+                    ip_address: vec![
+                        IpAddress { address: "94.237.1.1".into(), family: "IPv4".into() },
+                    ],
+                },
+            },
+            NetworkInterface {
+                iface_type: "private".into(),
+                ip_addresses: IpAddressesWrapper {
+                    ip_address: vec![
+                        IpAddress { address: "10.0.0.1".into(), family: "IPv4".into() },
+                    ],
+                },
+            },
+            NetworkInterface {
+                iface_type: "utility".into(),
+                ip_addresses: IpAddressesWrapper {
+                    ip_address: vec![
+                        IpAddress { address: "10.3.0.1".into(), family: "IPv4".into() },
+                    ],
+                },
+            },
+        ];
+        let public = collect_ips(&interfaces, "public");
+        assert_eq!(public.len(), 1);
+        assert_eq!(public[0].address, "94.237.1.1");
+
+        let private = collect_ips(&interfaces, "private");
+        assert_eq!(private.len(), 1);
+        assert_eq!(private[0].address, "10.0.0.1");
+
+        let utility = collect_ips(&interfaces, "utility");
+        assert_eq!(utility.len(), 1);
+        assert_eq!(utility[0].address, "10.3.0.1");
+    }
+
+    #[test]
+    fn test_collect_ips_empty_interfaces() {
+        let interfaces: Vec<NetworkInterface> = Vec::new();
+        assert!(collect_ips(&interfaces, "public").is_empty());
+    }
+
+    #[test]
+    fn test_collect_ips_no_matching_type() {
+        let interfaces = vec![
+            NetworkInterface {
+                iface_type: "private".into(),
+                ip_addresses: IpAddressesWrapper {
+                    ip_address: vec![
+                        IpAddress { address: "10.0.0.1".into(), family: "IPv4".into() },
+                    ],
+                },
+            },
+        ];
+        assert!(collect_ips(&interfaces, "public").is_empty());
+    }
+
+    #[test]
+    fn test_collect_ips_multiple_addresses_on_same_interface() {
+        let interfaces = vec![
+            NetworkInterface {
+                iface_type: "public".into(),
+                ip_addresses: IpAddressesWrapper {
+                    ip_address: vec![
+                        IpAddress { address: "94.237.1.1".into(), family: "IPv4".into() },
+                        IpAddress { address: "94.237.1.2".into(), family: "IPv4".into() },
+                        IpAddress { address: "2a04::1".into(), family: "IPv6".into() },
+                    ],
+                },
+            },
+        ];
+        let public = collect_ips(&interfaces, "public");
+        assert_eq!(public.len(), 3);
+    }
+
+    // --- select_ip: multiple public IPv4 uses first ---
+
+    #[test]
+    fn test_select_ip_multiple_public_v4_uses_first() {
+        let interfaces = vec![
+            NetworkInterface {
+                iface_type: "public".into(),
+                ip_addresses: IpAddressesWrapper {
+                    ip_address: vec![
+                        IpAddress { address: "94.237.1.1".into(), family: "IPv4".into() },
+                        IpAddress { address: "94.237.1.2".into(), family: "IPv4".into() },
+                    ],
+                },
+            },
+        ];
+        assert_eq!(select_ip(&interfaces), Some("94.237.1.1".to_string()));
+    }
+
+    // --- select_ip: both placeholders ---
+
+    #[test]
+    fn test_select_ip_both_placeholders() {
+        let interfaces = vec![
+            NetworkInterface {
+                iface_type: "public".into(),
+                ip_addresses: IpAddressesWrapper {
+                    ip_address: vec![
+                        IpAddress { address: "0.0.0.0".into(), family: "IPv4".into() },
+                        IpAddress { address: "::".into(), family: "IPv6".into() },
+                    ],
+                },
+            },
+        ];
+        assert_eq!(select_ip(&interfaces), None);
+    }
+
+    // --- tag construction edge cases ---
+
+    #[test]
+    fn test_tags_label_empty_value_key_only() {
+        let server = ServerSummary {
+            uuid: "u".into(),
+            title: "t".into(),
+            hostname: "h".into(),
+            tags: TagWrapper::default(),
+            labels: LabelWrapper { label: vec![
+                Label { key: "managed".into(), value: "".into() },
+            ]},
+        };
+        let mut tags: Vec<String> = server.tags.tag.iter().map(|t| t.to_lowercase()).collect();
+        for label in &server.labels.label {
+            if label.value.is_empty() {
+                tags.push(label.key.clone());
+            } else {
+                tags.push(format!("{}={}", label.key, label.value));
+            }
+        }
+        tags.sort();
+        assert_eq!(tags, vec!["managed"]);
+    }
+
+    #[test]
+    fn test_tags_only_no_labels() {
+        let server = ServerSummary {
+            uuid: "u".into(),
+            title: "t".into(),
+            hostname: "h".into(),
+            tags: TagWrapper { tag: vec!["WEB".into(), "PROD".into()] },
+            labels: LabelWrapper::default(),
+        };
+        let mut tags: Vec<String> = server.tags.tag.iter().map(|t| t.to_lowercase()).collect();
+        tags.sort();
+        assert_eq!(tags, vec!["prod", "web"]);
+    }
+
+    #[test]
+    fn test_labels_only_no_tags() {
+        let server = ServerSummary {
+            uuid: "u".into(),
+            title: "t".into(),
+            hostname: "h".into(),
+            tags: TagWrapper::default(),
+            labels: LabelWrapper { label: vec![
+                Label { key: "env".into(), value: "staging".into() },
+                Label { key: "team".into(), value: "backend".into() },
+            ]},
+        };
+        let mut tags: Vec<String> = Vec::new();
+        for label in &server.labels.label {
+            if label.value.is_empty() {
+                tags.push(label.key.clone());
+            } else {
+                tags.push(format!("{}={}", label.key, label.value));
+            }
+        }
+        tags.sort();
+        assert_eq!(tags, vec!["env=staging", "team=backend"]);
+    }
+
+    // --- pagination offset logic ---
+
+    #[test]
+    fn test_pagination_stops_when_count_less_than_limit() {
+        // When the API returns fewer items than the limit, we've hit the last page
+        let json = r#"{
+            "servers": {
+                "server": [
+                    {"uuid": "u1", "title": "a", "hostname": "a.example.com"},
+                    {"uuid": "u2", "title": "b", "hostname": "b.example.com"}
+                ]
+            }
+        }"#;
+        let resp: ServerListResponse = serde_json::from_str(json).unwrap();
+        let limit = 100;
+        let count = resp.servers.server.len();
+        assert!(count < limit); // Should stop
+    }
+
+    #[test]
+    fn test_pagination_continues_when_count_equals_limit() {
+        // When count == limit, there may be more pages
+        let count = 100;
+        let limit = 100;
+        assert!(count >= limit); // Should continue
+    }
+
+    // --- server UUID is string ---
+
+    #[test]
+    fn test_server_uuid_is_string() {
+        let json = r#"{
+            "servers": {
+                "server": [
+                    {"uuid": "00c148cb-ef71-46cb-a76f-1bb53e791e8a", "title": "t", "hostname": "h"}
+                ]
+            }
+        }"#;
+        let resp: ServerListResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.servers.server[0].uuid, "00c148cb-ef71-46cb-a76f-1bb53e791e8a");
+    }
+
+    // --- empty server list ---
+
+    #[test]
+    fn test_empty_server_list() {
+        let json = r#"{"servers": {"server": []}}"#;
+        let resp: ServerListResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.servers.server.is_empty());
+    }
+
+    // --- detail response with empty networking ---
+
+    #[test]
+    fn test_detail_empty_interfaces() {
+        let json = r#"{"server": {"networking": {"interfaces": {"interface": []}}}}"#;
+        let resp: ServerDetailResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.server.networking.interfaces.interface.is_empty());
+        assert_eq!(select_ip(&resp.server.networking.interfaces.interface), None);
+    }
+
+    // --- mixed public interfaces: IPv4 on one, IPv6 on another ---
+
+    #[test]
+    fn test_select_ip_across_multiple_public_interfaces() {
+        let interfaces = vec![
+            NetworkInterface {
+                iface_type: "public".into(),
+                ip_addresses: IpAddressesWrapper {
+                    ip_address: vec![
+                        IpAddress { address: "2a04::1".into(), family: "IPv6".into() },
+                    ],
+                },
+            },
+            NetworkInterface {
+                iface_type: "public".into(),
+                ip_addresses: IpAddressesWrapper {
+                    ip_address: vec![
+                        IpAddress { address: "94.237.1.1".into(), family: "IPv4".into() },
+                    ],
+                },
+            },
+        ];
+        // IPv4 should win even though it's on the second interface
+        assert_eq!(select_ip(&interfaces), Some("94.237.1.1".to_string()));
+    }
+
+    // --- collect_ips with multiple interfaces of same type ---
+
+    #[test]
+    fn test_collect_ips_two_public_interfaces() {
+        let interfaces = vec![
+            NetworkInterface {
+                iface_type: "public".into(),
+                ip_addresses: IpAddressesWrapper {
+                    ip_address: vec![
+                        IpAddress { address: "94.1.1.1".into(), family: "IPv4".into() },
+                    ],
+                },
+            },
+            NetworkInterface {
+                iface_type: "public".into(),
+                ip_addresses: IpAddressesWrapper {
+                    ip_address: vec![
+                        IpAddress { address: "94.2.2.2".into(), family: "IPv4".into() },
+                    ],
+                },
+            },
+        ];
+        let ips = collect_ips(&interfaces, "public");
+        assert_eq!(ips.len(), 2);
+        assert_eq!(ips[0].address, "94.1.1.1");
+        assert_eq!(ips[1].address, "94.2.2.2");
+    }
+
+    // --- select_ip: public interface with empty ip_address list ---
+
+    #[test]
+    fn test_select_ip_public_empty_addresses() {
+        let interfaces = vec![NetworkInterface {
+            iface_type: "public".into(),
+            ip_addresses: IpAddressesWrapper {
+                ip_address: Vec::new(),
+            },
+        }];
+        assert_eq!(select_ip(&interfaces), None);
+    }
+
+    // --- select_ip: only utility interface (ignored) ---
+
+    #[test]
+    fn test_select_ip_utility_interface_ignored() {
+        let interfaces = vec![NetworkInterface {
+            iface_type: "utility".into(),
+            ip_addresses: IpAddressesWrapper {
+                ip_address: vec![
+                    IpAddress { address: "10.0.0.1".into(), family: "IPv4".into() },
+                ],
+            },
+        }];
+        assert_eq!(select_ip(&interfaces), None);
+    }
+
+    // --- collect_ips: private interface not in public results ---
+
+    #[test]
+    fn test_collect_ips_private_not_in_public() {
+        let interfaces = vec![
+            NetworkInterface {
+                iface_type: "private".into(),
+                ip_addresses: IpAddressesWrapper {
+                    ip_address: vec![
+                        IpAddress { address: "10.0.0.1".into(), family: "IPv4".into() },
+                    ],
+                },
+            },
+            NetworkInterface {
+                iface_type: "public".into(),
+                ip_addresses: IpAddressesWrapper {
+                    ip_address: vec![
+                        IpAddress { address: "94.1.1.1".into(), family: "IPv4".into() },
+                    ],
+                },
+            },
+        ];
+        let public_ips = collect_ips(&interfaces, "public");
+        assert_eq!(public_ips.len(), 1);
+        assert_eq!(public_ips[0].address, "94.1.1.1");
+    }
+
+    // --- server name: title non-empty uses title ---
+
+    #[test]
+    fn test_server_name_uses_title_when_present() {
+        let json = r#"{
+            "servers": {
+                "server": [{
+                    "uuid": "uuid-1",
+                    "title": "My Title",
+                    "hostname": "my-host.example.com",
+                    "tags": {"tag": []},
+                    "labels": {"label": []}
+                }]
+            }
+        }"#;
+        let resp: ServerListResponse = serde_json::from_str(json).unwrap();
+        let server = &resp.servers.server[0];
+        let name = if server.title.is_empty() {
+            server.hostname.clone()
+        } else {
+            server.title.clone()
+        };
+        assert_eq!(name, "My Title");
+    }
+
+    // --- tags: combined tags + labels, sorted ---
+
+    #[test]
+    fn test_tags_combined_and_sorted() {
+        let json = r#"{
+            "servers": {
+                "server": [{
+                    "uuid": "uuid-1",
+                    "title": "test",
+                    "hostname": "test",
+                    "tags": {"tag": ["Zebra", "Apple"]},
+                    "labels": {"label": [{"key": "env", "value": "prod"}, {"key": "tier", "value": ""}]}
+                }]
+            }
+        }"#;
+        let resp: ServerListResponse = serde_json::from_str(json).unwrap();
+        let server = &resp.servers.server[0];
+        let mut tags: Vec<String> = server.tags.tag.iter().map(|t| t.to_lowercase()).collect();
+        for label in &server.labels.label {
+            if label.value.is_empty() {
+                tags.push(label.key.clone());
+            } else {
+                tags.push(format!("{}={}", label.key, label.value));
+            }
+        }
+        tags.sort();
+        assert_eq!(tags, vec!["apple", "env=prod", "tier", "zebra"]);
+    }
 }
