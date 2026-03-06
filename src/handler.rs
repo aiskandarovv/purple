@@ -45,6 +45,7 @@ pub fn handle_key_event(
         Screen::ProviderForm { .. } => handle_provider_form(app, key, events_tx),
         Screen::TunnelList { .. } => handle_tunnel_list(app, key),
         Screen::TunnelForm { .. } => handle_tunnel_form(app, key),
+        Screen::ConfirmHostKeyReset { .. } => handle_confirm_host_key_reset(app, key),
     }
     Ok(())
 }
@@ -543,6 +544,60 @@ fn handle_confirm_delete(app: &mut App, key: KeyEvent) {
                     }
                 } else {
                     app.set_status(format!("Host '{}' not found.", alias), true);
+                }
+            }
+            app.screen = Screen::HostList;
+        }
+        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+            app.screen = Screen::HostList;
+        }
+        _ => {}
+    }
+}
+
+fn handle_confirm_host_key_reset(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Char('y') | KeyCode::Char('Y') => {
+            if let Screen::ConfirmHostKeyReset {
+                ref alias,
+                ref hostname,
+                ref known_hosts_path,
+                ref askpass,
+            } = app.screen
+            {
+                let alias = alias.clone();
+                let hostname = hostname.clone();
+                let known_hosts_path = known_hosts_path.clone();
+                let askpass = askpass.clone();
+
+                let output = std::process::Command::new("ssh-keygen")
+                    .arg("-R")
+                    .arg(&hostname)
+                    .arg("-f")
+                    .arg(&known_hosts_path)
+                    .output();
+
+                match output {
+                    Ok(result) if result.status.success() => {
+                        app.set_status(
+                            format!("Removed host key for {}. Reconnecting...", hostname),
+                            false,
+                        );
+                        app.pending_connect = Some((alias, askpass));
+                    }
+                    Ok(result) => {
+                        let stderr = String::from_utf8_lossy(&result.stderr);
+                        app.set_status(
+                            format!("Failed to remove host key: {}", stderr.trim()),
+                            true,
+                        );
+                    }
+                    Err(e) => {
+                        app.set_status(
+                            format!("Failed to run ssh-keygen: {}", e),
+                            true,
+                        );
+                    }
                 }
             }
             app.screen = Screen::HostList;

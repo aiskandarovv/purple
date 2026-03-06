@@ -158,7 +158,7 @@ const LANDING_PAGE = `<!DOCTYPE html>
   "url": "https://getpurple.sh",
   "downloadUrl": "https://getpurple.sh",
   "installUrl": "https://github.com/erickochen/purple/releases",
-  "softwareVersion": "1.13.0",
+  "softwareVersion": "1.14.2",
   "programmingLanguage": "Rust",
   "license": "https://opensource.org/licenses/MIT",
   "codeRepository": "https://github.com/erickochen/purple",
@@ -530,6 +530,7 @@ purple reads your existing ~/.ssh/config and gives you a terminal UI to search, 
 - Shell completions (bash, zsh, fish)
 - Self-update mechanism (macOS curl installs). Homebrew and cargo users update via their package manager
 - Auto-reload: detects external config changes every 4 seconds
+- Host key reset: detects changed host keys after server reinstalls and offers to remove the old key and reconnect
 - Minimal UI with monochrome base and subtle color for status. Works in any terminal, respects NO_COLOR
 
 ## Install

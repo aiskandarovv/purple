@@ -52,6 +52,12 @@ pub enum Screen {
     ProviderForm { provider: String },
     TunnelList { alias: String },
     TunnelForm { alias: String, editing: Option<usize> },
+    ConfirmHostKeyReset {
+        alias: String,
+        hostname: String,
+        known_hosts_path: String,
+        askpass: Option<String>,
+    },
 }
 
 /// Which form field is focused.

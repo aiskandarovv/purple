@@ -3,12 +3,19 @@ use std::process::Command;
 
 use anyhow::{Context, Result};
 
+/// Result of an SSH connection attempt.
+pub struct ConnectResult {
+    pub status: std::process::ExitStatus,
+    pub stderr_output: String,
+}
+
 /// Launch an SSH connection to the given host alias.
-/// Uses the system `ssh` binary with inherited stdin/stdout/stderr.
+/// Uses the system `ssh` binary with inherited stdin/stdout. Stderr is piped and
+/// forwarded to real stderr in real time so the output is captured for error detection.
 /// Passes `-F <config_path>` so the alias resolves against the correct config file.
 /// When `askpass` is Some, sets SSH_ASKPASS environment variables so SSH retrieves
 /// the password from the configured source via purple's askpass handler.
-pub fn connect(alias: &str, config_path: &Path, askpass: Option<&str>, bw_session: Option<&str>) -> Result<std::process::ExitStatus> {
+pub fn connect(alias: &str, config_path: &Path, askpass: Option<&str>, bw_session: Option<&str>) -> Result<ConnectResult> {
     let mut cmd = Command::new("ssh");
     cmd.arg("-F")
         .arg(config_path)
@@ -16,7 +23,7 @@ pub fn connect(alias: &str, config_path: &Path, askpass: Option<&str>, bw_sessio
         .arg(alias)
         .stdin(std::process::Stdio::inherit())
         .stdout(std::process::Stdio::inherit())
-        .stderr(std::process::Stdio::inherit());
+        .stderr(std::process::Stdio::piped());
 
     if askpass.is_some() {
         let exe = std::env::current_exe()
@@ -35,14 +42,74 @@ pub fn connect(alias: &str, config_path: &Path, askpass: Option<&str>, bw_sessio
         cmd.env("BW_SESSION", token);
     }
 
-    let status = cmd
-        .status()
+    let mut child = cmd
+        .spawn()
         .with_context(|| format!("Failed to launch ssh for '{}'", alias))?;
-    Ok(status)
+
+    // Tee stderr: forward to real stderr while capturing for error detection
+    let stderr_pipe = child.stderr.take().expect("stderr was piped");
+    let stderr_thread = std::thread::spawn(move || {
+        use std::io::{Read, Write};
+        let mut captured = Vec::new();
+        let mut buf = [0u8; 4096];
+        let mut reader = stderr_pipe;
+        let mut stderr_out = std::io::stderr();
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    let _ = stderr_out.write_all(&buf[..n]);
+                    let _ = stderr_out.flush();
+                    captured.extend_from_slice(&buf[..n]);
+                }
+                Err(_) => break,
+            }
+        }
+        String::from_utf8_lossy(&captured).to_string()
+    });
+
+    let status = child
+        .wait()
+        .with_context(|| format!("Failed to wait for ssh for '{}'", alias))?;
+    let stderr_output = stderr_thread.join().unwrap_or_default();
+
+    Ok(ConnectResult { status, stderr_output })
+}
+
+/// Parse host key verification error from SSH stderr output.
+/// Returns (hostname, known_hosts_path) if the error is a changed host key.
+pub fn parse_host_key_error(stderr: &str) -> Option<(String, String)> {
+    if !stderr.contains("Host key verification failed.") {
+        return None;
+    }
+
+    // Parse hostname from "Host key for <hostname> has changed"
+    let hostname = stderr.lines()
+        .find(|l| l.contains("Host key for") && l.contains("has changed"))
+        .and_then(|l| {
+            let start = l.find("Host key for ")? + "Host key for ".len();
+            let rest = &l[start..];
+            let end = rest.find(" has changed")?;
+            Some(rest[..end].to_string())
+        })?;
+
+    // Parse known_hosts path from "Offending ... key in <path>:<line>"
+    let known_hosts_path = stderr.lines()
+        .find(|l| l.starts_with("Offending") && l.contains(" key in "))
+        .and_then(|l| {
+            let start = l.find(" key in ")? + " key in ".len();
+            let rest = &l[start..];
+            let end = rest.rfind(':')?;
+            Some(rest[..end].to_string())
+        })?;
+
+    Some((hostname, known_hosts_path))
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn askpass_none_does_not_set_env() {
         let askpass: Option<&str> = None;
@@ -126,13 +193,13 @@ mod tests {
     }
 
     #[test]
-    fn connection_inherits_all_stdio() {
-        // SSH needs interactive terminal: stdin, stdout, stderr all inherited
-        let modes = ["inherit", "inherit", "inherit"];
+    fn connection_inherits_stdin_and_stdout() {
+        // SSH needs interactive terminal: stdin, stdout inherited, stderr piped for capture
+        let modes = ["inherit", "inherit", "piped"];
         assert_eq!(modes.len(), 3);
-        for mode in &modes {
-            assert_eq!(*mode, "inherit");
-        }
+        assert_eq!(modes[0], "inherit");
+        assert_eq!(modes[1], "inherit");
+        assert_eq!(modes[2], "piped");
     }
 
     #[test]
@@ -150,5 +217,83 @@ mod tests {
         // current_exe() -> env::args().next() -> "purple"
         let fallback = "purple";
         assert_eq!(fallback, "purple");
+    }
+
+    // --- parse_host_key_error tests ---
+
+    #[test]
+    fn parse_host_key_error_detects_changed_key() {
+        let stderr = "\
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!
+Someone could be eavesdropping on you right now (man-in-the-middle attack)!
+It is also possible that a host key has just been changed.
+The fingerprint for the ED25519 key sent by the remote host is
+SHA256:ohwPXZbfBMvYWXnKefVYWVAcQsXKLMqaRKbXxRUVXqc.
+Please contact your system administrator.
+Add correct host key in /Users/user/.ssh/known_hosts to get rid of this message.
+Offending ECDSA key in /Users/user/.ssh/known_hosts:55
+Host key for example.com has changed and you have requested strict checking.
+Host key verification failed.
+";
+        let result = parse_host_key_error(stderr);
+        assert!(result.is_some());
+        let (hostname, path) = result.unwrap();
+        assert_eq!(hostname, "example.com");
+        assert_eq!(path, "/Users/user/.ssh/known_hosts");
+    }
+
+    #[test]
+    fn parse_host_key_error_returns_none_for_other_errors() {
+        let stderr = "ssh: connect to host example.com port 22: Connection refused\n";
+        assert!(parse_host_key_error(stderr).is_none());
+    }
+
+    #[test]
+    fn parse_host_key_error_returns_none_for_empty() {
+        assert!(parse_host_key_error("").is_none());
+    }
+
+    #[test]
+    fn parse_host_key_error_handles_ip_address() {
+        let stderr = "\
+Offending ECDSA key in /home/user/.ssh/known_hosts:12
+Host key for 10.0.0.1 has changed and you have requested strict checking.
+Host key verification failed.
+";
+        let result = parse_host_key_error(stderr);
+        assert!(result.is_some());
+        let (hostname, path) = result.unwrap();
+        assert_eq!(hostname, "10.0.0.1");
+        assert_eq!(path, "/home/user/.ssh/known_hosts");
+    }
+
+    #[test]
+    fn parse_host_key_error_handles_custom_known_hosts_path() {
+        let stderr = "\
+Offending RSA key in /etc/ssh/known_hosts:3
+Host key for server.local has changed and you have requested strict checking.
+Host key verification failed.
+";
+        let result = parse_host_key_error(stderr);
+        assert!(result.is_some());
+        let (hostname, path) = result.unwrap();
+        assert_eq!(hostname, "server.local");
+        assert_eq!(path, "/etc/ssh/known_hosts");
+    }
+
+    #[test]
+    fn parse_host_key_error_handles_ipv6() {
+        let stderr = "\
+Offending ED25519 key in /Users/user/.ssh/known_hosts:7
+Host key for ::1 has changed and you have requested strict checking.
+Host key verification failed.
+";
+        let result = parse_host_key_error(stderr);
+        assert!(result.is_some());
+        let (hostname, _) = result.unwrap();
+        assert_eq!(hostname, "::1");
     }
 }

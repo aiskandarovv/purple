@@ -89,6 +89,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             tunnel_list::render(frame, app, &alias);
             tunnel_form::render(frame, app);
         }
+        Screen::ConfirmHostKeyReset { hostname, .. } => {
+            let hostname = hostname.clone();
+            host_list::render(frame, app);
+            confirm_dialog::render_host_key_reset(frame, app, &hostname);
+        }
     }
 }
 

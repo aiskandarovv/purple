@@ -316,8 +316,8 @@ fn main() -> Result<()> {
             .or_else(preferences::load_askpass_default);
         let bw_session = ensure_bw_session(None, askpass.as_deref());
         ensure_keychain_password(&alias, askpass.as_deref());
-        let status = connection::connect(&alias, &config_path, askpass.as_deref(), bw_session.as_deref())?;
-        let code = status.code().unwrap_or(1);
+        let result = connection::connect(&alias, &config_path, askpass.as_deref(), bw_session.as_deref())?;
+        let code = result.status.code().unwrap_or(1);
         if code != 255 {
             history::ConnectionHistory::load().record(&alias);
         }
@@ -358,8 +358,8 @@ fn main() -> Result<()> {
             let bw_session = ensure_bw_session(None, askpass.as_deref());
             ensure_keychain_password(&alias, askpass.as_deref());
             println!("Beaming you up to {}...\n", alias);
-            let status = connection::connect(&alias, &config_path, askpass.as_deref(), bw_session.as_deref())?;
-            let code = status.code().unwrap_or(1);
+            let result = connection::connect(&alias, &config_path, askpass.as_deref(), bw_session.as_deref())?;
+            let code = result.status.code().unwrap_or(1);
             if code != 255 {
                 history::ConnectionHistory::load().record(&alias);
             }
@@ -552,19 +552,28 @@ fn run_tui(mut app: App) -> Result<()> {
             }
             ensure_keychain_password(&alias, askpass.as_deref());
             println!("Beaming you up to {}...\n", alias);
-            let status = connection::connect(&alias, &app.reload.config_path, askpass.as_deref(), app.bw_session.as_deref());
+            let result = connection::connect(&alias, &app.reload.config_path, askpass.as_deref(), app.bw_session.as_deref());
             println!();
-            match &status {
-                Ok(exit) => {
-                    let code = exit.code().unwrap_or(1);
+            match &result {
+                Ok(cr) => {
+                    let code = cr.status.code().unwrap_or(1);
                     if code != 255 {
                         app.history.record(&alias);
                     }
                     if code != 0 {
-                        app.set_status(
-                            format!("SSH to {} exited with code {}.", alias, code),
-                            true,
-                        );
+                        if let Some((hostname, known_hosts_path)) = connection::parse_host_key_error(&cr.stderr_output) {
+                            app.screen = app::Screen::ConfirmHostKeyReset {
+                                alias: alias.clone(),
+                                hostname,
+                                known_hosts_path,
+                                askpass,
+                            };
+                        } else {
+                            app.set_status(
+                                format!("SSH to {} exited with code {}.", alias, code),
+                                true,
+                            );
+                        }
                     }
                 }
                 Err(e) => {

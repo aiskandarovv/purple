@@ -124,6 +124,7 @@ Browse your SSH keys with metadata (type, bits, fingerprint, comment) and see wh
 - **Clipboard** Copy the SSH command or full config block
 - **Atomic writes** Temp file, chmod 600, rename. No half-written configs.
 - **Automatic backups** Every write creates a timestamped backup (keeps the last 5)
+- **Host key reset** Detects changed host keys after a server reinstall and offers to remove the old key and reconnect
 - **Auto-reload** Detects external config changes and reloads automatically
 - **Minimal UI** Monochrome with subtle color for status messages. Works in any terminal, any font. Respects [NO_COLOR](https://no-color.org/)
 - **Shell completions** Bash, zsh and fish via `purple --completions`
