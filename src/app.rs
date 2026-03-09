@@ -707,6 +707,8 @@ pub struct UiSelection {
     pub key_picker_state: ListState,
     pub show_password_picker: bool,
     pub password_picker_state: ListState,
+    pub show_proxyjump_picker: bool,
+    pub proxyjump_picker_state: ListState,
     pub tag_picker_state: ListState,
     pub provider_list_state: ListState,
     pub tunnel_list_state: ListState,
@@ -839,6 +841,8 @@ impl App {
                 key_picker_state: ListState::default(),
                 show_password_picker: false,
                 password_picker_state: ListState::default(),
+                show_proxyjump_picker: false,
+                proxyjump_picker_state: ListState::default(),
                 tag_picker_state: ListState::default(),
                 provider_list_state: ListState::default(),
                 tunnel_list_state: ListState::default(),
@@ -1568,6 +1572,37 @@ impl App {
     /// Move password picker selection down.
     pub fn select_next_password_source(&mut self) {
         cycle_selection(&mut self.ui.password_picker_state, crate::askpass::PASSWORD_SOURCES.len(), true);
+    }
+
+    /// Get hosts available as ProxyJump targets (excludes the host being edited).
+    pub fn proxyjump_candidates(&self) -> Vec<(String, String)> {
+        let editing_alias = match &self.screen {
+            Screen::EditHost { alias, .. } => Some(alias.as_str()),
+            _ => None,
+        };
+        self.hosts
+            .iter()
+            .filter(|h| {
+                if let Some(alias) = editing_alias {
+                    h.alias != alias
+                } else {
+                    true
+                }
+            })
+            .map(|h| (h.alias.clone(), h.hostname.clone()))
+            .collect()
+    }
+
+    /// Move proxyjump picker selection up.
+    pub fn select_prev_proxyjump(&mut self) {
+        let len = self.proxyjump_candidates().len();
+        cycle_selection(&mut self.ui.proxyjump_picker_state, len, false);
+    }
+
+    /// Move proxyjump picker selection down.
+    pub fn select_next_proxyjump(&mut self) {
+        let len = self.proxyjump_candidates().len();
+        cycle_selection(&mut self.ui.proxyjump_picker_state, len, true);
     }
 
     /// Collect all unique tags from hosts, sorted alphabetically.

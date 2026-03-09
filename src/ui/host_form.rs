@@ -22,7 +22,7 @@ fn placeholder_for(field: FormField) -> String {
         FormField::User => "root".to_string(),
         FormField::Port => "22".to_string(),
         FormField::IdentityFile => "Enter to pick a key".to_string(),
-        FormField::ProxyJump => "bastion-host".to_string(),
+        FormField::ProxyJump => "Enter to pick a host".to_string(),
         FormField::Tags => "prod, staging, us-east".to_string(),
     }
 }
@@ -101,6 +101,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         render_key_picker_overlay(frame, app);
     }
 
+    // ProxyJump picker popup overlay
+    if app.ui.show_proxyjump_picker {
+        render_proxyjump_picker_overlay(frame, app);
+    }
+
     // Password source picker popup overlay
     if app.ui.show_password_picker {
         render_password_picker_overlay(frame, app);
@@ -164,6 +169,57 @@ pub fn render_key_picker_overlay(frame: &mut Frame, app: &mut App) {
         .highlight_symbol("  ");
 
     frame.render_stateful_widget(list, area, &mut app.ui.key_picker_state);
+}
+
+fn render_proxyjump_picker_overlay(frame: &mut Frame, app: &mut App) {
+    let candidates = app.proxyjump_candidates();
+
+    if candidates.is_empty() {
+        let area = super::centered_rect_fixed(50, 5, frame.area());
+        frame.render_widget(Clear, area);
+        let block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .title(Span::styled(" ProxyJump ", theme::brand()))
+            .border_style(theme::accent());
+        let msg = Paragraph::new(Line::from(Span::styled(
+            "  No other hosts configured",
+            theme::muted(),
+        )))
+        .block(block);
+        frame.render_widget(msg, area);
+        return;
+    }
+
+    let height = (candidates.len() as u16 + 2).min(16);
+    let width = frame.area().width.clamp(50, 64);
+    let area = super::centered_rect_fixed(width, height, frame.area());
+    frame.render_widget(Clear, area);
+
+    let host_max = (width as usize).saturating_sub(2 + 2 + 1 + 20);
+
+    let items: Vec<ListItem> = candidates
+        .iter()
+        .map(|(alias, hostname)| {
+            let host_display = super::truncate(hostname, host_max);
+            let line = Line::from(vec![
+                Span::styled(format!(" {:<20}", super::truncate(alias, 20)), theme::bold()),
+                Span::styled(host_display, theme::muted()),
+            ]);
+            ListItem::new(line)
+        })
+        .collect();
+
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .title(Span::styled(" ProxyJump ", theme::brand()))
+        .border_style(theme::accent());
+
+    let list = List::new(items)
+        .block(block)
+        .highlight_style(theme::selected())
+        .highlight_symbol("  ");
+
+    frame.render_stateful_widget(list, area, &mut app.ui.proxyjump_picker_state);
 }
 
 fn render_password_picker_overlay(frame: &mut Frame, app: &mut App) {
@@ -266,7 +322,7 @@ fn render_field_content(
         FormField::Tags => &form.tags,
     };
 
-    let is_picker = matches!(field, FormField::IdentityFile | FormField::AskPass);
+    let is_picker = matches!(field, FormField::IdentityFile | FormField::ProxyJump | FormField::AskPass);
 
     // Show placeholder when field is empty and not focused
     let content = if value.is_empty() && !is_focused {

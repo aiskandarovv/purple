@@ -361,6 +361,12 @@ fn handle_form(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Dispatch to proxyjump picker if it's open
+    if app.ui.show_proxyjump_picker {
+        handle_proxyjump_picker(app, key);
+        return;
+    }
+
     match key.code {
         KeyCode::Esc => {
             app.clear_form_mtime();
@@ -403,6 +409,14 @@ fn handle_form(app: &mut App, key: KeyEvent) {
                     app.ui.key_picker_state = ratatui::widgets::ListState::default();
                     if !app.keys.is_empty() {
                         app.ui.key_picker_state.select(Some(0));
+                    }
+                }
+                FormField::ProxyJump => {
+                    let candidates = app.proxyjump_candidates();
+                    app.ui.show_proxyjump_picker = true;
+                    app.ui.proxyjump_picker_state = ratatui::widgets::ListState::default();
+                    if !candidates.is_empty() {
+                        app.ui.proxyjump_picker_state.select(Some(0));
                     }
                 }
                 FormField::AskPass => {
@@ -1210,6 +1224,36 @@ fn handle_key_picker_shared(app: &mut App, key: KeyEvent, for_provider: bool) {
                 }
             }
             app.ui.show_key_picker = false;
+        }
+        _ => {}
+    }
+}
+
+/// ProxyJump picker handler for the host form.
+fn handle_proxyjump_picker(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc => {
+            app.ui.show_proxyjump_picker = false;
+        }
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.select_next_proxyjump();
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.select_prev_proxyjump();
+        }
+        KeyCode::Enter => {
+            let candidates = app.proxyjump_candidates();
+            if let Some(index) = app.ui.proxyjump_picker_state.selected() {
+                if let Some((alias, _)) = candidates.get(index) {
+                    app.form.proxy_jump = alias.clone();
+                    app.form.sync_cursor_to_end();
+                    app.set_status(
+                        format!("Jumping through {}.", alias),
+                        false,
+                    );
+                }
+            }
+            app.ui.show_proxyjump_picker = false;
         }
         _ => {}
     }
