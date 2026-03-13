@@ -387,7 +387,7 @@ fn render_display_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::
                 let label = format!("{} ({}) ", upper, count);
                 let fill = cols.content.saturating_sub(label.width());
                 let line = Line::from(vec![
-                    Span::styled(label, theme::section_header()),
+                    Span::styled(label, theme::muted()),
                     Span::styled("─".repeat(fill), theme::muted()),
                 ]);
                 items.push(ListItem::new(line));
