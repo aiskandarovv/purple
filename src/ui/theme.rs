@@ -73,10 +73,6 @@ pub fn section_header() -> Style {
     Style::default().add_modifier(Modifier::BOLD)
 }
 
-/// Selected item in a list.
-pub fn selected() -> Style {
-    Style::default().add_modifier(Modifier::REVERSED)
-}
 
 /// Error message. Red when color is available.
 pub fn error() -> Style {
@@ -122,6 +118,34 @@ pub fn border() -> Style {
     Style::default().add_modifier(Modifier::DIM)
 }
 
+/// Search-mode border. Purple to signal active filter state.
+pub fn border_search() -> Style {
+    match COLOR_MODE.load(Ordering::Acquire) {
+        0 => Style::default().add_modifier(Modifier::BOLD),
+        2 => Style::default().fg(Color::Rgb(147, 51, 234)),
+        _ => Style::default().fg(Color::Magenta),
+    }
+}
+
+/// Selected item in a list. Purple highlight for brand consistency.
+pub fn selected_row() -> Style {
+    match COLOR_MODE.load(Ordering::Acquire) {
+        0 => Style::default()
+            .add_modifier(Modifier::REVERSED)
+            .remove_modifier(Modifier::DIM),
+        2 => Style::default()
+            .fg(Color::White)
+            .bg(Color::Rgb(147, 51, 234))
+            .add_modifier(Modifier::BOLD)
+            .remove_modifier(Modifier::DIM),
+        _ => Style::default()
+            .fg(Color::White)
+            .bg(Color::Magenta)
+            .add_modifier(Modifier::BOLD)
+            .remove_modifier(Modifier::DIM),
+    }
+}
+
 /// Danger border (delete dialog). Red when color is available.
 pub fn border_danger() -> Style {
     match COLOR_MODE.load(Ordering::Acquire) {
@@ -143,7 +167,9 @@ pub fn bold() -> Style {
 /// Update available badge. Purple background to stand out in the title bar.
 pub fn update_badge() -> Style {
     match COLOR_MODE.load(Ordering::Acquire) {
-        0 => Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED),
+        0 => Style::default()
+            .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+            .remove_modifier(Modifier::DIM),
         2 => Style::default()
             .fg(Color::White)
             .bg(Color::Rgb(147, 51, 234))

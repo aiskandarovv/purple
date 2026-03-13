@@ -182,7 +182,7 @@ pub fn render_key_picker_overlay(frame: &mut Frame, app: &mut App) {
 
     let list = List::new(items)
         .block(block)
-        .highlight_style(theme::selected())
+        .highlight_style(theme::selected_row())
         .highlight_symbol("  ");
 
     frame.render_stateful_widget(list, area, &mut app.ui.key_picker_state);
@@ -233,7 +233,7 @@ fn render_proxyjump_picker_overlay(frame: &mut Frame, app: &mut App) {
 
     let list = List::new(items)
         .block(block)
-        .highlight_style(theme::selected())
+        .highlight_style(theme::selected_row())
         .highlight_symbol("  ");
 
     frame.render_stateful_widget(list, area, &mut app.ui.proxyjump_picker_state);
@@ -274,7 +274,7 @@ fn render_password_picker_overlay(frame: &mut Frame, app: &mut App) {
     .split(inner);
 
     let list = List::new(items)
-        .highlight_style(theme::selected())
+        .highlight_style(theme::selected_row())
         .highlight_symbol("  ");
 
     frame.render_stateful_widget(list, chunks[0], &mut app.ui.password_picker_state);

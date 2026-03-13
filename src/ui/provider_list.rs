@@ -97,7 +97,7 @@ pub fn render_provider_list(frame: &mut Frame, app: &mut App) {
     .split(inner);
 
     let list = List::new(items)
-        .highlight_style(theme::selected())
+        .highlight_style(theme::selected_row())
         .highlight_symbol("  ");
 
     frame.render_stateful_widget(list, chunks[0], &mut app.ui.provider_list_state);
@@ -434,7 +434,7 @@ fn render_region_picker_overlay(frame: &mut Frame, app: &mut App) {
             let check = if is_selected { " \u{2713} " } else { "   " };
             let display = format!("{}{}", check, label);
             let style = if is_cursor {
-                theme::selected()
+                theme::selected_row()
             } else if is_selected {
                 theme::bold()
             } else {
@@ -451,7 +451,7 @@ fn render_region_picker_overlay(frame: &mut Frame, app: &mut App) {
         } else {
             // Group header
             let style = if is_cursor {
-                theme::selected()
+                theme::selected_row()
             } else {
                 theme::accent_bold()
             };

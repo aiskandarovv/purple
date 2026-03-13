@@ -376,7 +376,7 @@ fn main() -> Result<()> {
             .or_else(preferences::load_askpass_default);
         let bw_session = ensure_bw_session(None, askpass.as_deref());
         ensure_keychain_password(&alias, askpass.as_deref());
-        let result = connection::connect(&alias, &config_path, askpass.as_deref(), bw_session.as_deref())?;
+        let result = connection::connect(&alias, &config_path, askpass.as_deref(), bw_session.as_deref(), false)?;
         let code = result.status.code().unwrap_or(1);
         if code != 255 {
             history::ConnectionHistory::load().record(&alias);
@@ -418,7 +418,7 @@ fn main() -> Result<()> {
             let bw_session = ensure_bw_session(None, askpass.as_deref());
             ensure_keychain_password(&alias, askpass.as_deref());
             println!("Beaming you up to {}...\n", alias);
-            let result = connection::connect(&alias, &config_path, askpass.as_deref(), bw_session.as_deref())?;
+            let result = connection::connect(&alias, &config_path, askpass.as_deref(), bw_session.as_deref(), false)?;
             let code = result.status.code().unwrap_or(1);
             if code != 255 {
                 history::ConnectionHistory::load().record(&alias);
@@ -613,7 +613,8 @@ fn run_tui(mut app: App) -> Result<()> {
             }
             ensure_keychain_password(&alias, askpass.as_deref());
             println!("Beaming you up to {}...\n", alias);
-            let result = connection::connect(&alias, &app.reload.config_path, askpass.as_deref(), app.bw_session.as_deref());
+            let has_active_tunnel = app.active_tunnels.contains_key(&alias);
+            let result = connection::connect(&alias, &app.reload.config_path, askpass.as_deref(), app.bw_session.as_deref(), has_active_tunnel);
             println!();
             match &result {
                 Ok(cr) => {
@@ -673,6 +674,7 @@ fn run_tui(mut app: App) -> Result<()> {
                 } else {
                     println!("Running '{}' on {}...\n", snip.name, alias);
                 }
+                let has_tunnel = app.active_tunnels.contains_key(alias);
                 match snippet::run_snippet(
                     alias,
                     &app.reload.config_path,
@@ -680,6 +682,7 @@ fn run_tui(mut app: App) -> Result<()> {
                     askpass.as_deref(),
                     app.bw_session.as_deref(),
                     false,
+                    has_tunnel,
                 ) {
                     Ok(r) => {
                         if r.status.success() {
@@ -1605,6 +1608,7 @@ fn handle_snippet_command(config: SshConfigFile, command: SnippetCommands, confi
                     askpass.as_deref(),
                     bw_session.as_deref(),
                     false,
+                    false,
                 ) {
                     Ok(r) => {
                         if !r.status.success() {
@@ -1666,6 +1670,7 @@ fn handle_snippet_command(config: SshConfigFile, command: SnippetCommands, confi
                                 askpass.as_deref(),
                                 bw_session.as_deref(),
                                 true,
+                                false,
                             );
                             let _ = tx.send((alias, result));
                             let _ = slot_tx.send(());
@@ -1705,6 +1710,7 @@ fn handle_snippet_command(config: SshConfigFile, command: SnippetCommands, confi
                         &snip.command,
                         askpass.as_deref(),
                         bw_session.as_deref(),
+                        false,
                         false,
                     ) {
                         Ok(r) => {

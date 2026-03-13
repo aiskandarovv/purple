@@ -193,13 +193,21 @@ pub fn run_snippet(
     askpass: Option<&str>,
     bw_session: Option<&str>,
     capture: bool,
+    has_active_tunnel: bool,
 ) -> anyhow::Result<SnippetResult> {
     let mut cmd = Command::new("ssh");
     cmd.arg("-F")
         .arg(config_path)
         .arg("-o")
-        .arg("ConnectTimeout=10")
-        .arg("--")
+        .arg("ConnectTimeout=10");
+
+    // When a tunnel is already running for this host, disable forwards
+    // to avoid "Address already in use" bind conflicts.
+    if has_active_tunnel {
+        cmd.arg("-o").arg("ClearAllForwardings=yes");
+    }
+
+    cmd.arg("--")
         .arg(alias)
         .arg(command)
         .stdin(Stdio::inherit());

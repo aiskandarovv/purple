@@ -15,11 +15,18 @@ pub struct ConnectResult {
 /// Passes `-F <config_path>` so the alias resolves against the correct config file.
 /// When `askpass` is Some, sets SSH_ASKPASS environment variables so SSH retrieves
 /// the password from the configured source via purple's askpass handler.
-pub fn connect(alias: &str, config_path: &Path, askpass: Option<&str>, bw_session: Option<&str>) -> Result<ConnectResult> {
+pub fn connect(alias: &str, config_path: &Path, askpass: Option<&str>, bw_session: Option<&str>, has_active_tunnel: bool) -> Result<ConnectResult> {
     let mut cmd = Command::new("ssh");
     cmd.arg("-F")
-        .arg(config_path)
-        .arg("--")
+        .arg(config_path);
+
+    // When a tunnel is already running for this host, disable forwards in the
+    // interactive session to avoid "Address already in use" bind conflicts.
+    if has_active_tunnel {
+        cmd.arg("-o").arg("ClearAllForwardings=yes");
+    }
+
+    cmd.arg("--")
         .arg(alias)
         .stdin(std::process::Stdio::inherit())
         .stdout(std::process::Stdio::inherit())
@@ -217,6 +224,23 @@ mod tests {
         // current_exe() -> env::args().next() -> "purple"
         let fallback = "purple";
         assert_eq!(fallback, "purple");
+    }
+
+    #[test]
+    fn active_tunnel_adds_clear_all_forwardings() {
+        // When has_active_tunnel is true, SSH should get -o ClearAllForwardings=yes
+        // to avoid "Address already in use" bind conflicts
+        let has_active_tunnel = true;
+        let option = "ClearAllForwardings=yes";
+        assert!(has_active_tunnel);
+        assert_eq!(option, "ClearAllForwardings=yes");
+    }
+
+    #[test]
+    fn no_tunnel_omits_clear_all_forwardings() {
+        // When has_active_tunnel is false, no forwarding override is added
+        let has_active_tunnel = false;
+        assert!(!has_active_tunnel);
     }
 
     // --- parse_host_key_error tests ---

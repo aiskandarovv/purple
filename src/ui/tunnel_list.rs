@@ -89,7 +89,7 @@ pub fn render(frame: &mut Frame, app: &mut App, alias: &str) {
             .collect();
 
         let list = List::new(items)
-            .highlight_style(theme::selected())
+            .highlight_style(theme::selected_row())
             .highlight_symbol("  ");
 
         frame.render_stateful_widget(list, chunks[0], &mut app.ui.tunnel_list_state);
