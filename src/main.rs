@@ -91,7 +91,7 @@ enum Commands {
         #[arg(short, long)]
         group: Option<String>,
     },
-    /// Sync hosts from cloud providers (DigitalOcean, Vultr, Linode, Hetzner, UpCloud, Proxmox VE, AWS EC2, Scaleway, GCP)
+    /// Sync hosts from cloud providers (DigitalOcean, Vultr, Linode, Hetzner, UpCloud, Proxmox VE, AWS EC2, Scaleway, GCP, Azure)
     Sync {
         /// Sync a specific provider (default: all configured)
         provider: Option<String>,
@@ -136,7 +136,7 @@ enum Commands {
 enum ProviderCommands {
     /// Add or update a provider configuration
     Add {
-        /// Provider name (digitalocean, vultr, linode, hetzner, upcloud, proxmox, aws, scaleway, gcp)
+        /// Provider name (digitalocean, vultr, linode, hetzner, upcloud, proxmox, aws, scaleway, gcp, azure)
         provider: String,
 
         /// API token (or set PURPLE_TOKEN env var, or use --token-stdin)
@@ -167,7 +167,7 @@ enum ProviderCommands {
         #[arg(long)]
         profile: Option<String>,
 
-        /// Comma-separated regions or zones (e.g. us-east-1,eu-west-1 for AWS, fr-par-1,nl-ams-1 for Scaleway or us-central1-a,europe-west1-b for GCP zones)
+        /// Comma-separated regions, zones or subscription IDs (e.g. us-east-1,eu-west-1 for AWS, fr-par-1,nl-ams-1 for Scaleway, us-central1-a for GCP zones or subscription UUIDs for Azure)
         #[arg(long)]
         regions: Option<String>,
 
@@ -869,7 +869,7 @@ fn handle_sync(
     let sections: Vec<&providers::config::ProviderSection> = if let Some(name) = provider_name {
         if providers::get_provider(name).is_none() {
             eprintln!(
-                "Never heard of '{}'. Try: digitalocean, vultr, linode, hetzner, upcloud, proxmox, aws, scaleway, gcp.",
+                "Never heard of '{}'. Try: digitalocean, vultr, linode, hetzner, upcloud, proxmox, aws, scaleway, gcp, azure.",
                 name
             );
             std::process::exit(1);
@@ -902,7 +902,7 @@ fn handle_sync(
             Some(p) => p,
             None => {
                 eprintln!(
-                    "Skipping unknown provider '{}'. Try: digitalocean, vultr, linode, hetzner, upcloud, proxmox, aws, scaleway, gcp.",
+                    "Skipping unknown provider '{}'. Try: digitalocean, vultr, linode, hetzner, upcloud, proxmox, aws, scaleway, gcp, azure.",
                     section.provider
                 );
                 any_failures = true;
@@ -1015,7 +1015,7 @@ fn handle_provider_command(command: ProviderCommands) -> Result<()> {
                 Some(p) => p,
                 None => {
                     eprintln!(
-                        "Never heard of '{}'. Try: digitalocean, vultr, linode, hetzner, upcloud, proxmox, aws, scaleway, gcp.",
+                        "Never heard of '{}'. Try: digitalocean, vultr, linode, hetzner, upcloud, proxmox, aws, scaleway, gcp, azure.",
                         provider
                     );
                     std::process::exit(1);
@@ -1041,13 +1041,13 @@ fn handle_provider_command(command: ProviderCommands) -> Result<()> {
                     verify_tls = false;
                 }
             }
-            // --profile is AWS-only, --regions is AWS/Scaleway/GCP, --project is GCP-only
+            // --profile is AWS-only, --regions is AWS/Scaleway/GCP/Azure, --project is GCP-only
             if provider != "aws" && profile.is_some() {
                 eprintln!("Warning: --profile is only used by the AWS provider. Ignoring.");
                 profile = None;
             }
-            if !matches!(provider.as_str(), "aws" | "scaleway" | "gcp") && regions.is_some() {
-                eprintln!("Warning: --regions is only used by the AWS, Scaleway and GCP providers. Ignoring.");
+            if !matches!(provider.as_str(), "aws" | "scaleway" | "gcp" | "azure") && regions.is_some() {
+                eprintln!("Warning: --regions is only used by the AWS, Scaleway, GCP and Azure providers. Ignoring.");
                 regions = None;
             }
             if provider != "gcp" && project.is_some() {
@@ -1086,8 +1086,8 @@ fn handle_provider_command(command: ProviderCommands) -> Result<()> {
                     && profile.is_none() && !existing.profile.is_empty() {
                     profile = Some(existing.profile.clone());
                 }
-                // AWS/Scaleway/GCP: fall back to stored regions
-                if matches!(provider.as_str(), "aws" | "scaleway" | "gcp")
+                // AWS/Scaleway/GCP/Azure: fall back to stored regions
+                if matches!(provider.as_str(), "aws" | "scaleway" | "gcp" | "azure")
                     && regions.is_none() && !existing.regions.is_empty() {
                     regions = Some(existing.regions.clone());
                 }
@@ -1185,7 +1185,7 @@ fn handle_provider_command(command: ProviderCommands) -> Result<()> {
             let resolved_regions = regions.unwrap_or_default();
             let resolved_project = project.unwrap_or_default();
 
-            // AWS/Scaleway requires at least one region/zone
+            // AWS/Scaleway/Azure requires at least one region/zone/subscription
             if provider == "aws" && resolved_regions.trim().is_empty() {
                 eprintln!("AWS requires --regions (e.g. --regions us-east-1,eu-west-1).");
                 std::process::exit(1);
@@ -1193,6 +1193,21 @@ fn handle_provider_command(command: ProviderCommands) -> Result<()> {
             if provider == "scaleway" && resolved_regions.trim().is_empty() {
                 eprintln!("Scaleway requires --regions with one or more zones (e.g. --regions fr-par-1,nl-ams-1).");
                 std::process::exit(1);
+            }
+            if provider == "azure" {
+                if resolved_regions.trim().is_empty() {
+                    eprintln!("Azure requires --regions with one or more subscription IDs.");
+                    std::process::exit(1);
+                }
+                for sub in resolved_regions.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+                    if !providers::azure::is_valid_subscription_id(sub) {
+                        eprintln!(
+                            "Invalid subscription ID '{}'. Expected UUID format (e.g. 12345678-1234-1234-1234-123456789012).",
+                            sub
+                        );
+                        std::process::exit(1);
+                    }
+                }
             }
             // GCP requires --project
             if provider == "gcp" && resolved_project.trim().is_empty() {

@@ -395,12 +395,22 @@ impl ProviderFormField {
         ProviderFormField::AutoSync,
     ];
 
+    const AZURE_FIELDS: &[ProviderFormField] = &[
+        ProviderFormField::Token,
+        ProviderFormField::Regions,
+        ProviderFormField::AliasPrefix,
+        ProviderFormField::User,
+        ProviderFormField::IdentityFile,
+        ProviderFormField::AutoSync,
+    ];
+
     pub fn fields_for(provider: &str) -> &'static [ProviderFormField] {
         match provider {
             "proxmox" => Self::PROXMOX_FIELDS,
             "aws" => Self::AWS_FIELDS,
             "scaleway" => Self::SCALEWAY_FIELDS,
             "gcp" => Self::GCP_FIELDS,
+            "azure" => Self::AZURE_FIELDS,
             _ => Self::CLOUD_FIELDS,
         }
     }
@@ -1689,11 +1699,14 @@ impl App {
             }
         }
         names.sort_by(|a, b| {
-            let ts_a = self.sync_history.get(a.as_str()).map_or(0, |r| r.timestamp);
-            let ts_b = self.sync_history.get(b.as_str()).map_or(0, |r| r.timestamp);
             let conf_a = self.provider_config.section(a.as_str()).is_some();
             let conf_b = self.provider_config.section(b.as_str()).is_some();
-            ts_b.cmp(&ts_a).then(conf_b.cmp(&conf_a))
+            let ts_a = self.sync_history.get(a.as_str()).map_or(0, |r| r.timestamp);
+            let ts_b = self.sync_history.get(b.as_str()).map_or(0, |r| r.timestamp);
+            // Configured first (by most recent sync), then unconfigured alphabetically
+            conf_b.cmp(&conf_a)
+                .then(ts_b.cmp(&ts_a))
+                .then(a.cmp(b))
         });
         names
     }
@@ -3233,6 +3246,14 @@ Host vultr-app
         assert!(!scaleway.contains(&ProviderFormField::Profile));
         assert!(!scaleway.contains(&ProviderFormField::Url));
         assert!(!scaleway.contains(&ProviderFormField::VerifyTls));
+
+        let azure = ProviderFormField::fields_for("azure");
+        assert_eq!(*azure.last().unwrap(), ProviderFormField::AutoSync);
+        assert!(azure.contains(&ProviderFormField::Regions));
+        assert!(azure.contains(&ProviderFormField::Token));
+        assert!(!azure.contains(&ProviderFormField::Profile));
+        assert!(!azure.contains(&ProviderFormField::Url));
+        assert!(!azure.contains(&ProviderFormField::VerifyTls));
     }
 
     #[test]

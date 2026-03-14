@@ -1,4 +1,5 @@
 pub mod aws;
+pub mod azure;
 pub mod config;
 mod digitalocean;
 pub mod gcp;
@@ -96,7 +97,7 @@ pub trait Provider {
 }
 
 /// All known provider names.
-pub const PROVIDER_NAMES: &[&str] = &["digitalocean", "vultr", "linode", "hetzner", "upcloud", "proxmox", "aws", "scaleway", "gcp"];
+pub const PROVIDER_NAMES: &[&str] = &["digitalocean", "vultr", "linode", "hetzner", "upcloud", "proxmox", "aws", "scaleway", "gcp", "azure"];
 
 /// Get a provider implementation by name.
 pub fn get_provider(name: &str) -> Option<Box<dyn Provider>> {
@@ -120,6 +121,9 @@ pub fn get_provider(name: &str) -> Option<Box<dyn Provider>> {
         "gcp" => Some(Box::new(gcp::Gcp {
             zones: Vec::new(),
             project: String::new(),
+        })),
+        "azure" => Some(Box::new(azure::Azure {
+            subscriptions: Vec::new(),
         })),
         _ => None,
     }
@@ -154,6 +158,12 @@ pub fn get_provider_with_config(name: &str, section: &config::ProviderSection) -
                 .collect(),
             project: section.project.clone(),
         })),
+        "azure" => Some(Box::new(azure::Azure {
+            subscriptions: section.regions.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
+        })),
         _ => get_provider(name),
     }
 }
@@ -170,6 +180,7 @@ pub fn provider_display_name(name: &str) -> &str {
         "aws" => "AWS EC2",
         "scaleway" => "Scaleway",
         "gcp" => "GCP",
+        "azure" => "Azure",
         other => other,
     }
 }
@@ -309,7 +320,7 @@ mod tests {
 
     #[test]
     fn test_get_provider_unknown_returns_none() {
-        assert!(get_provider("azure").is_none());
+        assert!(get_provider("oracle").is_none());
         assert!(get_provider("").is_none());
         assert!(get_provider("DigitalOcean").is_none()); // case-sensitive
     }
@@ -385,7 +396,7 @@ mod tests {
     #[test]
     fn test_get_provider_with_config_unknown_returns_none() {
         let section = config::ProviderSection {
-            provider: "azure".to_string(),
+            provider: "oracle".to_string(),
             token: String::new(),
             alias_prefix: String::new(),
             user: String::new(),
@@ -397,7 +408,7 @@ mod tests {
             regions: String::new(),
             project: String::new(),
         };
-        assert!(get_provider_with_config("azure", &section).is_none());
+        assert!(get_provider_with_config("oracle", &section).is_none());
     }
 
     // =========================================================================
@@ -415,11 +426,12 @@ mod tests {
         assert_eq!(provider_display_name("aws"), "AWS EC2");
         assert_eq!(provider_display_name("scaleway"), "Scaleway");
         assert_eq!(provider_display_name("gcp"), "GCP");
+        assert_eq!(provider_display_name("azure"), "Azure");
     }
 
     #[test]
     fn test_display_name_unknown_returns_input() {
-        assert_eq!(provider_display_name("azure"), "azure");
+        assert_eq!(provider_display_name("oracle"), "oracle");
         assert_eq!(provider_display_name(""), "");
     }
 
@@ -429,7 +441,7 @@ mod tests {
 
     #[test]
     fn test_provider_names_count() {
-        assert_eq!(PROVIDER_NAMES.len(), 9);
+        assert_eq!(PROVIDER_NAMES.len(), 10);
     }
 
     #[test]
@@ -443,6 +455,7 @@ mod tests {
         assert!(PROVIDER_NAMES.contains(&"aws"));
         assert!(PROVIDER_NAMES.contains(&"scaleway"));
         assert!(PROVIDER_NAMES.contains(&"gcp"));
+        assert!(PROVIDER_NAMES.contains(&"azure"));
     }
 
     // =========================================================================
@@ -658,11 +671,12 @@ mod tests {
         assert_eq!(provider_display_name("aws"), "AWS EC2");
         assert_eq!(provider_display_name("scaleway"), "Scaleway");
         assert_eq!(provider_display_name("gcp"), "GCP");
+        assert_eq!(provider_display_name("azure"), "Azure");
     }
 
     #[test]
     fn test_provider_display_name_unknown() {
-        assert_eq!(provider_display_name("azure"), "azure");
+        assert_eq!(provider_display_name("oracle"), "oracle");
     }
 
     // =========================================================================
@@ -678,7 +692,7 @@ mod tests {
 
     #[test]
     fn test_get_provider_case_sensitive_and_unknown() {
-        assert!(get_provider("azure").is_none());
+        assert!(get_provider("oracle").is_none());
         assert!(get_provider("DigitalOcean").is_none()); // Case-sensitive
         assert!(get_provider("VULTR").is_none());
         assert!(get_provider("").is_none());
@@ -689,12 +703,13 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn test_provider_names_has_all_nine() {
-        assert_eq!(PROVIDER_NAMES.len(), 9);
+    fn test_provider_names_has_all_ten() {
+        assert_eq!(PROVIDER_NAMES.len(), 10);
         assert!(PROVIDER_NAMES.contains(&"digitalocean"));
         assert!(PROVIDER_NAMES.contains(&"proxmox"));
         assert!(PROVIDER_NAMES.contains(&"aws"));
         assert!(PROVIDER_NAMES.contains(&"scaleway"));
+        assert!(PROVIDER_NAMES.contains(&"azure"));
     }
 
     // =========================================================================
@@ -713,6 +728,7 @@ mod tests {
             ("aws", "aws"),
             ("scaleway", "scw"),
             ("gcp", "gcp"),
+            ("azure", "az"),
         ];
         for (name, expected_label) in &cases {
             let p = get_provider(name).unwrap();

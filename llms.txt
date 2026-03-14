@@ -6,14 +6,14 @@ purple is a free, open-source TUI that turns ~/.ssh/config into a searchable, ta
 
 ## What purple does
 
-purple reads your existing ~/.ssh/config and gives you a terminal UI to search, filter, tag and connect to hosts. Changes are written back without touching your comments, formatting or unknown directives. Save command snippets and run them on one or many hosts. Sync servers from nine cloud providers directly into your SSH config. No browser, no YAML files, no context switching.
+purple reads your existing ~/.ssh/config and gives you a terminal UI to search, filter, tag and connect to hosts. Changes are written back without touching your comments, formatting or unknown directives. Save command snippets and run them on one or many hosts. Sync servers from ten cloud providers directly into your SSH config. No browser, no YAML files, no context switching.
 
 ## Key capabilities
 
 - Reads, edits and writes ~/.ssh/config directly while preserving comments, formatting and unknown directives (round-trip fidelity)
 - Fuzzy search across aliases, hostnames, users, tags and providers
 - Host tagging via SSH config comments (# purple:tags)
-- Cloud provider sync: AWS EC2, DigitalOcean, Vultr, Linode (Akamai), Hetzner, UpCloud, Proxmox VE, Scaleway, GCP (Compute Engine)
+- Cloud provider sync: AWS EC2, DigitalOcean, Vultr, Linode (Akamai), Hetzner, UpCloud, Proxmox VE, Scaleway, GCP (Compute Engine), Azure
 - SSH tunnel management: LocalForward, RemoteForward, DynamicForward. Start/stop from TUI or CLI
 - Command snippets: save commands, run on single host, multi-host selection or all hosts. Sequential and parallel execution. TUI and CLI
 - Password management: OS Keychain, 1Password (op://), Bitwarden (bw:), pass (pass:), HashiCorp Vault (vault:), custom command
@@ -54,6 +54,7 @@ purple provider add aws --token AKID:SECRET --regions us-east-1,eu-west-1
 purple provider add proxmox --url https://pve:8006 --token user@pam!token=secret
 purple provider add scaleway --token TOKEN --regions fr-par-1,nl-ams-1
 purple provider add gcp --token /path/to/sa-key.json --project my-project --regions us-central1-a
+purple provider add azure --token /path/to/sp.json --regions SUBSCRIPTION_ID
 purple provider add digitalocean --token TOKEN --no-auto-sync   # --auto-sync to re-enable
 purple provider list                # List configured providers
 purple provider remove digitalocean # Remove provider
@@ -83,13 +84,14 @@ purple --completions zsh            # Generate shell completions
 
 Sync servers from cloud providers into ~/.ssh/config. Each synced host is tracked via a comment (# purple:provider name:id) so purple knows which hosts belong to which provider.
 
-Supported providers: AWS EC2, DigitalOcean, Vultr, Linode (Akamai), Hetzner, UpCloud, Proxmox VE, Scaleway and GCP (Compute Engine). Tags and labels from each provider are synced. Provider metadata (region, plan, OS, status. Proxmox: node, type, status) is stored in config comments and displayed in the detail panel.
+Supported providers: AWS EC2, DigitalOcean, Vultr, Linode (Akamai), Hetzner, UpCloud, Proxmox VE, Scaleway, GCP (Compute Engine) and Azure. Tags and labels from each provider are synced. Provider metadata (region, plan, OS, status. Proxmox: node, type, status) is stored in config comments and displayed in the detail panel.
 
 Provider-specific details:
 - AWS EC2: multi-region sync, ~/.aws/credentials profiles, SigV4 request signing, AMI name resolution for OS metadata
 - Scaleway: multi-zone sync across Paris, Amsterdam, Warsaw and Milan
 - GCP (Compute Engine): multi-zone sync via the aggregatedList API. Authenticate with a service account JSON key file (JWT RS256, scope: compute.readonly) or a raw access token (e.g. from gcloud auth print-access-token). Requires a GCP project ID. Empty zone filter syncs all zones. Network tags and labels are synced as host tags
 - Proxmox VE: self-signed TLS certificates supported. Per-VM detail API calls. Guest agent and LXC interface detection
+- Azure: multi-subscription sync via the Azure Resource Manager API. Authenticate with a service principal JSON file (tenantId, clientId, clientSecret -> OAuth2 client credentials) or a raw Bearer token (e.g. from az account get-access-token). Requires subscription IDs via --regions. Batch IP resolution (3 list calls: VMs, NICs, Public IPs). VM tags synced as host tags
 
 Per-provider auto_sync toggle controls startup sync. Default is true for all providers except Proxmox (default false). Manual sync via the TUI (s key) or CLI always works. Preview changes with --dry-run. Remove deleted hosts with --remove. Replace local tags with --reset-tags.
 

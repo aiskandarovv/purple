@@ -167,9 +167,11 @@ pub fn render_provider_form(frame: &mut Frame, app: &mut App, provider_name: &st
         let is_required = matches!(field, ProviderFormField::Url)
             || (field == ProviderFormField::Token && provider_name != "aws")
             || (field == ProviderFormField::Project && provider_name == "gcp")
-            || (field == ProviderFormField::Regions && matches!(provider_name, "aws" | "scaleway"));
+            || (field == ProviderFormField::Regions && matches!(provider_name, "aws" | "scaleway" | "azure"));
         let field_label = if field == ProviderFormField::Regions && matches!(provider_name, "scaleway" | "gcp") {
             "Zones"
+        } else if field == ProviderFormField::Regions && provider_name == "azure" {
+            "Subscriptions"
         } else {
             field.label()
         };
@@ -215,6 +217,7 @@ fn placeholder_for(field: ProviderFormField, provider_name: &str) -> &'static st
             "proxmox" => "user@pam!token=secret",
             "aws" => "AccessKeyId:Secret (or use Profile)",
             "gcp" => "/path/to/service-account.json (or access token)",
+            "azure" => "/path/to/service-principal.json (or access token)",
             _ => "your-api-token",
         },
         ProviderFormField::Profile => "Name from ~/.aws/credentials (or use Token)",
@@ -222,6 +225,7 @@ fn placeholder_for(field: ProviderFormField, provider_name: &str) -> &'static st
         ProviderFormField::Regions => match provider_name {
             "gcp" => "Enter to select zones (empty = all)",
             "scaleway" => "Enter to select zones",
+            "azure" => "comma-separated subscription IDs",
             _ => "Enter to select regions",
         },
         ProviderFormField::AliasPrefix => match provider_name {
@@ -234,11 +238,13 @@ fn placeholder_for(field: ProviderFormField, provider_name: &str) -> &'static st
             "aws" => "aws",
             "scaleway" => "scw",
             "gcp" => "gcp",
+            "azure" => "az",
             _ => "prefix",
         },
         ProviderFormField::User => match provider_name {
             "aws" => "ec2-user",
             "gcp" => "ubuntu",
+            "azure" => "azureuser",
             _ => "root",
         },
         ProviderFormField::IdentityFile => "Enter to pick a key",
@@ -311,7 +317,9 @@ fn render_field_content(
         value.clone()
     };
 
-    let is_picker = matches!(field, ProviderFormField::IdentityFile | ProviderFormField::Regions);
+    let is_picker = matches!(field, ProviderFormField::IdentityFile)
+        || (field == ProviderFormField::Regions
+            && matches!(provider_name, "aws" | "scaleway" | "gcp"));
 
     let content = if value.is_empty() && is_focused && !is_picker {
         Line::from(Span::styled(placeholder_for(field, provider_name), theme::muted()))

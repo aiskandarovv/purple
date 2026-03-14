@@ -1085,7 +1085,9 @@ fn handle_provider_form(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<A
         matches!(f, crate::app::ProviderFormField::VerifyTls | crate::app::ProviderFormField::AutoSync)
     };
     let is_picker = |f: crate::app::ProviderFormField| {
-        matches!(f, crate::app::ProviderFormField::IdentityFile | crate::app::ProviderFormField::Regions)
+        matches!(f, crate::app::ProviderFormField::IdentityFile)
+            || (f == crate::app::ProviderFormField::Regions
+                && matches!(provider_name.as_str(), "aws" | "scaleway" | "gcp"))
     };
 
     match key.code {
@@ -1135,7 +1137,9 @@ fn handle_provider_form(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<A
                 if !app.keys.is_empty() {
                     app.ui.key_picker_state.select(Some(0));
                 }
-            } else if f == crate::app::ProviderFormField::Regions {
+            } else if f == crate::app::ProviderFormField::Regions
+                && matches!(provider_name.as_str(), "aws" | "scaleway" | "gcp")
+            {
                 app.ui.show_region_picker = true;
                 app.ui.region_picker_cursor = 0;
             } else {
@@ -1362,6 +1366,22 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
     if provider_name == "scaleway" && app.provider_form.regions.trim().is_empty() {
         app.set_status("Select at least one Scaleway zone.", true);
         return;
+    }
+    if provider_name == "azure" {
+        let subs = app.provider_form.regions.trim();
+        if subs.is_empty() {
+            app.set_status("Enter at least one Azure subscription ID.", true);
+            return;
+        }
+        for sub in subs.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+            if !crate::providers::azure::is_valid_subscription_id(sub) {
+                app.set_status(
+                    format!("Invalid subscription ID '{}'. Expected UUID format (e.g. 12345678-1234-1234-1234-123456789012).", sub),
+                    true,
+                );
+                return;
+            }
+        }
     }
 
     let token = app.provider_form.token.trim().to_string();
@@ -2676,6 +2696,111 @@ mod tests {
     }
 
     // =========================================================================
+    // Azure-specific form validation
+    // =========================================================================
+
+    fn make_azure_form_app() -> App {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.screen = Screen::ProviderForm { provider: "azure".to_string() };
+        app.provider_config = test_provider_config();
+        app.provider_form = ProviderFormFields {
+            url: String::new(),
+            token: "fake-token".to_string(),
+            profile: String::new(),
+            project: String::new(),
+            regions: "12345678-1234-1234-1234-123456789012".to_string(),
+            alias_prefix: "az".to_string(),
+            user: "azureuser".to_string(),
+            identity_file: String::new(),
+            verify_tls: true,
+            auto_sync: true,
+            focused_field: ProviderFormField::Token,
+            cursor_pos: 0,
+        };
+        app
+    }
+
+    #[test]
+    fn test_submit_azure_rejects_empty_subscriptions() {
+        let mut app = make_azure_form_app();
+        app.provider_form.regions = "".to_string();
+        submit_form(&mut app);
+        assert!(matches!(app.screen, Screen::ProviderForm { .. }));
+        assert_status_contains(&app, "subscription");
+    }
+
+    #[test]
+    fn test_submit_azure_rejects_whitespace_only_subscriptions() {
+        let mut app = make_azure_form_app();
+        app.provider_form.regions = "   ".to_string();
+        submit_form(&mut app);
+        assert!(matches!(app.screen, Screen::ProviderForm { .. }));
+        assert_status_contains(&app, "subscription");
+    }
+
+    #[test]
+    fn test_azure_form_has_regions_field() {
+        let fields = ProviderFormField::fields_for("azure");
+        assert!(fields.contains(&ProviderFormField::Regions));
+        assert!(!fields.contains(&ProviderFormField::Project));
+        assert!(!fields.contains(&ProviderFormField::Url));
+        assert!(!fields.contains(&ProviderFormField::Profile));
+    }
+
+    #[test]
+    fn test_azure_form_tab_cycles_through_regions() {
+        let mut app = make_azure_form_app();
+        app.provider_form.focused_field = ProviderFormField::Token;
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
+        assert_eq!(app.provider_form.focused_field, ProviderFormField::Regions);
+        let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
+        assert_eq!(app.provider_form.focused_field, ProviderFormField::AliasPrefix);
+    }
+
+    #[test]
+    fn test_azure_regions_field_accepts_typing() {
+        let mut app = make_azure_form_app();
+        app.provider_form.focused_field = ProviderFormField::Regions;
+        app.provider_form.regions = String::new();
+        app.provider_form.cursor_pos = 0;
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('a')), &tx);
+        assert_eq!(app.provider_form.regions, "a");
+    }
+
+    #[test]
+    fn test_azure_enter_on_regions_does_not_open_picker() {
+        let mut app = make_azure_form_app();
+        app.provider_form.focused_field = ProviderFormField::Regions;
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        // Must NOT open region picker (Azure uses text input, not picker)
+        assert!(!app.ui.show_region_picker);
+        // Screen should no longer be ProviderForm (submit transitions away)
+        // or validation error sets status (screen stays on form)
+        // Either way: not a picker.
+    }
+
+    #[test]
+    fn test_submit_azure_rejects_invalid_subscription_id() {
+        let mut app = make_azure_form_app();
+        app.provider_form.regions = "not-a-uuid".to_string();
+        submit_form(&mut app);
+        assert!(matches!(app.screen, Screen::ProviderForm { .. }));
+        assert_status_contains(&app, "Invalid subscription ID");
+    }
+
+    #[test]
+    fn test_submit_azure_rejects_mixed_valid_invalid_subscriptions() {
+        let mut app = make_azure_form_app();
+        app.provider_form.regions = "12345678-1234-1234-1234-123456789012,bad-id".to_string();
+        submit_form(&mut app);
+        assert!(matches!(app.screen, Screen::ProviderForm { .. }));
+        assert_status_contains(&app, "Invalid subscription ID");
+    }
+
+    // =========================================================================
     // Provider form navigation tests
     // =========================================================================
 
@@ -2916,7 +3041,7 @@ mod tests {
 
     #[test]
     fn test_all_cloud_providers_default_auto_sync_true() {
-        for provider in &["digitalocean", "vultr", "linode", "hetzner", "upcloud", "aws", "scaleway", "gcp"] {
+        for provider in &["digitalocean", "vultr", "linode", "hetzner", "upcloud", "aws", "scaleway", "gcp", "azure"] {
             let mut app = make_app("Host test\n  HostName test.com\n");
             app.screen = Screen::Providers;
             app.provider_config = test_provider_config();
