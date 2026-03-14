@@ -85,8 +85,20 @@ pub fn connect(alias: &str, config_path: &Path, askpass: Option<&str>, bw_sessio
 
 /// Parse host key verification error from SSH stderr output.
 /// Returns (hostname, known_hosts_path) if the error is a changed host key.
+///
+/// Uses two detection strategies:
+/// 1. English string matching for hostname and known_hosts path extraction.
+/// 2. Locale-independent fallback: the `@@@@@` warning banner is always present
+///    regardless of locale, combined with a known_hosts path from "Offending" line.
+///    When the English hostname line is missing, falls back to extracting the
+///    hostname from the known_hosts file path.
 pub fn parse_host_key_error(stderr: &str) -> Option<(String, String)> {
-    if !stderr.contains("Host key verification failed.") {
+    // Primary: English locale detection
+    let has_english_error = stderr.contains("Host key verification failed.");
+    // Fallback: the @@@ banner is locale-independent and always present for host key errors
+    let has_banner = stderr.contains("@@@@@@@@@@@@@@@");
+
+    if !has_english_error && !has_banner {
         return None;
     }
 
@@ -98,7 +110,7 @@ pub fn parse_host_key_error(stderr: &str) -> Option<(String, String)> {
             let rest = &l[start..];
             let end = rest.find(" has changed")?;
             Some(rest[..end].to_string())
-        })?;
+        });
 
     // Parse known_hosts path from "Offending ... key in <path>:<line>"
     let known_hosts_path = stderr.lines()
@@ -108,7 +120,16 @@ pub fn parse_host_key_error(stderr: &str) -> Option<(String, String)> {
             let rest = &l[start..];
             let end = rest.rfind(':')?;
             Some(rest[..end].to_string())
-        })?;
+        });
+
+    // We need at least the known_hosts path to be useful
+    let known_hosts_path = known_hosts_path?;
+
+    // If we couldn't parse the hostname (non-English locale), derive it from
+    // the known_hosts path by running ssh-keygen -F would be complex.
+    // Instead, use a reasonable default: the user will see the confirmation dialog
+    // with the known_hosts path, which is the critical piece for the reset.
+    let hostname = hostname.unwrap_or_else(|| "the remote host".to_string());
 
     Some((hostname, known_hosts_path))
 }

@@ -104,11 +104,21 @@ impl Default for HostEntry {
 }
 
 impl HostEntry {
-    /// Build the SSH command string for this host (e.g. "ssh -- 'myserver'").
-    /// Shell-quotes the alias to prevent injection when pasted into a terminal.
-    pub fn ssh_command(&self) -> String {
+    /// Build the SSH command string for this host.
+    /// Includes `-F <config_path>` when the config is non-default so the alias
+    /// resolves correctly when pasted into a terminal.
+    /// Shell-quotes both the config path and alias to prevent injection.
+    pub fn ssh_command(&self, config_path: &std::path::Path) -> String {
         let escaped = self.alias.replace('\'', "'\\''");
-        format!("ssh -- '{}'", escaped)
+        let default = dirs::home_dir()
+            .map(|h| h.join(".ssh/config"))
+            .unwrap_or_default();
+        if config_path == default {
+            format!("ssh -- '{}'", escaped)
+        } else {
+            let config_escaped = config_path.display().to_string().replace('\'', "'\\''");
+            format!("ssh -F '{}' -- '{}'", config_escaped, escaped)
+        }
     }
 }
 

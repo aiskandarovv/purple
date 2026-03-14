@@ -274,7 +274,7 @@ pub struct ActiveTunnel {
 /// stderr is piped so poll_tunnels() can capture error messages on exit.
 /// When `askpass` is Some, sets SSH_ASKPASS environment variables. This is essential
 /// for tunnels since stdin is null and interactive password entry is impossible.
-pub fn start_tunnel(alias: &str, config_path: &std::path::Path, askpass: Option<&str>) -> Result<Child> {
+pub fn start_tunnel(alias: &str, config_path: &std::path::Path, askpass: Option<&str>, bw_session: Option<&str>) -> Result<Child> {
     let mut cmd = Command::new("ssh");
     cmd.arg("-F")
         .arg(config_path)
@@ -296,6 +296,10 @@ pub fn start_tunnel(alias: &str, config_path: &std::path::Path, askpass: Option<
             .env("PURPLE_ASKPASS_MODE", "1")
             .env("PURPLE_HOST_ALIAS", alias)
             .env("PURPLE_CONFIG_PATH", config_path.as_os_str());
+    }
+
+    if let Some(token) = bw_session {
+        cmd.env("BW_SESSION", token);
     }
 
     cmd.spawn()

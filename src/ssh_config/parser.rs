@@ -141,18 +141,20 @@ impl SshConfigFile {
     }
 
     /// Parse an Include directive line. Returns the pattern if it matches.
-    /// Handles both space and tab between keyword and value (SSH allows either).
+    /// Handles space, tab and `=` between keyword and value (SSH allows all three).
     fn parse_include_line(trimmed: &str) -> Option<&str> {
         let bytes = trimmed.as_bytes();
-        // "include" is 7 ASCII bytes; byte 7 must be ASCII whitespace (space or tab)
-        if bytes.len() > 8
+        // "include" is 7 ASCII bytes; byte 7 must be whitespace or '='
+        if bytes.len() > 7
             && bytes[..7].eq_ignore_ascii_case(b"include")
-            && bytes[7].is_ascii_whitespace()
         {
-            // byte 8 is safe to slice at: bytes 0-7 are ASCII, so byte 8 is a char boundary
-            let pattern = trimmed[8..].trim();
-            if !pattern.is_empty() {
-                return Some(pattern);
+            let sep = bytes[7];
+            if sep.is_ascii_whitespace() || sep == b'=' {
+                // byte 8 is safe to slice at: bytes 0-7 are ASCII, so byte 8 is a char boundary
+                let pattern = trimmed[8..].trim();
+                if !pattern.is_empty() {
+                    return Some(pattern);
+                }
             }
         }
         None
@@ -446,12 +448,16 @@ Host myserver
     #[test]
     fn test_ssh_command() {
         use crate::ssh_config::model::HostEntry;
+        use std::path::PathBuf;
         let entry = HostEntry {
             alias: "myserver".to_string(),
             hostname: "10.0.0.1".to_string(),
             ..Default::default()
         };
-        assert_eq!(entry.ssh_command(), "ssh -- 'myserver'");
+        let default_path = dirs::home_dir().unwrap().join(".ssh/config");
+        assert_eq!(entry.ssh_command(&default_path), "ssh -- 'myserver'");
+        let custom_path = PathBuf::from("/tmp/my_config");
+        assert_eq!(entry.ssh_command(&custom_path), "ssh -F '/tmp/my_config' -- 'myserver'");
     }
 
     #[test]

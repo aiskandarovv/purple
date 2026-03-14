@@ -1,6 +1,6 @@
 [package]
 name = "purple-ssh"
-version = "1.28.1"
+version = "1.28.2"
 edition = "2024"
 description = "Manage SSH configs and launch connections from the terminal. TUI host manager with search, tags, tunnels, command snippets, password management (keychain, 1Password, Bitwarden, pass, Vault), cloud sync (AWS EC2, DigitalOcean, Vultr, Linode, Hetzner, UpCloud, Proxmox VE, Scaleway, GCP, Azure), self-update and round-trip fidelity for ~/.ssh/config."
 license = "MIT"

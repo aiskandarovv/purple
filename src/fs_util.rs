@@ -17,19 +17,33 @@ pub fn atomic_write(path: &Path, content: &[u8]) -> io::Result<()> {
     {
         use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
-        // Remove stale tmp file from a previous crashed run (O_EXCL would fail otherwise)
-        let _ = fs::remove_file(&tmp_path);
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&tmp_path)
-            .map_err(|e| {
-                io::Error::new(
+        // Try O_EXCL first. If a stale tmp file exists from a crashed run, remove
+        // it and retry once. This avoids a TOCTOU gap from removing before creating.
+        let open = || {
+            fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&tmp_path)
+        };
+        let mut file = match open() {
+            Ok(f) => f,
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                let _ = fs::remove_file(&tmp_path);
+                open().map_err(|e| {
+                    io::Error::new(
+                        e.kind(),
+                        format!("Failed to create temp file {}: {}", tmp_path.display(), e),
+                    )
+                })?
+            }
+            Err(e) => {
+                return Err(io::Error::new(
                     e.kind(),
                     format!("Failed to create temp file {}: {}", tmp_path.display(), e),
-                )
-            })?;
+                ));
+            }
+        };
         file.write_all(content)?;
     }
 

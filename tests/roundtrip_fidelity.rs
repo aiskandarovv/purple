@@ -2772,29 +2772,32 @@ fn has_host_detects_multi_pattern() {
 
 #[test]
 fn ssh_command_quotes_alias() {
+    let default_path = dirs::home_dir().unwrap().join(".ssh/config");
     let entry = HostEntry {
         alias: "myserver".to_string(),
         ..Default::default()
     };
-    assert_eq!(entry.ssh_command(), "ssh -- 'myserver'");
+    assert_eq!(entry.ssh_command(&default_path), "ssh -- 'myserver'");
 }
 
 #[test]
 fn ssh_command_escapes_single_quotes() {
+    let default_path = dirs::home_dir().unwrap().join(".ssh/config");
     let entry = HostEntry {
         alias: "it's-a-host".to_string(),
         ..Default::default()
     };
-    assert_eq!(entry.ssh_command(), "ssh -- 'it'\\''s-a-host'");
+    assert_eq!(entry.ssh_command(&default_path), "ssh -- 'it'\\''s-a-host'");
 }
 
 #[test]
 fn ssh_command_escapes_shell_metacharacters() {
+    let default_path = dirs::home_dir().unwrap().join(".ssh/config");
     let entry = HostEntry {
         alias: "prod;rm -rf /".to_string(),
         ..Default::default()
     };
-    assert_eq!(entry.ssh_command(), "ssh -- 'prod;rm -rf /'");
+    assert_eq!(entry.ssh_command(&default_path), "ssh -- 'prod;rm -rf /'");
 }
 
 // ============================================================================

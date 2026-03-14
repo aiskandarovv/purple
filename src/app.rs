@@ -13,14 +13,26 @@ use crate::ssh_config::model::{ConfigElement, HostEntry, SshConfigFile};
 use crate::ssh_keys::{self, SshKeyInfo};
 
 /// Case-insensitive substring check without allocation.
+/// Uses a byte-window approach for ASCII strings (the common case for SSH
+/// hostnames and aliases). Falls back to a char-based scan when either
+/// string contains non-ASCII bytes to avoid false matches across UTF-8
+/// character boundaries.
 pub(crate) fn contains_ci(haystack: &str, needle: &str) -> bool {
     if needle.is_empty() {
         return true;
     }
-    haystack
-        .as_bytes()
-        .windows(needle.len())
-        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
+    if haystack.is_ascii() && needle.is_ascii() {
+        return haystack
+            .as_bytes()
+            .windows(needle.len())
+            .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()));
+    }
+    // Non-ASCII fallback: compare char-by-char (case fold ASCII only)
+    let needle_lower: Vec<char> = needle.chars().map(|c| c.to_ascii_lowercase()).collect();
+    let haystack_chars: Vec<char> = haystack.chars().collect();
+    haystack_chars.windows(needle_lower.len()).any(|window| {
+        window.iter().zip(needle_lower.iter()).all(|(h, n)| h.to_ascii_lowercase() == *n)
+    })
 }
 
 /// Case-insensitive equality check without allocation.
@@ -490,27 +502,27 @@ impl ProviderFormFields {
         }
     }
 
-    pub fn focused_value_mut(&mut self) -> &mut String {
+    pub fn focused_value_mut(&mut self) -> Option<&mut String> {
         match self.focused_field {
-            ProviderFormField::Url => &mut self.url,
-            ProviderFormField::Token => &mut self.token,
-            ProviderFormField::Profile => &mut self.profile,
-            ProviderFormField::Project => &mut self.project,
-            ProviderFormField::Regions => &mut self.regions,
-            ProviderFormField::AliasPrefix => &mut self.alias_prefix,
-            ProviderFormField::User => &mut self.user,
-            ProviderFormField::IdentityFile => &mut self.identity_file,
-            ProviderFormField::VerifyTls => unreachable!("VerifyTls is a toggle, not a text field"),
-            ProviderFormField::AutoSync => unreachable!("AutoSync is a toggle, not a text field"),
+            ProviderFormField::Url => Some(&mut self.url),
+            ProviderFormField::Token => Some(&mut self.token),
+            ProviderFormField::Profile => Some(&mut self.profile),
+            ProviderFormField::Project => Some(&mut self.project),
+            ProviderFormField::Regions => Some(&mut self.regions),
+            ProviderFormField::AliasPrefix => Some(&mut self.alias_prefix),
+            ProviderFormField::User => Some(&mut self.user),
+            ProviderFormField::IdentityFile => Some(&mut self.identity_file),
+            ProviderFormField::VerifyTls | ProviderFormField::AutoSync => None,
         }
     }
 
     pub fn insert_char(&mut self, c: char) {
         let pos = self.cursor_pos;
-        let val = self.focused_value_mut();
-        let byte_pos = char_to_byte_pos(val, pos);
-        val.insert(byte_pos, c);
-        self.cursor_pos = pos + 1;
+        if let Some(val) = self.focused_value_mut() {
+            let byte_pos = char_to_byte_pos(val, pos);
+            val.insert(byte_pos, c);
+            self.cursor_pos = pos + 1;
+        }
     }
 
     pub fn delete_char_before_cursor(&mut self) {
@@ -518,11 +530,12 @@ impl ProviderFormFields {
             return;
         }
         let pos = self.cursor_pos;
-        let val = self.focused_value_mut();
-        let byte_pos = char_to_byte_pos(val, pos);
-        let prev = char_to_byte_pos(val, pos - 1);
-        val.drain(prev..byte_pos);
-        self.cursor_pos = pos - 1;
+        if let Some(val) = self.focused_value_mut() {
+            let byte_pos = char_to_byte_pos(val, pos);
+            let prev = char_to_byte_pos(val, pos - 1);
+            val.drain(prev..byte_pos);
+            self.cursor_pos = pos - 1;
+        }
     }
 
     pub fn sync_cursor_to_end(&mut self) {

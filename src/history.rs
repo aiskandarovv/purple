@@ -173,6 +173,9 @@ impl ConnectionHistory {
                 content.push_str(&ts_strs.join(","));
             }
         }
+        if !content.is_empty() {
+            content.push('\n');
+        }
         fs_util::atomic_write(&self.path, content.as_bytes())
     }
 

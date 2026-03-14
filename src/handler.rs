@@ -132,6 +132,7 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
                 }
                 let mut form = HostForm::from_entry(host);
                 form.alias = format!("{}-copy", host.alias);
+                form.cursor_pos = form.alias.chars().count();
                 app.form = form;
                 app.screen = Screen::AddHost;
                 app.capture_form_mtime();
@@ -139,7 +140,7 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
         }
         KeyCode::Char('y') => {
             if let Some(host) = app.selected_host() {
-                let cmd = host.ssh_command();
+                let cmd = host.ssh_command(&app.reload.config_path);
                 let alias = host.alias.clone();
                 match clipboard::copy_to_clipboard(&cmd) {
                     Ok(()) => {
@@ -1734,7 +1735,7 @@ fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
                 let askpass = app.hosts.iter()
                     .find(|h| h.alias == alias)
                     .and_then(|h| h.askpass.clone());
-                match crate::tunnel::start_tunnel(&alias, &app.reload.config_path, askpass.as_deref()) {
+                match crate::tunnel::start_tunnel(&alias, &app.reload.config_path, askpass.as_deref(), app.bw_session.as_deref()) {
                     Ok(child) => {
                         app.active_tunnels.insert(
                             alias.clone(),
