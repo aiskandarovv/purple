@@ -118,6 +118,15 @@ pub fn border() -> Style {
     Style::default().add_modifier(Modifier::DIM)
 }
 
+/// Version number in help overlay. Purple foreground.
+pub fn version() -> Style {
+    match COLOR_MODE.load(Ordering::Acquire) {
+        0 => Style::default().add_modifier(Modifier::BOLD),
+        2 => Style::default().fg(Color::Rgb(147, 51, 234)),
+        _ => Style::default().fg(Color::Magenta),
+    }
+}
+
 /// Search-mode border. Purple to signal active filter state.
 pub fn border_search() -> Style {
     match COLOR_MODE.load(Ordering::Acquire) {

@@ -292,10 +292,13 @@ fn render_display_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::
         ))
     });
 
+    let url_label = Line::from(Span::styled(" getpurple.sh ", theme::muted()));
+
     if app.hosts.is_empty() {
         let mut block = Block::bordered()
             .border_type(BorderType::Rounded)
             .title(title)
+            .title_bottom(url_label.clone().right_aligned())
             .border_style(theme::border());
         if let Some(update) = update_title {
             block = block.title_top(update.right_aligned());
@@ -312,6 +315,7 @@ fn render_display_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::
     let mut block = Block::bordered()
         .border_type(BorderType::Rounded)
         .title(title)
+        .title_bottom(url_label.right_aligned())
         .border_style(theme::border());
     if let Some(update) = update_title {
         block = block.title_top(update.right_aligned());
@@ -438,10 +442,13 @@ fn render_search_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::R
         ))
     });
 
+    let url_label = Line::from(Span::styled(" getpurple.sh ", theme::muted()));
+
     if app.search.filtered_indices.is_empty() {
         let mut block = Block::bordered()
             .border_type(BorderType::Rounded)
             .title(title)
+            .title_bottom(url_label.clone().right_aligned())
             .border_style(theme::border_search());
         if let Some(update) = update_title {
             block = block.title_top(update.right_aligned());
@@ -456,6 +463,7 @@ fn render_search_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::R
     let mut block = Block::bordered()
         .border_type(BorderType::Rounded)
         .title(title)
+        .title_bottom(url_label.right_aligned())
         .border_style(theme::border_search());
     if let Some(update) = update_title {
         block = block.title_top(update.right_aligned());
