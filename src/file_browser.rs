@@ -77,8 +77,10 @@ pub fn list_local(path: &Path, show_hidden: bool) -> anyhow::Result<Vec<FileEntr
     Ok(entries)
 }
 
-/// Parse `ls -lhA` output into FileEntry list.
+/// Parse `ls -lhAL` output into FileEntry list.
+/// With -L, symlinks are dereferenced so their target type is shown directly.
 /// Recognizes directories via 'd' permission prefix. Skips the "total" line.
+/// Broken symlinks are omitted by ls -L (they cannot be transferred anyway).
 pub fn parse_ls_output(output: &str, show_hidden: bool) -> Vec<FileEntry> {
     let mut entries = Vec::new();
     for line in output.lines() {
@@ -108,17 +110,11 @@ pub fn parse_ls_output(output: &str, show_hidden: bool) -> Vec<FileEntry> {
         }
         let permissions = parts[0];
         let is_dir = permissions.starts_with('d');
-        let name_field = parts[8];
+        let name = parts[8];
         // Skip empty names
-        if name_field.is_empty() {
+        if name.is_empty() {
             continue;
         }
-        // For symlinks, ls shows "name -> target", strip the target
-        let name = if permissions.starts_with('l') {
-            name_field.split(" -> ").next().unwrap_or(name_field)
-        } else {
-            name_field
-        };
         if !show_hidden && name.starts_with('.') {
             continue;
         }
@@ -203,7 +199,7 @@ pub fn fetch_remote_listing(
     bw_session: Option<&str>,
     has_tunnel: bool,
 ) -> Result<Vec<FileEntry>, String> {
-    let command = format!("LC_ALL=C ls -lhA {}", shell_escape(remote_path));
+    let command = format!("LC_ALL=C ls -lhAL {}", shell_escape(remote_path));
     let result = crate::snippet::run_snippet(
         alias,
         config_path,
@@ -456,14 +452,29 @@ total 8
     }
 
     #[test]
-    fn test_parse_ls_symlink() {
+    fn test_parse_ls_symlink_to_file_dereferenced() {
+        // With -L, symlink to file appears as regular file
         let output = "\
 total 4
-lrwxrwxrwx  1 user user   11 Jan  1 12:00 link -> /etc/hosts
+-rw-r--r--  1 user user   11 Jan  1 12:00 link
 ";
         let entries = parse_ls_output(output, true);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "link");
+        assert!(!entries[0].is_dir);
+    }
+
+    #[test]
+    fn test_parse_ls_symlink_to_dir_dereferenced() {
+        // With -L, symlink to directory appears as directory
+        let output = "\
+total 4
+drwxr-xr-x  3 user user 4096 Jan  1 12:00 link
+";
+        let entries = parse_ls_output(output, true);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "link");
+        assert!(entries[0].is_dir);
     }
 
     #[test]

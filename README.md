@@ -1,8 +1,8 @@
 <h1 align="center">purple.<br>SSH config manager with file transfer<br>and cloud sync.</h1>
 
 <p align="center">
-  <strong>Stop grepping your SSH config. Start launching from it.</strong><br>
-  Manage, connect, transfer files and run commands across all your SSH servers from one TUI. Sync from 10 cloud providers. Edits your <code>~/.ssh/config</code> directly.
+  <strong>Stop scrolling through your SSH config. Start searching it.</strong><br>
+  Find any server instantly, connect with Enter, transfer files visually and sync from 10 cloud providers. One TUI that edits your <code>~/.ssh/config</code> directly.
 </p>
 
 <p align="center">
@@ -16,9 +16,9 @@
 
 ## What is purple?
 
-Manage, connect, transfer and automate across all your SSH servers from one terminal. purple is a free, open-source SSH config manager that edits your `~/.ssh/config` directly. Search and connect to hosts, browse remote files and copy them with scp, run commands across servers, sync from ten cloud providers and handle SSH passwords automatically.
+purple turns your `~/.ssh/config` into a searchable, visual interface. Find any host instantly, connect with Enter, browse remote files side by side and sync servers from ten cloud providers. One TUI. No context switching.
 
-It reads your existing config, lets you search, filter, tag and connect with a single keystroke, and writes changes back without touching your comments or unknown directives. Runs on macOS and Linux. No browser, no YAML files, no context switching.
+It reads your existing config, lets you search, filter, tag and connect with a single keystroke, and writes changes back without touching your comments or unknown directives. Transfer files visually, run commands across servers and handle SSH passwords automatically. Free, open-source, runs on macOS and Linux.
 
 ## Install
 
