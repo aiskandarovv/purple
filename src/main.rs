@@ -461,6 +461,22 @@ fn apply_saved_sort(app: &mut App) {
     }
 }
 
+/// Build a rolling sync summary from completed providers.
+/// Shows "Synced: AWS, DO, Vultr" that grows as each provider finishes.
+/// Clears the batch state once all providers are done so the status can expire normally.
+fn set_sync_summary(app: &mut App) {
+    let still_syncing = !app.syncing_providers.is_empty();
+    let names = app.sync_done.join(", ");
+    if still_syncing {
+        app.set_status(format!("Synced: {}...", names), app.sync_had_errors);
+    } else {
+        app.set_status(format!("Synced: {}", names), app.sync_had_errors);
+        app.sync_done.clear();
+        app.sync_had_errors = false;
+        app::SyncRecord::save_all(&app.sync_history);
+    }
+}
+
 fn run_tui(mut app: App) -> Result<()> {
     // First-launch welcome hint (one-shot: creates .purple/ so it won't show again)
     if app.status.is_none() && !app.hosts.is_empty() {
@@ -529,21 +545,27 @@ fn run_tui(mut app: App) -> Result<()> {
                 app.ping_status.insert(alias, status);
             }
             AppEvent::SyncProgress { provider, message } => {
-                let name = providers::provider_display_name(&provider);
-                app.set_status(format!("{}: {}", name, message), false);
+                // Only show per-provider progress if no providers have completed yet,
+                // otherwise the rolling summary is more useful.
+                if app.sync_done.is_empty() {
+                    let name = providers::provider_display_name(&provider);
+                    app.set_status(format!("{}: {}", name, message), false);
+                }
             }
             AppEvent::SyncComplete { provider, hosts } => {
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs();
-                let (msg, is_err, total) = app.apply_sync_result(&provider, hosts);
+                let display_name = providers::provider_display_name(&provider);
+                let (_msg, is_err, total) = app.apply_sync_result(&provider, hosts);
                 if is_err {
                     app.sync_history.insert(provider.clone(), app::SyncRecord {
                         timestamp: now,
-                        message: msg.clone(),
+                        message: format!("{}: sync failed", display_name),
                         is_error: true,
                     });
+                    app.sync_had_errors = true;
                 } else {
                     let label = if total == 1 { "server" } else { "servers" };
                     app.sync_history.insert(provider.clone(), app::SyncRecord {
@@ -552,8 +574,9 @@ fn run_tui(mut app: App) -> Result<()> {
                         is_error: false,
                     });
                 }
-                app.set_status(msg, is_err);
                 app.syncing_providers.remove(&provider);
+                app.sync_done.push(display_name.to_string());
+                set_sync_summary(&mut app);
             }
             AppEvent::SyncPartial { provider, hosts, failures, total } => {
                 let now = std::time::SystemTime::now()
@@ -565,10 +588,9 @@ fn run_tui(mut app: App) -> Result<()> {
                 if is_err {
                     app.sync_history.insert(provider.clone(), app::SyncRecord {
                         timestamp: now,
-                        message: msg.clone(),
+                        message: msg,
                         is_error: true,
                     });
-                    app.set_status(msg, true);
                 } else {
                     let label = if synced == 1 { "server" } else { "servers" };
                     app.sync_history.insert(provider.clone(), app::SyncRecord {
@@ -576,12 +598,11 @@ fn run_tui(mut app: App) -> Result<()> {
                         message: format!("{} {} ({} of {} failed)", synced, label, failures, total),
                         is_error: true,
                     });
-                    app.set_status(
-                        format!("{}: {} synced, {} of {} failed to fetch.", display_name, synced, failures, total),
-                        true,
-                    );
                 }
+                app.sync_had_errors = true;
                 app.syncing_providers.remove(&provider);
+                app.sync_done.push(display_name.to_string());
+                set_sync_summary(&mut app);
             }
             AppEvent::SyncError { provider, message } => {
                 let now = std::time::SystemTime::now()
@@ -594,11 +615,10 @@ fn run_tui(mut app: App) -> Result<()> {
                     message: message.clone(),
                     is_error: true,
                 });
-                app.set_status(
-                    format!("{} sync failed: {}", display_name, message),
-                    true,
-                );
+                app.sync_had_errors = true;
                 app.syncing_providers.remove(&provider);
+                app.sync_done.push(display_name.to_string());
+                set_sync_summary(&mut app);
             }
             AppEvent::UpdateAvailable { version } => {
                 app.update_available = Some(version);
@@ -642,7 +662,7 @@ fn run_tui(mut app: App) -> Result<()> {
             AppEvent::ScpComplete { alias, success, message } => {
                 // Track whether we need to spawn a remote refresh (can't do it inside the fb borrow
                 // because spawn_remote_listing needs values from app too)
-                let mut refresh_remote: Option<(String, Option<String>, String, bool)> = None;
+                let mut refresh_remote: Option<(String, Option<String>, String, bool, file_browser::BrowserSort)> = None;
                 let matched = if let Some(ref mut fb) = app.file_browser {
                     if fb.alias == alias {
                         fb.transferring = None;
@@ -650,7 +670,7 @@ fn run_tui(mut app: App) -> Result<()> {
                             app.history.record(&alias);
                             fb.local_selected.clear();
                             fb.remote_selected.clear();
-                            match file_browser::list_local(&fb.local_path, fb.show_hidden) {
+                            match file_browser::list_local(&fb.local_path, fb.show_hidden, fb.sort) {
                                 Ok(entries) => { fb.local_entries = entries; fb.local_error = None; }
                                 Err(e) => { fb.local_entries = Vec::new(); fb.local_error = Some(e.to_string()); }
                             }
@@ -662,7 +682,7 @@ fn run_tui(mut app: App) -> Result<()> {
                                 fb.remote_list_state = ratatui::widgets::ListState::default();
                                 refresh_remote = Some((
                                     fb.alias.clone(), fb.askpass.clone(),
-                                    fb.remote_path.clone(), fb.show_hidden,
+                                    fb.remote_path.clone(), fb.show_hidden, fb.sort,
                                 ));
                             }
                         } else {
@@ -676,13 +696,13 @@ fn run_tui(mut app: App) -> Result<()> {
                     // Rebuild display list so frecency sort and LAST column reflect the transfer
                     app.apply_sort();
                 }
-                if let Some((fb_alias, askpass_fb, path, show_hidden)) = refresh_remote {
+                if let Some((fb_alias, askpass_fb, path, show_hidden, sort)) = refresh_remote {
                     let config_path = app.reload.config_path.clone();
                     let has_tunnel = app.active_tunnels.contains_key(&fb_alias);
                     let bw = app.bw_session.clone();
                     let tx = events_tx.clone();
                     file_browser::spawn_remote_listing(
-                        fb_alias, config_path, path, show_hidden,
+                        fb_alias, config_path, path, show_hidden, sort,
                         askpass_fb, bw, has_tunnel, move |a, p, e| {
                             let _ = tx.send(AppEvent::FileBrowserListing { alias: a, path: p, entries: e });
                         },
@@ -1860,5 +1880,75 @@ fn handle_snippet_command(config: SshConfigFile, command: SnippetCommands, confi
             }
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ssh_config::model::SshConfigFile;
+
+    fn empty_app() -> App {
+        let config = SshConfigFile {
+            elements: Vec::new(),
+            path: std::path::PathBuf::from("/dev/null"),
+            crlf: false,
+        };
+        App::new(config)
+    }
+
+    #[test]
+    fn test_sync_summary_still_syncing() {
+        let mut app = empty_app();
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        app.syncing_providers.insert("aws".to_string(), cancel);
+        app.sync_done.push("DigitalOcean".to_string());
+        set_sync_summary(&mut app);
+        let status = app.status.as_ref().unwrap();
+        assert_eq!(status.text, "Synced: DigitalOcean...");
+        assert!(!status.is_error);
+        // sync_done should NOT be cleared while still syncing
+        assert_eq!(app.sync_done.len(), 1);
+    }
+
+    #[test]
+    fn test_sync_summary_all_done() {
+        let mut app = empty_app();
+        app.sync_done.push("AWS".to_string());
+        app.sync_done.push("Hetzner".to_string());
+        set_sync_summary(&mut app);
+        let status = app.status.as_ref().unwrap();
+        assert_eq!(status.text, "Synced: AWS, Hetzner");
+        assert!(!status.is_error);
+        // sync_done should be cleared when all done
+        assert!(app.sync_done.is_empty());
+        assert!(!app.sync_had_errors);
+    }
+
+    #[test]
+    fn test_sync_summary_with_errors() {
+        let mut app = empty_app();
+        app.sync_done.push("AWS".to_string());
+        app.sync_had_errors = true;
+        set_sync_summary(&mut app);
+        let status = app.status.as_ref().unwrap();
+        assert_eq!(status.text, "Synced: AWS");
+        assert!(status.is_error);
+        // Error flag should be reset when batch completes
+        assert!(!app.sync_had_errors);
+    }
+
+    #[test]
+    fn test_sync_summary_errors_persist_while_syncing() {
+        let mut app = empty_app();
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        app.syncing_providers.insert("vultr".to_string(), cancel);
+        app.sync_done.push("AWS".to_string());
+        app.sync_had_errors = true;
+        set_sync_summary(&mut app);
+        let status = app.status.as_ref().unwrap();
+        assert!(status.is_error);
+        // Error flag should persist while still syncing
+        assert!(app.sync_had_errors);
     }
 }

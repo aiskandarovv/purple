@@ -6,7 +6,7 @@ use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, Paragraph, Stat
 
 use super::theme;
 use crate::app::App;
-use crate::file_browser::{BrowserPane, FileBrowserState};
+use crate::file_browser::{BrowserPane, BrowserSort, FileBrowserState};
 
 pub fn render(frame: &mut Frame, app: &mut App) {
     let fb = match app.file_browser.as_mut() {
@@ -157,11 +157,22 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     footer_spans.push(Span::styled("^A", theme::accent_bold()));
     footer_spans.push(Span::styled(" all ", theme::muted()));
     footer_spans.push(Span::styled("\u{2502} ", theme::muted()));
+    footer_spans.push(Span::styled("s", theme::accent_bold()));
+    let sort_label = match fb.sort {
+        BrowserSort::Name => " sort:name ",
+        BrowserSort::Date => " sort:date\u{2193} ",
+        BrowserSort::DateAsc => " sort:date\u{2191} ",
+    };
+    footer_spans.push(Span::styled(sort_label, theme::muted()));
+    footer_spans.push(Span::styled("\u{2502} ", theme::muted()));
     footer_spans.push(Span::styled(".", theme::accent_bold()));
     footer_spans.push(Span::styled(" hidden ", theme::muted()));
     footer_spans.push(Span::styled("\u{2502} ", theme::muted()));
     footer_spans.push(Span::styled("R", theme::accent_bold()));
-    footer_spans.push(Span::styled(" refresh", theme::muted()));
+    footer_spans.push(Span::styled(" refresh ", theme::muted()));
+    footer_spans.push(Span::styled("\u{2502} ", theme::muted()));
+    footer_spans.push(Span::styled("Esc", theme::accent_bold()));
+    footer_spans.push(Span::styled(" close", theme::muted()));
 
     if selected_count > 0 {
         footer_spans.push(Span::styled("\u{2502} ", theme::muted()));
@@ -186,10 +197,12 @@ fn render_local_pane(frame: &mut Frame, fb: &mut FileBrowserState, area: Rect) {
     }
 
     let pane_width = area.width as usize;
+    let show_date = matches!(fb.sort, BrowserSort::Date | BrowserSort::DateAsc);
     let items = build_file_list_items(
         &fb.local_entries,
         &fb.local_selected,
         pane_width,
+        show_date,
     );
 
     let list = List::new(items)
@@ -228,10 +241,12 @@ fn render_remote_pane(frame: &mut Frame, fb: &mut FileBrowserState, area: Rect) 
     }
 
     let pane_width = area.width as usize;
+    let show_date = matches!(fb.sort, BrowserSort::Date | BrowserSort::DateAsc);
     let items = build_file_list_items(
         &fb.remote_entries,
         &fb.remote_selected,
         pane_width,
+        show_date,
     );
 
     let list = List::new(items)
@@ -248,6 +263,7 @@ fn build_file_list_items<'a>(
     entries: &[crate::file_browser::FileEntry],
     selected: &std::collections::HashSet<String>,
     pane_width: usize,
+    show_date: bool,
 ) -> Vec<ListItem<'a>> {
     let mut items = Vec::with_capacity(entries.len() + 1);
 
@@ -263,8 +279,9 @@ fn build_file_list_items<'a>(
     }
 
     let size_col_width = 9; // " 1.1 KB  "
+    let date_col_width = if show_date { 10 } else { 0 }; // " 3d ago  " / " Jan 15  "
     let prefix_width = 3; // " * " or "   "
-    let name_col = pane_width.saturating_sub(size_col_width + prefix_width);
+    let name_col = pane_width.saturating_sub(size_col_width + date_col_width + prefix_width);
 
     for entry in entries {
         let is_selected = selected.contains(&entry.name);
@@ -297,12 +314,24 @@ fn build_file_list_items<'a>(
             Style::default()
         };
 
-        let line = Line::from(vec![
+        let mut spans = vec![
             Span::styled(prefix.to_string(), if is_selected { theme::accent_bold() } else { Style::default() }),
             Span::styled(name_padded, name_style),
             Span::styled(size_str, theme::muted()),
-        ]);
-        items.push(ListItem::new(line));
+        ];
+
+        if show_date {
+            let date_str = match entry.modified {
+                Some(ts) => {
+                    let s = crate::file_browser::format_relative_time(ts);
+                    format!("{:>9} ", s)
+                }
+                None => " ".repeat(date_col_width),
+            };
+            spans.push(Span::styled(date_str, theme::muted()));
+        }
+
+        items.push(ListItem::new(Line::from(spans)));
     }
     items
 }

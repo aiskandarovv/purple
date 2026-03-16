@@ -22,7 +22,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     let title = Span::styled(" Cheat Sheet ", theme::brand());
     let author = Line::from(Span::styled(
-        " Eric Kochen · github.com/erickochen/purple ",
+        " github.com/erickochen/purple ",
         theme::muted(),
     ));
     let version = Line::from(vec![
@@ -31,7 +31,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             theme::version(),
         ),
         Span::styled(
-            format!(" ({}) ", env!("PURPLE_BUILD_DATE")),
+            format!(" (built {}) ", env!("PURPLE_BUILD_DATE")),
             theme::muted(),
         ),
     ]);
@@ -87,13 +87,13 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             Span::styled(" close", theme::muted()),
         ]
     };
-    super::render_footer_with_status(frame, rows[1], spans, app);
+    frame.render_widget(Paragraph::new(Line::from(spans)), rows[1]);
 }
 
 fn left_column() -> Vec<Line<'static>> {
     vec![
         Line::from(""),
-        section_header("HOST LIST"),
+        section_header("NAVIGATION"),
         help_line(" j/k       ", "up / down"),
         help_line(" PgDn/PgUp ", "page down / up"),
         help_line(" Enter     ", "connect to host"),
@@ -101,6 +101,25 @@ fn left_column() -> Vec<Line<'static>> {
         help_line(" #         ", "filter by tag"),
         help_line(" s         ", "cycle sort mode"),
         help_line(" g         ", "group by provider"),
+        help_line(" v         ", "toggle detail panel"),
+        Line::from(""),
+        section_header("SEARCH SYNTAX"),
+        help_line(" tag:name  ", "fuzzy tag filter"),
+        help_line(" tag=name  ", "exact tag filter"),
+        Line::from(""),
+        section_header("FORMS"),
+        help_line(" Tab       ", "next field"),
+        help_line(" Shift+Tab ", "previous field"),
+        help_line(" Enter     ", "save / open picker"),
+        help_line(" ^D        ", "set global default"),
+        help_line(" Esc       ", "cancel"),
+    ]
+}
+
+fn middle_column() -> Vec<Line<'static>> {
+    vec![
+        Line::from(""),
+        section_header("HOSTS"),
         help_line(" a         ", "add host"),
         help_line(" e         ", "edit host"),
         help_line(" d         ", "delete host"),
@@ -108,14 +127,6 @@ fn left_column() -> Vec<Line<'static>> {
         help_line(" t         ", "tag host (inline)"),
         help_line(" u         ", "undo delete"),
         help_line(" i         ", "inspect directives"),
-        help_line(" v         ", "toggle detail panel"),
-    ]
-}
-
-fn middle_column() -> Vec<Line<'static>> {
-    vec![
-        Line::from(""),
-        section_header("HOST LIST (continued)"),
         help_line(" y         ", "copy ssh command"),
         help_line(" x         ", "copy config block"),
         help_line(" p / P     ", "ping host / all"),
@@ -126,13 +137,6 @@ fn middle_column() -> Vec<Line<'static>> {
         help_line(" T         ", "tunnels for host"),
         help_line(" S         ", "cloud providers"),
         help_line(" K         ", "SSH keys"),
-        Line::from(""),
-        section_header("FORMS"),
-        help_line(" Tab       ", "next field"),
-        help_line(" Shift+Tab ", "previous field"),
-        help_line(" Enter     ", "save / open picker"),
-        help_line(" ^D        ", "set global default"),
-        help_line(" Esc       ", "cancel"),
     ]
 }
 
@@ -147,11 +151,12 @@ fn right_column() -> Vec<Line<'static>> {
         help_line(" ^Space    ", "select / deselect"),
         help_line(" ^A        ", "select all / none"),
         help_line(" .         ", "toggle hidden files"),
+        help_line(" s         ", "cycle sort mode"),
         help_line(" R         ", "refresh both panes"),
         Line::from(""),
-        section_header("SEARCH"),
-        help_line(" tag:name  ", "fuzzy tag filter"),
-        help_line(" tag=name  ", "exact tag filter"),
+        Line::from(""),
+        Line::from(""),
+        Line::from(""),
         Line::from(""),
         Line::from(""),
         Line::from(""),

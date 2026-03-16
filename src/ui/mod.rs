@@ -44,79 +44,83 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     match &app.screen {
         Screen::HostList => host_list::render(frame, app),
         Screen::AddHost | Screen::EditHost { .. } => {
-            host_list::render(frame, app);
+            render_host_list_without_status(frame, app);
             host_form::render(frame, app);
         }
         Screen::ConfirmDelete { alias } => {
             let alias = alias.clone();
-            host_list::render(frame, app);
+            render_host_list_without_status(frame, app);
             confirm_dialog::render(frame, app, &alias);
         }
         Screen::Help => {
-            host_list::render(frame, app);
+            render_host_list_without_status(frame, app);
             help::render(frame, app);
         }
         Screen::KeyList => {
-            host_list::render(frame, app);
+            render_host_list_without_status(frame, app);
             key_list::render(frame, app);
         }
         Screen::KeyDetail { index } => {
             let index = *index;
-            host_list::render(frame, app);
+            render_host_list_without_status(frame, app);
             key_list::render(frame, app);
             key_detail::render(frame, app, index);
         }
         Screen::HostDetail { index } => {
             let index = *index;
-            host_list::render(frame, app);
+            render_host_list_without_status(frame, app);
             host_detail::render(frame, app, index);
         }
         Screen::TagPicker => {
-            host_list::render(frame, app);
+            render_host_list_without_status(frame, app);
             tag_picker::render(frame, app);
         }
         Screen::Providers => {
-            host_list::render(frame, app);
+            render_host_list_without_status(frame, app);
             provider_list::render_provider_list(frame, app);
         }
         Screen::ProviderForm { provider } => {
             let provider = provider.clone();
-            host_list::render(frame, app);
+            render_host_list_without_status(frame, app);
             provider_list::render_provider_form(frame, app, &provider);
         }
         Screen::TunnelList { alias } => {
             let alias = alias.clone();
-            host_list::render(frame, app);
+            render_host_list_without_status(frame, app);
             tunnel_list::render(frame, app, &alias);
         }
         Screen::TunnelForm { alias, .. } => {
             let alias = alias.clone();
-            host_list::render(frame, app);
+            render_host_list_without_status(frame, app);
             tunnel_list::render(frame, app, &alias);
             tunnel_form::render(frame, app);
         }
         Screen::SnippetPicker { .. } => {
-            host_list::render(frame, app);
+            render_host_list_without_status(frame, app);
             snippet_picker::render(frame, app);
         }
         Screen::SnippetForm { .. } => {
-            host_list::render(frame, app);
+            render_host_list_without_status(frame, app);
             snippet_picker::render(frame, app);
             snippet_form::render(frame, app);
         }
         Screen::ConfirmHostKeyReset { hostname, .. } => {
             let hostname = hostname.clone();
-            host_list::render(frame, app);
+            render_host_list_without_status(frame, app);
             confirm_dialog::render_host_key_reset(frame, app, &hostname);
         }
         Screen::FileBrowser { .. } => {
-            // Hide status from host list footer so it only shows in the overlay
-            let status = app.status.take();
-            host_list::render(frame, app);
-            app.status = status;
+            render_host_list_without_status(frame, app);
             file_browser::render(frame, app);
         }
     }
+}
+
+/// Render the host list background without status message in the footer.
+fn render_host_list_without_status(frame: &mut Frame, app: &mut App) {
+    let status = app.status.take();
+    host_list::render(frame, app);
+    app.status = status;
 }
 
 /// Render footer with shortcuts always visible and optional status right-aligned.

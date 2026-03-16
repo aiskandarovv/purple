@@ -4,9 +4,9 @@ fn main() {
 }
 
 fn time_now() -> String {
-    // UTC date in YYYY-MM-DD format without external crates
+    // UTC date in "DD Mon YYYY" format (unambiguous across locales)
     let output = std::process::Command::new("date")
-        .args(["-u", "+%Y-%m-%d"])
+        .args(["-u", "+%-d %b %Y"])
         .output()
         .expect("failed to run date");
     String::from_utf8(output.stdout)

@@ -116,11 +116,11 @@ pub fn render_provider_list(frame: &mut Frame, app: &mut App) {
         ], app);
     } else {
         super::render_footer_with_status(frame, chunks[1], vec![
-            Span::styled(" s", theme::accent_bold()),
-            Span::styled(" sync ", theme::muted()),
-            Span::styled("\u{2502} ", theme::muted()),
             Span::styled(" Enter", theme::primary_action()),
             Span::styled(" configure ", theme::muted()),
+            Span::styled("\u{2502} ", theme::muted()),
+            Span::styled("s", theme::accent_bold()),
+            Span::styled(" sync ", theme::muted()),
             Span::styled("\u{2502} ", theme::muted()),
             Span::styled("d", theme::accent_bold()),
             Span::styled(" remove ", theme::muted()),
@@ -486,8 +486,11 @@ fn render_region_picker_overlay(frame: &mut Frame, app: &mut App) {
         Span::styled(" Space", theme::primary_action()),
         Span::styled(" toggle ", theme::muted()),
         Span::styled("\u{2502} ", theme::muted()),
-        Span::styled("Enter/Esc", theme::accent_bold()),
-        Span::styled(" done", theme::muted()),
+        Span::styled("Enter", theme::accent_bold()),
+        Span::styled(" done ", theme::muted()),
+        Span::styled("\u{2502} ", theme::muted()),
+        Span::styled("Esc", theme::accent_bold()),
+        Span::styled(" back", theme::muted()),
     ], app);
 }
 

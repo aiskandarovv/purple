@@ -379,7 +379,7 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
                     .unwrap_or_else(|| {
                         (std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/")), String::new())
                     });
-                let (local_entries, local_error) = match crate::file_browser::list_local(&local_path, false) {
+                let (local_entries, local_error) = match crate::file_browser::list_local(&local_path, false, crate::file_browser::BrowserSort::Name) {
                     Ok(entries) => (entries, None),
                     Err(e) => (Vec::new(), Some(e.to_string())),
                 };
@@ -401,6 +401,7 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
                     remote_error: None,
                     remote_loading: true,
                     show_hidden: false,
+                    sort: crate::file_browser::BrowserSort::Name,
                     confirm_copy: None,
                     transferring: None,
                     transfer_error: None,
@@ -433,7 +434,9 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
                         remote
                     };
                     crate::file_browser::spawn_remote_listing(
-                        alias, config_path, home, false, askpass, bw, has_tunnel, fb_send(tx),
+                        alias, config_path, home, false,
+                        crate::file_browser::BrowserSort::Name,
+                        askpass, bw, has_tunnel, fb_send(tx),
                     );
                 });
             }
@@ -1016,6 +1019,7 @@ fn handle_provider_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<A
                         app.set_status(format!("Failed to save: {}", e), true);
                     } else {
                         app.sync_history.remove(name.as_str());
+                        crate::app::SyncRecord::save_all(&app.sync_history);
                         let display_name = crate::providers::provider_display_name(name.as_str());
                         app.set_status(
                             format!("Removed {} configuration. Synced hosts remain in your SSH config.", display_name),
@@ -2326,7 +2330,7 @@ fn handle_file_browser(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<Ap
                         Ok(r) if r.status.success() => (true, String::new()),
                         Ok(r) => {
                             let code = r.status.code().unwrap_or(1);
-                            let err = crate::file_browser::extract_scp_error(&r.stderr_output);
+                            let err = crate::file_browser::filter_ssh_warnings(&r.stderr_output);
                             if err.is_empty() {
                                 (false, format!("Copy failed (exit code {}).", code))
                             } else {
@@ -2426,7 +2430,7 @@ fn handle_file_browser(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<Ap
                         // ".." - go up
                         if let Some(parent) = fb.local_path.parent() {
                             fb.local_path = parent.to_path_buf();
-                            match crate::file_browser::list_local(&fb.local_path, fb.show_hidden) {
+                            match crate::file_browser::list_local(&fb.local_path, fb.show_hidden, fb.sort) {
                                 Ok(entries) => { fb.local_entries = entries; fb.local_error = None; }
                                 Err(e) => { fb.local_entries = Vec::new(); fb.local_error = Some(e.to_string()); }
                             }
@@ -2451,7 +2455,7 @@ fn handle_file_browser(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<Ap
                         } else if entry.is_dir {
                             // No selection: navigate into directory
                             fb.local_path = fb.local_path.join(&entry.name);
-                            match crate::file_browser::list_local(&fb.local_path, fb.show_hidden) {
+                            match crate::file_browser::list_local(&fb.local_path, fb.show_hidden, fb.sort) {
                                 Ok(entries) => { fb.local_entries = entries; fb.local_error = None; }
                                 Err(e) => { fb.local_entries = Vec::new(); fb.local_error = Some(e.to_string()); }
                             }
@@ -2501,8 +2505,9 @@ fn handle_file_browser(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<Ap
                             let has_tunnel = app.active_tunnels.contains_key(&alias);
                             let bw = app.bw_session.clone();
                             let show_hidden = fb.show_hidden;
+                            let sort = fb.sort;
                             crate::file_browser::spawn_remote_listing(
-                                alias, config_path, parent, show_hidden,
+                                alias, config_path, parent, show_hidden, sort,
                                 askpass, bw, has_tunnel, fb_send(events_tx.clone()),
                             );
                         }
@@ -2537,8 +2542,9 @@ fn handle_file_browser(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<Ap
                             let has_tunnel = app.active_tunnels.contains_key(&alias);
                             let bw = app.bw_session.clone();
                             let show_hidden = fb.show_hidden;
+                            let sort = fb.sort;
                             crate::file_browser::spawn_remote_listing(
-                                alias, config_path, new_path, show_hidden,
+                                alias, config_path, new_path, show_hidden, sort,
                                 askpass, bw, has_tunnel, fb_send(events_tx.clone()),
                             );
                         } else {
@@ -2559,7 +2565,7 @@ fn handle_file_browser(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<Ap
                 BrowserPane::Local => {
                     if let Some(parent) = fb.local_path.parent() {
                         fb.local_path = parent.to_path_buf();
-                        match crate::file_browser::list_local(&fb.local_path, fb.show_hidden) {
+                        match crate::file_browser::list_local(&fb.local_path, fb.show_hidden, fb.sort) {
                             Ok(entries) => { fb.local_entries = entries; fb.local_error = None; }
                             Err(e) => { fb.local_entries = Vec::new(); fb.local_error = Some(e.to_string()); }
                         }
@@ -2592,8 +2598,9 @@ fn handle_file_browser(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<Ap
                         let has_tunnel = app.active_tunnels.contains_key(&alias);
                         let bw = app.bw_session.clone();
                         let show_hidden = fb.show_hidden;
+                        let sort = fb.sort;
                         crate::file_browser::spawn_remote_listing(
-                            alias, config_path, parent, show_hidden,
+                            alias, config_path, parent, show_hidden, sort,
                             askpass, bw, has_tunnel, fb_send(events_tx.clone()),
                         );
                     }
@@ -2653,7 +2660,7 @@ fn handle_file_browser(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<Ap
         KeyCode::Char('.') => {
             fb.show_hidden = !fb.show_hidden;
             // Refresh local
-            match crate::file_browser::list_local(&fb.local_path, fb.show_hidden) {
+            match crate::file_browser::list_local(&fb.local_path, fb.show_hidden, fb.sort) {
                 Ok(entries) => { fb.local_entries = entries; fb.local_error = None; }
                 Err(e) => { fb.local_entries = Vec::new(); fb.local_error = Some(e.to_string()); }
             }
@@ -2673,15 +2680,16 @@ fn handle_file_browser(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<Ap
                 let bw = app.bw_session.clone();
                 let path = fb.remote_path.clone();
                 let show_hidden = fb.show_hidden;
+                let sort = fb.sort;
                 crate::file_browser::spawn_remote_listing(
-                    alias, config_path, path, show_hidden,
+                    alias, config_path, path, show_hidden, sort,
                     askpass, bw, has_tunnel, fb_send(events_tx.clone()),
                 );
             }
         }
         KeyCode::Char('R') => {
             // Refresh both panes
-            match crate::file_browser::list_local(&fb.local_path, fb.show_hidden) {
+            match crate::file_browser::list_local(&fb.local_path, fb.show_hidden, fb.sort) {
                 Ok(entries) => { fb.local_entries = entries; fb.local_error = None; }
                 Err(e) => { fb.local_entries = Vec::new(); fb.local_error = Some(e.to_string()); }
             }
@@ -2700,11 +2708,25 @@ fn handle_file_browser(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<Ap
                 let bw = app.bw_session.clone();
                 let path = fb.remote_path.clone();
                 let show_hidden = fb.show_hidden;
+                let sort = fb.sort;
                 crate::file_browser::spawn_remote_listing(
-                    alias, config_path, path, show_hidden,
+                    alias, config_path, path, show_hidden, sort,
                     askpass, bw, has_tunnel, fb_send(events_tx.clone()),
                 );
             }
+        }
+        KeyCode::Char('s') => {
+            // Toggle sort mode
+            fb.sort = match fb.sort {
+                crate::file_browser::BrowserSort::Name => crate::file_browser::BrowserSort::Date,
+                crate::file_browser::BrowserSort::Date => crate::file_browser::BrowserSort::DateAsc,
+                crate::file_browser::BrowserSort::DateAsc => crate::file_browser::BrowserSort::Name,
+            };
+            // Re-sort entries in place
+            crate::file_browser::sort_entries(&mut fb.local_entries, fb.sort);
+            crate::file_browser::sort_entries(&mut fb.remote_entries, fb.sort);
+            fb.local_list_state.select(Some(0));
+            fb.remote_list_state.select(Some(0));
         }
         _ => {}
     }

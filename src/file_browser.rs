@@ -4,12 +4,22 @@ use std::process::{Command, ExitStatus, Stdio};
 
 use ratatui::widgets::ListState;
 
+/// Sort mode for file browser panes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BrowserSort {
+    Name,
+    Date,
+    DateAsc,
+}
+
 /// A file or directory entry in the browser.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FileEntry {
     pub name: String,
     pub is_dir: bool,
     pub size: Option<u64>,
+    /// Modification time as Unix timestamp (seconds since epoch).
+    pub modified: Option<i64>,
 }
 
 /// Which pane is active.
@@ -46,6 +56,7 @@ pub struct FileBrowserState {
     pub remote_loading: bool,
     // Options
     pub show_hidden: bool,
+    pub sort: BrowserSort,
     // Copy confirmation
     pub confirm_copy: Option<CopyRequest>,
     // Transfer in progress
@@ -57,8 +68,8 @@ pub struct FileBrowserState {
 }
 
 /// List local directory entries.
-/// Sorts: directories first, then alphabetical. Filters dotfiles based on show_hidden.
-pub fn list_local(path: &Path, show_hidden: bool) -> anyhow::Result<Vec<FileEntry>> {
+/// Sorts: directories first, then by name or date. Filters dotfiles based on show_hidden.
+pub fn list_local(path: &Path, show_hidden: bool, sort: BrowserSort) -> anyhow::Result<Vec<FileEntry>> {
     let mut entries = Vec::new();
     for entry in std::fs::read_dir(path)? {
         let entry = entry?;
@@ -69,19 +80,51 @@ pub fn list_local(path: &Path, show_hidden: bool) -> anyhow::Result<Vec<FileEntr
         let metadata = entry.metadata()?;
         let is_dir = metadata.is_dir();
         let size = if is_dir { None } else { Some(metadata.len()) };
-        entries.push(FileEntry { name, is_dir, size });
+        let modified = metadata.modified().ok().and_then(|t| {
+            t.duration_since(std::time::UNIX_EPOCH)
+                .ok()
+                .map(|d| d.as_secs() as i64)
+        });
+        entries.push(FileEntry { name, is_dir, size, modified });
     }
-    entries.sort_by(|a, b| {
-        b.is_dir.cmp(&a.is_dir).then_with(|| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()))
-    });
+    sort_entries(&mut entries, sort);
     Ok(entries)
+}
+
+/// Sort file entries: directories first, then by the chosen mode.
+pub fn sort_entries(entries: &mut [FileEntry], sort: BrowserSort) {
+    match sort {
+        BrowserSort::Name => {
+            entries.sort_by(|a, b| {
+                b.is_dir.cmp(&a.is_dir).then_with(|| {
+                    a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase())
+                })
+            });
+        }
+        BrowserSort::Date => {
+            entries.sort_by(|a, b| {
+                b.is_dir.cmp(&a.is_dir).then_with(|| {
+                    // Newest first: reverse order
+                    b.modified.unwrap_or(0).cmp(&a.modified.unwrap_or(0))
+                })
+            });
+        }
+        BrowserSort::DateAsc => {
+            entries.sort_by(|a, b| {
+                b.is_dir.cmp(&a.is_dir).then_with(|| {
+                    // Oldest first; unknown dates sort to the end
+                    a.modified.unwrap_or(i64::MAX).cmp(&b.modified.unwrap_or(i64::MAX))
+                })
+            });
+        }
+    }
 }
 
 /// Parse `ls -lhAL` output into FileEntry list.
 /// With -L, symlinks are dereferenced so their target type is shown directly.
 /// Recognizes directories via 'd' permission prefix. Skips the "total" line.
 /// Broken symlinks are omitted by ls -L (they cannot be transferred anyway).
-pub fn parse_ls_output(output: &str, show_hidden: bool) -> Vec<FileEntry> {
+pub fn parse_ls_output(output: &str, show_hidden: bool, sort: BrowserSort) -> Vec<FileEntry> {
     let mut entries = Vec::new();
     for line in output.lines() {
         let line = line.trim();
@@ -124,15 +167,16 @@ pub fn parse_ls_output(output: &str, show_hidden: bool) -> Vec<FileEntry> {
         } else {
             Some(parse_human_size(parts[4]))
         };
+        // Parse date from month/day/time-or-year (parts[5..=7])
+        let modified = parse_ls_date(parts[5], parts[6], parts[7]);
         entries.push(FileEntry {
             name: name.to_string(),
             is_dir,
             size,
+            modified,
         });
     }
-    entries.sort_by(|a, b| {
-        b.is_dir.cmp(&a.is_dir).then_with(|| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()))
-    });
+    sort_entries(&mut entries, sort);
     entries
 }
 
@@ -157,6 +201,145 @@ fn parse_human_size(s: &str) -> u64 {
     };
     let num: f64 = num_str.parse().unwrap_or(0.0);
     (num * multiplier as f64) as u64
+}
+
+/// Parse the date fields from `ls -l` with `LC_ALL=C`.
+/// Recent files: "Jan 1 12:34" (month day HH:MM).
+/// Old files: "Jan 1 2024" (month day year).
+/// Returns approximate Unix timestamp or None if unparseable.
+fn parse_ls_date(month_str: &str, day_str: &str, time_or_year: &str) -> Option<i64> {
+    let month = match month_str {
+        "Jan" => 0, "Feb" => 1, "Mar" => 2, "Apr" => 3,
+        "May" => 4, "Jun" => 5, "Jul" => 6, "Aug" => 7,
+        "Sep" => 8, "Oct" => 9, "Nov" => 10, "Dec" => 11,
+        _ => return None,
+    };
+    let day: i64 = day_str.parse().ok()?;
+    if !(1..=31).contains(&day) {
+        return None;
+    }
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    let now_year = epoch_to_year(now);
+
+    if time_or_year.contains(':') {
+        // Recent format: "HH:MM"
+        let mut parts = time_or_year.splitn(2, ':');
+        let hour: i64 = parts.next()?.parse().ok()?;
+        let min: i64 = parts.next()?.parse().ok()?;
+        // Determine year: if month/day is in the future, it's last year
+        let mut year = now_year;
+        let approx = approximate_epoch(year, month, day, hour, min);
+        if approx > now + 86400 {
+            year -= 1;
+        }
+        Some(approximate_epoch(year, month, day, hour, min))
+    } else {
+        // Old format: "2024" (year)
+        let year: i64 = time_or_year.parse().ok()?;
+        if !(1970..=2100).contains(&year) {
+            return None;
+        }
+        Some(approximate_epoch(year, month, day, 0, 0))
+    }
+}
+
+/// Rough Unix timestamp from date components (no leap second precision needed).
+fn approximate_epoch(year: i64, month: i64, day: i64, hour: i64, min: i64) -> i64 {
+    // Days from 1970-01-01 to start of year
+    let y = year - 1970;
+    let mut days = y * 365 + (y + 1) / 4; // approximate leap years
+    // Days to start of month (non-leap approximation, close enough for sorting)
+    let month_days = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
+    days += month_days[month as usize];
+    // Add leap day if applicable
+    if month > 1 && year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
+        days += 1;
+    }
+    days += day - 1;
+    days * 86400 + hour * 3600 + min * 60
+}
+
+/// Convert epoch seconds to a year (correctly handles year boundaries).
+fn epoch_to_year(ts: i64) -> i64 {
+    let mut y = 1970 + ts / 31_557_600;
+    if approximate_epoch(y, 0, 1, 0, 0) > ts {
+        y -= 1;
+    } else if approximate_epoch(y + 1, 0, 1, 0, 0) <= ts {
+        y += 1;
+    }
+    y
+}
+
+fn is_leap_year(year: i64) -> bool {
+    year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
+}
+
+/// Format a Unix timestamp as a relative or short date string.
+/// Returns strings like "2m ago", "3h ago", "5d ago", "Jan 15", "Mar 2024".
+pub fn format_relative_time(ts: i64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    let diff = now - ts;
+    if diff < 0 {
+        // Future timestamp (clock skew), just show date
+        return format_short_date(ts);
+    }
+    if diff < 60 {
+        return "just now".to_string();
+    }
+    if diff < 3600 {
+        return format!("{}m ago", diff / 60);
+    }
+    if diff < 86400 {
+        return format!("{}h ago", diff / 3600);
+    }
+    if diff < 86400 * 30 {
+        return format!("{}d ago", diff / 86400);
+    }
+    format_short_date(ts)
+}
+
+/// Format a timestamp as "Mon DD" (same year) or "Mon YYYY" (different year).
+fn format_short_date(ts: i64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    let now_year = epoch_to_year(now);
+    let ts_year = epoch_to_year(ts);
+
+    let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+    // Approximate month and day from day-of-year
+    let year_start = approximate_epoch(ts_year, 0, 1, 0, 0);
+    let day_of_year = ((ts - year_start) / 86400).max(0) as usize;
+    let feb = if is_leap_year(ts_year) { 29 } else { 28 };
+    let month_lengths = [31, feb, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut m = 0;
+    let mut remaining = day_of_year;
+    for (i, &len) in month_lengths.iter().enumerate() {
+        if remaining < len {
+            m = i;
+            break;
+        }
+        remaining -= len;
+        m = i + 1;
+    }
+    let m = m.min(11);
+    let d = remaining + 1;
+
+    if ts_year == now_year {
+        format!("{} {:>2}", months[m], d)
+    } else {
+        format!("{} {}", months[m], ts_year)
+    }
 }
 
 /// Shell-escape a path with single quotes: /path -> '/path'
@@ -185,16 +368,23 @@ pub fn get_remote_home(
     if result.status.success() {
         Ok(result.stdout.trim().to_string())
     } else {
-        anyhow::bail!("Failed to get remote home: {}", result.stderr.trim())
+        let msg = filter_ssh_warnings(result.stderr.trim());
+        if msg.is_empty() {
+            anyhow::bail!("Failed to connect.")
+        } else {
+            anyhow::bail!("{}", msg)
+        }
     }
 }
 
 /// Fetch remote directory listing synchronously (used by spawn_remote_listing).
+#[allow(clippy::too_many_arguments)]
 pub fn fetch_remote_listing(
     alias: &str,
     config_path: &Path,
     remote_path: &str,
     show_hidden: bool,
+    sort: BrowserSort,
     askpass: Option<&str>,
     bw_session: Option<&str>,
     has_tunnel: bool,
@@ -210,9 +400,9 @@ pub fn fetch_remote_listing(
         has_tunnel,
     );
     match result {
-        Ok(r) if r.status.success() => Ok(parse_ls_output(&r.stdout, show_hidden)),
+        Ok(r) if r.status.success() => Ok(parse_ls_output(&r.stdout, show_hidden, sort)),
         Ok(r) => {
-            let msg = r.stderr.trim().to_string();
+            let msg = filter_ssh_warnings(r.stderr.trim());
             if msg.is_empty() {
                 Err(format!("ls exited with code {}.", r.status.code().unwrap_or(1)))
             } else {
@@ -231,6 +421,7 @@ pub fn spawn_remote_listing<F>(
     config_path: PathBuf,
     remote_path: String,
     show_hidden: bool,
+    sort: BrowserSort,
     askpass: Option<String>,
     bw_session: Option<String>,
     has_tunnel: bool,
@@ -244,6 +435,7 @@ pub fn spawn_remote_listing<F>(
             &config_path,
             &remote_path,
             show_hidden,
+            sort,
             askpass.as_deref(),
             bw_session.as_deref(),
             has_tunnel,
@@ -314,7 +506,7 @@ pub fn run_scp(
 
 /// Filter SSH warning noise from stderr, keeping only actionable error lines.
 /// Strips lines like "** WARNING: connection is not using a post-quantum key exchange".
-pub fn extract_scp_error(stderr: &str) -> String {
+pub fn filter_ssh_warnings(stderr: &str) -> String {
     stderr
         .lines()
         .filter(|line| {
@@ -422,7 +614,7 @@ drwxr-xr-x  2 user user 4096 Jan  1 12:00 subdir
 -rw-r--r--  1 user user  512 Jan  1 12:00 file.txt
 -rw-r--r--  1 user user 1.1K Jan  1 12:00 big.log
 ";
-        let entries = parse_ls_output(output, true);
+        let entries = parse_ls_output(output, true, BrowserSort::Name);
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[0].name, "subdir");
         assert!(entries[0].is_dir);
@@ -443,11 +635,11 @@ total 8
 -rw-r--r--  1 user user  100 Jan  1 12:00 .hidden
 -rw-r--r--  1 user user  200 Jan  1 12:00 visible
 ";
-        let entries = parse_ls_output(output, false);
+        let entries = parse_ls_output(output, false, BrowserSort::Name);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "visible");
 
-        let entries = parse_ls_output(output, true);
+        let entries = parse_ls_output(output, true, BrowserSort::Name);
         assert_eq!(entries.len(), 2);
     }
 
@@ -458,7 +650,7 @@ total 8
 total 4
 -rw-r--r--  1 user user   11 Jan  1 12:00 link
 ";
-        let entries = parse_ls_output(output, true);
+        let entries = parse_ls_output(output, true, BrowserSort::Name);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "link");
         assert!(!entries[0].is_dir);
@@ -471,7 +663,7 @@ total 4
 total 4
 drwxr-xr-x  3 user user 4096 Jan  1 12:00 link
 ";
-        let entries = parse_ls_output(output, true);
+        let entries = parse_ls_output(output, true, BrowserSort::Name);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "link");
         assert!(entries[0].is_dir);
@@ -483,7 +675,7 @@ drwxr-xr-x  3 user user 4096 Jan  1 12:00 link
 total 4
 -rw-r--r--  1 user user  100 Jan  1 12:00 my file name.txt
 ";
-        let entries = parse_ls_output(output, true);
+        let entries = parse_ls_output(output, true, BrowserSort::Name);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "my file name.txt");
     }
@@ -491,7 +683,7 @@ total 4
     #[test]
     fn test_parse_ls_empty() {
         let output = "total 0\n";
-        let entries = parse_ls_output(output, true);
+        let entries = parse_ls_output(output, true, BrowserSort::Name);
         assert!(entries.is_empty());
     }
 
@@ -603,7 +795,7 @@ total 4
         std::fs::write(base.join("afile.txt"), "hello").unwrap();
         std::fs::write(base.join("bfile.txt"), "world").unwrap();
 
-        let entries = list_local(&base, true).unwrap();
+        let entries = list_local(&base, true, BrowserSort::Name).unwrap();
         assert_eq!(entries.len(), 3);
         assert!(entries[0].is_dir);
         assert_eq!(entries[0].name, "zdir");
@@ -621,42 +813,427 @@ total 4
         std::fs::write(base.join(".hidden"), "").unwrap();
         std::fs::write(base.join("visible"), "").unwrap();
 
-        let entries = list_local(&base, false).unwrap();
+        let entries = list_local(&base, false, BrowserSort::Name).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "visible");
 
-        let entries = list_local(&base, true).unwrap();
+        let entries = list_local(&base, true, BrowserSort::Name).unwrap();
         assert_eq!(entries.len(), 2);
 
         let _ = std::fs::remove_dir_all(&base);
     }
 
     // =========================================================================
-    // extract_scp_error
+    // filter_ssh_warnings
     // =========================================================================
 
     #[test]
-    fn test_extract_scp_error_filters_warnings() {
+    fn test_filter_ssh_warnings_filters_warnings() {
         let stderr = "\
 ** WARNING: connection is not using a post-quantum key exchange algorithm.
 ** This session may be vulnerable to \"store now, decrypt later\" attacks.
 ** The server may need to be upgraded. See https://openssh.com/pq.html
 scp: '/root/file.rpm': No such file or directory";
         assert_eq!(
-            extract_scp_error(stderr),
+            filter_ssh_warnings(stderr),
             "scp: '/root/file.rpm': No such file or directory"
         );
     }
 
     #[test]
-    fn test_extract_scp_error_keeps_plain_error() {
+    fn test_filter_ssh_warnings_keeps_plain_error() {
         let stderr = "scp: /etc/shadow: Permission denied\n";
-        assert_eq!(extract_scp_error(stderr), "scp: /etc/shadow: Permission denied");
+        assert_eq!(filter_ssh_warnings(stderr), "scp: /etc/shadow: Permission denied");
     }
 
     #[test]
-    fn test_extract_scp_error_empty() {
-        assert_eq!(extract_scp_error(""), "");
-        assert_eq!(extract_scp_error("  \n  \n"), "");
+    fn test_filter_ssh_warnings_empty() {
+        assert_eq!(filter_ssh_warnings(""), "");
+        assert_eq!(filter_ssh_warnings("  \n  \n"), "");
+    }
+
+    #[test]
+    fn test_filter_ssh_warnings_warning_prefix() {
+        let stderr = "Warning: Permanently added '10.0.0.1' to the list of known hosts.\nPermission denied (publickey).";
+        assert_eq!(filter_ssh_warnings(stderr), "Permission denied (publickey).");
+    }
+
+    #[test]
+    fn test_filter_ssh_warnings_lowercase_see_https() {
+        let stderr = "For details, see https://openssh.com/legacy.html\nConnection refused";
+        assert_eq!(filter_ssh_warnings(stderr), "Connection refused");
+    }
+
+    #[test]
+    fn test_filter_ssh_warnings_only_warnings() {
+        let stderr = "** WARNING: connection is not using a post-quantum key exchange algorithm.\n** This session may be vulnerable to \"store now, decrypt later\" attacks.\n** The server may need to be upgraded. See https://openssh.com/pq.html";
+        assert_eq!(filter_ssh_warnings(stderr), "");
+    }
+
+    // =========================================================================
+    // approximate_epoch (known dates)
+    // =========================================================================
+
+    #[test]
+    fn test_approximate_epoch_known_dates() {
+        // 2024-01-01 00:00 UTC = 1704067200
+        let ts = approximate_epoch(2024, 0, 1, 0, 0);
+        assert_eq!(ts, 1704067200);
+        // 2000-01-01 00:00 UTC = 946684800
+        let ts = approximate_epoch(2000, 0, 1, 0, 0);
+        assert_eq!(ts, 946684800);
+        // 1970-01-01 00:00 UTC = 0
+        assert_eq!(approximate_epoch(1970, 0, 1, 0, 0), 0);
+    }
+
+    #[test]
+    fn test_approximate_epoch_leap_year() {
+        // 2024-02-29 should differ from 2024-03-01 by 86400
+        let feb29 = approximate_epoch(2024, 1, 29, 0, 0);
+        let mar01 = approximate_epoch(2024, 2, 1, 0, 0);
+        assert_eq!(mar01 - feb29, 86400);
+    }
+
+    // =========================================================================
+    // epoch_to_year
+    // =========================================================================
+
+    #[test]
+    fn test_epoch_to_year() {
+        assert_eq!(epoch_to_year(0), 1970);
+        // 2023-01-01 00:00 UTC = 1672531200
+        assert_eq!(epoch_to_year(1672531200), 2023);
+        // 2024-01-01 00:00 UTC = 1704067200
+        assert_eq!(epoch_to_year(1704067200), 2024);
+        // 2024-12-31 23:59:59
+        assert_eq!(epoch_to_year(1735689599), 2024);
+        // 2025-01-01 00:00:00
+        assert_eq!(epoch_to_year(1735689600), 2025);
+    }
+
+    // =========================================================================
+    // parse_ls_date
+    // =========================================================================
+
+    #[test]
+    fn test_parse_ls_date_recent_format() {
+        // "Jan 15 12:34" - should return a timestamp
+        let ts = parse_ls_date("Jan", "15", "12:34");
+        assert!(ts.is_some());
+        let ts = ts.unwrap();
+        // Should be within the last year
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+        assert!(ts <= now + 86400);
+        assert!(ts > now - 366 * 86400);
+    }
+
+    #[test]
+    fn test_parse_ls_date_old_format() {
+        let ts = parse_ls_date("Mar", "5", "2023");
+        assert!(ts.is_some());
+        let ts = ts.unwrap();
+        // Should be in 2023
+        assert_eq!(epoch_to_year(ts), 2023);
+    }
+
+    #[test]
+    fn test_parse_ls_date_invalid_month() {
+        assert!(parse_ls_date("Foo", "1", "12:00").is_none());
+    }
+
+    #[test]
+    fn test_parse_ls_date_invalid_day() {
+        assert!(parse_ls_date("Jan", "0", "12:00").is_none());
+        assert!(parse_ls_date("Jan", "32", "12:00").is_none());
+    }
+
+    #[test]
+    fn test_parse_ls_date_invalid_year() {
+        assert!(parse_ls_date("Jan", "1", "1969").is_none());
+    }
+
+    // =========================================================================
+    // format_relative_time
+    // =========================================================================
+
+    #[test]
+    fn test_format_relative_time_ranges() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+        assert_eq!(format_relative_time(now), "just now");
+        assert_eq!(format_relative_time(now - 30), "just now");
+        assert_eq!(format_relative_time(now - 120), "2m ago");
+        assert_eq!(format_relative_time(now - 7200), "2h ago");
+        assert_eq!(format_relative_time(now - 86400 * 3), "3d ago");
+    }
+
+    #[test]
+    fn test_format_relative_time_old_date() {
+        // A date far in the past should show short date format
+        let old = approximate_epoch(2020, 5, 15, 0, 0);
+        let result = format_relative_time(old);
+        assert!(result.contains("2020"), "Expected year in '{}' for old date", result);
+    }
+
+    #[test]
+    fn test_format_relative_time_future() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+        // Future timestamp should not panic and should show date
+        let result = format_relative_time(now + 86400 * 30);
+        assert!(!result.is_empty());
+    }
+
+    // =========================================================================
+    // format_short_date
+    // =========================================================================
+
+    #[test]
+    fn test_format_short_date_different_year() {
+        let ts = approximate_epoch(2020, 2, 15, 0, 0); // Mar 15 2020
+        let result = format_short_date(ts);
+        assert!(result.contains("2020"), "Expected year in '{}'", result);
+        assert!(result.starts_with("Mar"), "Expected Mar in '{}'", result);
+    }
+
+    #[test]
+    fn test_format_short_date_leap_year() {
+        // Mar 1 2024 (leap year, different year) should show "Mar 2024"
+        let ts = approximate_epoch(2024, 2, 1, 0, 0);
+        let result = format_short_date(ts);
+        assert!(result.starts_with("Mar"), "Expected Mar in '{}'", result);
+        assert!(result.contains("2024"), "Expected 2024 in '{}'", result);
+        // Verify Feb 29 and Mar 1 are distinct days (86400 apart)
+        let feb29 = approximate_epoch(2024, 1, 29, 12, 0);
+        let mar01 = approximate_epoch(2024, 2, 1, 12, 0);
+        let feb29_date = format_short_date(feb29);
+        let mar01_date = format_short_date(mar01);
+        assert!(feb29_date.starts_with("Feb"), "Expected Feb in '{}'", feb29_date);
+        assert!(mar01_date.starts_with("Mar"), "Expected Mar in '{}'", mar01_date);
+    }
+
+    // =========================================================================
+    // sort_entries (date mode)
+    // =========================================================================
+
+    #[test]
+    fn test_sort_entries_date_dirs_first_newest_first() {
+        let mut entries = vec![
+            FileEntry { name: "old.txt".into(), is_dir: false, size: Some(100), modified: Some(1000) },
+            FileEntry { name: "new.txt".into(), is_dir: false, size: Some(200), modified: Some(3000) },
+            FileEntry { name: "mid.txt".into(), is_dir: false, size: Some(150), modified: Some(2000) },
+            FileEntry { name: "adir".into(), is_dir: true, size: None, modified: Some(500) },
+        ];
+        sort_entries(&mut entries, BrowserSort::Date);
+        assert!(entries[0].is_dir);
+        assert_eq!(entries[0].name, "adir");
+        assert_eq!(entries[1].name, "new.txt");
+        assert_eq!(entries[2].name, "mid.txt");
+        assert_eq!(entries[3].name, "old.txt");
+    }
+
+    #[test]
+    fn test_sort_entries_name_mode() {
+        let mut entries = vec![
+            FileEntry { name: "zebra.txt".into(), is_dir: false, size: Some(100), modified: Some(3000) },
+            FileEntry { name: "alpha.txt".into(), is_dir: false, size: Some(200), modified: Some(1000) },
+            FileEntry { name: "mydir".into(), is_dir: true, size: None, modified: Some(2000) },
+        ];
+        sort_entries(&mut entries, BrowserSort::Name);
+        assert!(entries[0].is_dir);
+        assert_eq!(entries[1].name, "alpha.txt");
+        assert_eq!(entries[2].name, "zebra.txt");
+    }
+
+    // =========================================================================
+    // parse_ls_output with modified field
+    // =========================================================================
+
+    #[test]
+    fn test_parse_ls_output_populates_modified() {
+        let output = "\
+total 4
+-rw-r--r--  1 user user  512 Jan  1 12:00 file.txt
+";
+        let entries = parse_ls_output(output, true, BrowserSort::Name);
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].modified.is_some(), "modified should be populated");
+    }
+
+    #[test]
+    fn test_parse_ls_output_date_sort() {
+        // Use year format to avoid ambiguity with current date
+        let output = "\
+total 12
+-rw-r--r--  1 user user  100 Jan  1  2020 old.txt
+-rw-r--r--  1 user user  200 Jun 15  2023 new.txt
+-rw-r--r--  1 user user  150 Mar  5  2022 mid.txt
+";
+        let entries = parse_ls_output(output, true, BrowserSort::Date);
+        assert_eq!(entries.len(), 3);
+        // Should be sorted newest first (2023 > 2022 > 2020)
+        assert_eq!(entries[0].name, "new.txt");
+        assert_eq!(entries[1].name, "mid.txt");
+        assert_eq!(entries[2].name, "old.txt");
+    }
+
+    // =========================================================================
+    // list_local with modified field
+    // =========================================================================
+
+    #[test]
+    fn test_list_local_populates_modified() {
+        let base = std::env::temp_dir().join(format!("purple_fb_mtime_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(base.join("test.txt"), "hello").unwrap();
+
+        let entries = list_local(&base, true, BrowserSort::Name).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].modified.is_some(), "modified should be populated for local files");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // =========================================================================
+    // epoch_to_year boundary
+    // =========================================================================
+
+    #[test]
+    fn test_epoch_to_year_2100_boundary() {
+        let ts_2100 = approximate_epoch(2100, 0, 1, 0, 0);
+        assert_eq!(epoch_to_year(ts_2100), 2100);
+        assert_eq!(epoch_to_year(ts_2100 - 1), 2099);
+        let mid_2100 = approximate_epoch(2100, 5, 15, 12, 0);
+        assert_eq!(epoch_to_year(mid_2100), 2100);
+    }
+
+    // =========================================================================
+    // parse_ls_date edge cases
+    // =========================================================================
+
+    #[test]
+    fn test_parse_ls_date_midnight() {
+        let ts = parse_ls_date("Jan", "1", "00:00");
+        assert!(ts.is_some(), "00:00 should parse successfully");
+        let ts = ts.unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+        assert!(ts <= now + 86400);
+        assert!(ts > now - 366 * 86400);
+    }
+
+    // =========================================================================
+    // sort_entries edge cases
+    // =========================================================================
+
+    #[test]
+    fn test_sort_entries_date_with_none_modified() {
+        let mut entries = vec![
+            FileEntry { name: "known.txt".into(), is_dir: false, size: Some(100), modified: Some(5000) },
+            FileEntry { name: "unknown.txt".into(), is_dir: false, size: Some(200), modified: None },
+            FileEntry { name: "recent.txt".into(), is_dir: false, size: Some(300), modified: Some(9000) },
+        ];
+        sort_entries(&mut entries, BrowserSort::Date);
+        assert_eq!(entries[0].name, "recent.txt");
+        assert_eq!(entries[1].name, "known.txt");
+        assert_eq!(entries[2].name, "unknown.txt");
+    }
+
+    #[test]
+    fn test_sort_entries_date_asc_oldest_first() {
+        let mut entries = vec![
+            FileEntry { name: "old.txt".into(), is_dir: false, size: Some(100), modified: Some(1000) },
+            FileEntry { name: "new.txt".into(), is_dir: false, size: Some(200), modified: Some(3000) },
+            FileEntry { name: "mid.txt".into(), is_dir: false, size: Some(150), modified: Some(2000) },
+            FileEntry { name: "adir".into(), is_dir: true, size: None, modified: Some(500) },
+        ];
+        sort_entries(&mut entries, BrowserSort::DateAsc);
+        assert!(entries[0].is_dir);
+        assert_eq!(entries[0].name, "adir");
+        assert_eq!(entries[1].name, "old.txt");
+        assert_eq!(entries[2].name, "mid.txt");
+        assert_eq!(entries[3].name, "new.txt");
+    }
+
+    #[test]
+    fn test_sort_entries_date_asc_none_modified_sorts_to_end() {
+        let mut entries = vec![
+            FileEntry { name: "known.txt".into(), is_dir: false, size: Some(100), modified: Some(5000) },
+            FileEntry { name: "unknown.txt".into(), is_dir: false, size: Some(200), modified: None },
+            FileEntry { name: "old.txt".into(), is_dir: false, size: Some(300), modified: Some(1000) },
+        ];
+        sort_entries(&mut entries, BrowserSort::DateAsc);
+        assert_eq!(entries[0].name, "old.txt");
+        assert_eq!(entries[1].name, "known.txt");
+        assert_eq!(entries[2].name, "unknown.txt"); // None sorts to end
+    }
+
+    #[test]
+    fn test_parse_ls_output_date_asc_sort() {
+        let output = "\
+total 12
+-rw-r--r--  1 user user  100 Jan  1  2020 old.txt
+-rw-r--r--  1 user user  200 Jun 15  2023 new.txt
+-rw-r--r--  1 user user  150 Mar  5  2022 mid.txt
+";
+        let entries = parse_ls_output(output, true, BrowserSort::DateAsc);
+        assert_eq!(entries.len(), 3);
+        // Should be sorted oldest first (2020 < 2022 < 2023)
+        assert_eq!(entries[0].name, "old.txt");
+        assert_eq!(entries[1].name, "mid.txt");
+        assert_eq!(entries[2].name, "new.txt");
+    }
+
+    #[test]
+    fn test_sort_entries_date_multiple_dirs() {
+        let mut entries = vec![
+            FileEntry { name: "old_dir".into(), is_dir: true, size: None, modified: Some(1000) },
+            FileEntry { name: "new_dir".into(), is_dir: true, size: None, modified: Some(3000) },
+            FileEntry { name: "mid_dir".into(), is_dir: true, size: None, modified: Some(2000) },
+            FileEntry { name: "file.txt".into(), is_dir: false, size: Some(100), modified: Some(5000) },
+        ];
+        sort_entries(&mut entries, BrowserSort::Date);
+        assert!(entries[0].is_dir);
+        assert_eq!(entries[0].name, "new_dir");
+        assert_eq!(entries[1].name, "mid_dir");
+        assert_eq!(entries[2].name, "old_dir");
+        assert_eq!(entries[3].name, "file.txt");
+    }
+
+    // =========================================================================
+    // format_relative_time boundaries
+    // =========================================================================
+
+    #[test]
+    fn test_format_relative_time_exactly_60s() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+        assert_eq!(format_relative_time(now - 60), "1m ago");
+        assert_eq!(format_relative_time(now - 59), "just now");
+    }
+
+    // =========================================================================
+    // parse_ls_output date sort with dirs
+    // =========================================================================
+
+    #[test]
+    fn test_parse_ls_output_date_sort_with_dirs() {
+        let output = "\
+total 16
+drwxr-xr-x  2 user user 4096 Jan  1  2020 old_dir
+-rw-r--r--  1 user user  200 Jun 15  2023 new_file.txt
+drwxr-xr-x  2 user user 4096 Dec  1  2023 new_dir
+-rw-r--r--  1 user user  100 Mar  5  2022 old_file.txt
+";
+        let entries = parse_ls_output(output, true, BrowserSort::Date);
+        assert_eq!(entries.len(), 4);
+        assert!(entries[0].is_dir);
+        assert_eq!(entries[0].name, "new_dir");
+        assert!(entries[1].is_dir);
+        assert_eq!(entries[1].name, "old_dir");
+        assert_eq!(entries[2].name, "new_file.txt");
+        assert_eq!(entries[3].name, "old_file.txt");
     }
 }

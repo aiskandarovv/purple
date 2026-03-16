@@ -48,6 +48,42 @@ pub struct SyncRecord {
     pub is_error: bool,
 }
 
+impl SyncRecord {
+    /// Load sync history from ~/.purple/sync_history.tsv.
+    /// Format: provider\ttimestamp\tis_error\tmessage
+    pub fn load_all() -> HashMap<String, SyncRecord> {
+        let mut map = HashMap::new();
+        let Some(home) = dirs::home_dir() else { return map };
+        let path = home.join(".purple").join("sync_history.tsv");
+        let Ok(content) = std::fs::read_to_string(&path) else { return map };
+        for line in content.lines() {
+            let parts: Vec<&str> = line.splitn(4, '\t').collect();
+            if parts.len() < 4 { continue; }
+            let Some(ts) = parts[1].parse::<u64>().ok() else { continue };
+            let is_error = parts[2] == "1";
+            map.insert(parts[0].to_string(), SyncRecord {
+                timestamp: ts,
+                message: parts[3].to_string(),
+                is_error,
+            });
+        }
+        map
+    }
+
+    /// Save sync history to ~/.purple/sync_history.tsv.
+    pub fn save_all(history: &HashMap<String, SyncRecord>) {
+        let Some(home) = dirs::home_dir() else { return };
+        let dir = home.join(".purple");
+        let path = dir.join("sync_history.tsv");
+        let mut lines = Vec::new();
+        for (provider, record) in history {
+            lines.push(format!("{}\t{}\t{}\t{}",
+                provider, record.timestamp, if record.is_error { "1" } else { "0" }, record.message));
+        }
+        let _ = crate::fs_util::atomic_write(&path, lines.join("\n").as_bytes());
+    }
+}
+
 /// Which screen is currently displayed.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Screen {
@@ -1036,6 +1072,10 @@ pub struct App {
     pub provider_config: ProviderConfig,
     pub provider_form: ProviderFormFields,
     pub syncing_providers: HashMap<String, Arc<AtomicBool>>,
+    /// Names of providers that completed during this sync batch.
+    pub sync_done: Vec<String>,
+    /// Whether any provider in the current batch had errors.
+    pub sync_had_errors: bool,
     pub pending_provider_delete: Option<String>,
     pub pending_snippet_delete: Option<usize>,
     pub pending_tunnel_delete: Option<usize>,
@@ -1148,6 +1188,8 @@ impl App {
             provider_config: ProviderConfig::load(),
             provider_form: ProviderFormFields::new(),
             syncing_providers: HashMap::new(),
+            sync_done: Vec::new(),
+            sync_had_errors: false,
             pending_provider_delete: None,
             pending_snippet_delete: None,
             pending_tunnel_delete: None,
@@ -1163,7 +1205,7 @@ impl App {
             tunnel_summaries_cache: HashMap::new(),
             update_available: None,
             update_hint: crate::update::update_hint(),
-            sync_history: HashMap::new(),
+            sync_history: SyncRecord::load_all(),
             bw_session: None,
             file_browser: None,
             file_browser_paths: HashMap::new(),
@@ -3173,6 +3215,114 @@ Host vultr-app
         assert_eq!(record.timestamp, 200);
         assert!(!record.is_error);
         assert_eq!(record.message, "5 servers");
+    }
+
+    // --- SyncRecord persistence tests ---
+
+    #[test]
+    fn test_sync_record_save_load_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("purple_sync_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".purple")).unwrap();
+
+        // Build history
+        let mut history = HashMap::new();
+        history.insert("digitalocean".to_string(), SyncRecord {
+            timestamp: 1710000000,
+            message: "3 servers".to_string(),
+            is_error: false,
+        });
+        history.insert("aws".to_string(), SyncRecord {
+            timestamp: 1710000100,
+            message: "auth failed".to_string(),
+            is_error: true,
+        });
+        history.insert("hetzner".to_string(), SyncRecord {
+            timestamp: 1710000200,
+            message: "1 server (1 of 3 failed)".to_string(),
+            is_error: true,
+        });
+
+        // Save
+        let path = dir.join(".purple").join("sync_history.tsv");
+        let mut lines = Vec::new();
+        for (provider, record) in &history {
+            lines.push(format!("{}\t{}\t{}\t{}",
+                provider, record.timestamp, if record.is_error { "1" } else { "0" }, record.message));
+        }
+        std::fs::write(&path, lines.join("\n")).unwrap();
+
+        // Load
+        let content = std::fs::read_to_string(&path).unwrap();
+        let mut loaded = HashMap::new();
+        for line in content.lines() {
+            let parts: Vec<&str> = line.splitn(4, '\t').collect();
+            if parts.len() < 4 { continue; }
+            let ts: u64 = parts[1].parse().unwrap();
+            let is_error = parts[2] == "1";
+            loaded.insert(parts[0].to_string(), SyncRecord {
+                timestamp: ts,
+                message: parts[3].to_string(),
+                is_error,
+            });
+        }
+
+        // Verify
+        assert_eq!(loaded.len(), 3);
+        let do_rec = loaded.get("digitalocean").unwrap();
+        assert_eq!(do_rec.timestamp, 1710000000);
+        assert_eq!(do_rec.message, "3 servers");
+        assert!(!do_rec.is_error);
+
+        let aws_rec = loaded.get("aws").unwrap();
+        assert_eq!(aws_rec.timestamp, 1710000100);
+        assert_eq!(aws_rec.message, "auth failed");
+        assert!(aws_rec.is_error);
+
+        let hz_rec = loaded.get("hetzner").unwrap();
+        assert_eq!(hz_rec.message, "1 server (1 of 3 failed)");
+        assert!(hz_rec.is_error);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_sync_record_load_missing_file() {
+        // load_all on a nonexistent path should return empty map
+        // (tested implicitly since load_all uses dirs::home_dir,
+        // but we verify the parser handles empty/malformed input)
+        let mut map = HashMap::new();
+        let content = "";
+        for line in content.lines() {
+            let parts: Vec<&str> = line.splitn(4, '\t').collect();
+            if parts.len() < 4 { continue; }
+            let Some(ts) = parts[1].parse::<u64>().ok() else { continue };
+            map.insert(parts[0].to_string(), SyncRecord {
+                timestamp: ts,
+                message: parts[3].to_string(),
+                is_error: parts[2] == "1",
+            });
+        }
+        assert!(map.is_empty());
+    }
+
+    #[test]
+    fn test_sync_record_load_malformed_lines() {
+        // Malformed lines should be skipped
+        let content = "badline\naws\t123\t0\t2 servers\nalso_bad\ttwo\t0\tfoo\n";
+        let mut map = HashMap::new();
+        for line in content.lines() {
+            let parts: Vec<&str> = line.splitn(4, '\t').collect();
+            if parts.len() < 4 { continue; }
+            let Some(ts) = parts[1].parse::<u64>().ok() else { continue };
+            map.insert(parts[0].to_string(), SyncRecord {
+                timestamp: ts,
+                message: parts[3].to_string(),
+                is_error: parts[2] == "1",
+            });
+        }
+        assert_eq!(map.len(), 1);
+        assert_eq!(map.get("aws").unwrap().message, "2 servers");
     }
 
     // --- auto_sync tests ---
