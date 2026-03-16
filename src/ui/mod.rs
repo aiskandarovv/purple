@@ -41,85 +41,94 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         return;
     }
 
+    // Status messages show in the host list footer (including behind overlays),
+    // but not in overlay footers. render_overlay hides app.status while the
+    // overlay renders so render_footer_with_status calls inside overlays ignore it.
     match &app.screen {
         Screen::HostList => host_list::render(frame, app),
         Screen::AddHost | Screen::EditHost { .. } => {
-            render_host_list_without_status(frame, app);
-            host_form::render(frame, app);
+            host_list::render(frame, app);
+            render_overlay(app, |app| host_form::render(frame, app));
         }
         Screen::ConfirmDelete { alias } => {
             let alias = alias.clone();
-            render_host_list_without_status(frame, app);
-            confirm_dialog::render(frame, app, &alias);
+            host_list::render(frame, app);
+            render_overlay(app, |app| confirm_dialog::render(frame, app, &alias));
         }
         Screen::Help => {
-            render_host_list_without_status(frame, app);
-            help::render(frame, app);
+            host_list::render(frame, app);
+            render_overlay(app, |app| help::render(frame, app));
         }
         Screen::KeyList => {
-            render_host_list_without_status(frame, app);
-            key_list::render(frame, app);
+            host_list::render(frame, app);
+            render_overlay(app, |app| key_list::render(frame, app));
         }
         Screen::KeyDetail { index } => {
             let index = *index;
-            render_host_list_without_status(frame, app);
-            key_list::render(frame, app);
-            key_detail::render(frame, app, index);
+            host_list::render(frame, app);
+            render_overlay(app, |app| {
+                key_list::render(frame, app);
+                key_detail::render(frame, app, index);
+            });
         }
         Screen::HostDetail { index } => {
             let index = *index;
-            render_host_list_without_status(frame, app);
-            host_detail::render(frame, app, index);
+            host_list::render(frame, app);
+            render_overlay(app, |app| host_detail::render(frame, app, index));
         }
         Screen::TagPicker => {
-            render_host_list_without_status(frame, app);
-            tag_picker::render(frame, app);
+            host_list::render(frame, app);
+            render_overlay(app, |app| tag_picker::render(frame, app));
         }
         Screen::Providers => {
-            render_host_list_without_status(frame, app);
-            provider_list::render_provider_list(frame, app);
+            host_list::render(frame, app);
+            render_overlay(app, |app| provider_list::render_provider_list(frame, app));
         }
         Screen::ProviderForm { provider } => {
             let provider = provider.clone();
-            render_host_list_without_status(frame, app);
-            provider_list::render_provider_form(frame, app, &provider);
+            host_list::render(frame, app);
+            render_overlay(app, |app| provider_list::render_provider_form(frame, app, &provider));
         }
         Screen::TunnelList { alias } => {
             let alias = alias.clone();
-            render_host_list_without_status(frame, app);
-            tunnel_list::render(frame, app, &alias);
+            host_list::render(frame, app);
+            render_overlay(app, |app| tunnel_list::render(frame, app, &alias));
         }
         Screen::TunnelForm { alias, .. } => {
             let alias = alias.clone();
-            render_host_list_without_status(frame, app);
-            tunnel_list::render(frame, app, &alias);
-            tunnel_form::render(frame, app);
+            host_list::render(frame, app);
+            render_overlay(app, |app| {
+                tunnel_list::render(frame, app, &alias);
+                tunnel_form::render(frame, app);
+            });
         }
         Screen::SnippetPicker { .. } => {
-            render_host_list_without_status(frame, app);
-            snippet_picker::render(frame, app);
+            host_list::render(frame, app);
+            render_overlay(app, |app| snippet_picker::render(frame, app));
         }
         Screen::SnippetForm { .. } => {
-            render_host_list_without_status(frame, app);
-            snippet_picker::render(frame, app);
-            snippet_form::render(frame, app);
+            host_list::render(frame, app);
+            render_overlay(app, |app| {
+                snippet_picker::render(frame, app);
+                snippet_form::render(frame, app);
+            });
         }
         Screen::ConfirmHostKeyReset { hostname, .. } => {
             let hostname = hostname.clone();
-            render_host_list_without_status(frame, app);
-            confirm_dialog::render_host_key_reset(frame, app, &hostname);
+            host_list::render(frame, app);
+            render_overlay(app, |app| confirm_dialog::render_host_key_reset(frame, app, &hostname));
         }
         Screen::FileBrowser { .. } => {
-            render_host_list_without_status(frame, app);
-            file_browser::render(frame, app);
+            host_list::render(frame, app);
+            render_overlay(app, |app| file_browser::render(frame, app));
         }
     }
 }
 
-/// Render the host list background without status message in the footer.
-fn render_host_list_without_status(frame: &mut Frame, app: &mut App) {
+/// Hide app.status while rendering an overlay so its footer won't show status.
+fn render_overlay(app: &mut App, f: impl FnOnce(&mut App)) {
     let status = app.status.take();
-    host_list::render(frame, app);
+    f(app);
     app.status = status;
 }
 
