@@ -44,7 +44,7 @@ purple turns your ~/.ssh/config into a searchable, visual interface. Find any ho
 - Include file support (read-only, recursive up to depth 5, tilde + glob expansion)
 - Host key reset: detects changed host keys after server reinstalls and offers to remove the old key and reconnect
 - Auto-reload: detects external config changes every 4 seconds
-- Self-update mechanism (macOS curl installs). Homebrew and cargo users update via their package manager
+- Self-update mechanism (macOS and Linux curl installs). Homebrew and cargo users update via their package manager
 - Shell completions (bash, zsh, fish)
 - Minimal UI with monochrome base and subtle color for status. Works in any terminal, respects NO_COLOR
 
@@ -229,7 +229,7 @@ Q: How does provider sync handle name conflicts?
 A: Synced hosts get an alias prefix (e.g. do-web-1 for DigitalOcean). If a name collides, purple appends a numeric suffix (do-web-1-2).
 
 Q: How do I install purple?
-A: Three options: `curl -fsSL getpurple.sh | sh` (macOS, recommended), `brew install erickochen/purple/purple` (Homebrew on macOS), or `cargo install purple-ssh` (any platform with Rust). Pre-built binaries are macOS only. Linux users should use cargo install.
+A: Three options: `curl -fsSL getpurple.sh | sh` (macOS and Linux, recommended), `brew install erickochen/purple/purple` (Homebrew on macOS), or `cargo install purple-ssh` (any platform with Rust).
 
 Q: Can I transfer files with purple?
 A: Yes. Press f on any host to open the remote file explorer. It shows your local files on the left and the remote server on the right. Navigate directories with j/k and Enter, select files with Ctrl+Space and press Enter to copy via scp. Works through ProxyJump, password sources and active tunnels. Paths are remembered per host.
@@ -240,7 +240,7 @@ A: Run purple provider add gcp --token /path/to/sa-key.json --project my-project
 ## Limitations
 
 - macOS and Linux only. No Windows support (works in WSL)
-- Pre-built binaries for macOS. Linux and macOS also supported via cargo install
+- Pre-built binaries for macOS and Linux. Also installable via cargo install on any platform
 - File transfer uses scp. No SFTP or rsync integration
 - Each directory navigation in the file explorer opens a new SSH connection. Configure ControlMaster for faster navigation
 - Cloud sync is pull-only. purple does not provision or modify cloud infrastructure

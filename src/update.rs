@@ -220,8 +220,12 @@ fn detect_install_method(exe_path: &Path) -> InstallMethod {
             return InstallMethod::Homebrew;
         }
     }
-    // Default Cellar locations (Apple Silicon + Intel)
-    for cellar in ["/opt/homebrew/Cellar", "/usr/local/Cellar"] {
+    // Default Cellar locations (Apple Silicon + Intel + Linuxbrew)
+    for cellar in [
+        "/opt/homebrew/Cellar",
+        "/usr/local/Cellar",
+        "/home/linuxbrew/.linuxbrew/Cellar",
+    ] {
         if is_homebrew_path(exe_path, Path::new(cellar)) {
             return InstallMethod::Homebrew;
         }
@@ -249,7 +253,7 @@ fn detect_install_method(exe_path: &Path) -> InstallMethod {
 
 /// Detect the update command appropriate for how purple was installed.
 pub fn update_hint() -> &'static str {
-    if std::env::consts::OS != "macos" {
+    if !matches!(std::env::consts::OS, "macos" | "linux") {
         return "cargo install purple-ssh";
     }
     if let Ok(exe) = std::env::current_exe() {
@@ -265,10 +269,10 @@ pub fn update_hint() -> &'static str {
 
 /// Self-update the purple binary to the latest release.
 pub fn self_update() -> Result<()> {
-    // macOS only
-    if std::env::consts::OS != "macos" {
+    // macOS and Linux only
+    if !matches!(std::env::consts::OS, "macos" | "linux") {
         anyhow::bail!(
-            "Self-update is available on macOS only.\n  \
+            "Self-update is available on macOS and Linux only.\n  \
              Update via: cargo install purple-ssh"
         );
     }
@@ -313,10 +317,12 @@ pub fn self_update() -> Result<()> {
     println!("v{} available (current: v{}).", latest, current);
 
     // Detect target
-    let target = match std::env::consts::ARCH {
-        "aarch64" => "aarch64-apple-darwin",
-        "x86_64" => "x86_64-apple-darwin",
-        arch => anyhow::bail!("Unsupported architecture: {}", arch),
+    let target = match (std::env::consts::ARCH, std::env::consts::OS) {
+        ("aarch64", "macos") => "aarch64-apple-darwin",
+        ("x86_64", "macos") => "x86_64-apple-darwin",
+        ("aarch64", "linux") => "aarch64-unknown-linux-gnu",
+        ("x86_64", "linux") => "x86_64-unknown-linux-gnu",
+        (arch, os) => anyhow::bail!("Unsupported platform: {}-{}", arch, os),
     };
 
     // Check we can write to the binary location
@@ -469,7 +475,7 @@ fn download_file(agent: &ureq::Agent, url: &str, dest: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Verify SHA256 checksum of a file.
+/// Verify SHA256 checksum of a file using the sha2 crate (no external tools).
 fn verify_checksum(file: &Path, sha_file: &Path) -> Result<()> {
     let expected = std::fs::read_to_string(sha_file)
         .context("Failed to read checksum file")?;
@@ -478,21 +484,9 @@ fn verify_checksum(file: &Path, sha_file: &Path) -> Result<()> {
         .next()
         .context("Empty checksum file")?;
 
-    let output = std::process::Command::new("shasum")
-        .args(["-a", "256"])
-        .arg(file)
-        .output()
-        .context("Failed to run shasum")?;
-
-    if !output.status.success() {
-        anyhow::bail!("shasum failed");
-    }
-
-    let actual = String::from_utf8_lossy(&output.stdout);
-    let actual = actual
-        .split_whitespace()
-        .next()
-        .context("Empty shasum output")?;
+    use sha2::{Digest, Sha256};
+    let bytes = std::fs::read(file).context("Failed to read file for checksum")?;
+    let actual = format!("{:x}", Sha256::digest(&bytes));
 
     if expected != actual {
         anyhow::bail!(
@@ -631,6 +625,15 @@ mod tests {
     }
 
     #[test]
+    fn test_homebrew_cellar_linuxbrew() {
+        let path = Path::new("/home/linuxbrew/.linuxbrew/Cellar/purple/2.3.0/bin/purple");
+        assert!(is_homebrew_path(
+            path,
+            Path::new("/home/linuxbrew/.linuxbrew/Cellar")
+        ));
+    }
+
+    #[test]
     fn test_homebrew_cellar_rejects_non_cellar_suffix() {
         // Env var points to a dir that doesn't end in "Cellar"
         let path = Path::new("/opt/homebrew/lib/purple");
@@ -692,6 +695,15 @@ mod tests {
     fn test_detect_homebrew_default_intel() {
         let path = Path::new("/usr/local/Cellar/purple/1.5.0/bin/purple");
         assert!(matches!(detect_install_method(path), InstallMethod::Homebrew));
+    }
+
+    #[test]
+    fn test_detect_homebrew_default_linuxbrew() {
+        let path = Path::new("/home/linuxbrew/.linuxbrew/Cellar/purple/2.3.0/bin/purple");
+        assert!(matches!(
+            detect_install_method(path),
+            InstallMethod::Homebrew
+        ));
     }
 
     #[test]

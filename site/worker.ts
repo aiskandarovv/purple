@@ -14,16 +14,11 @@ BINARY="purple"
 main() {
     printf "\\n  \\033[1mpurple.\\033[0m installer\\n\\n"
 
-    # Detect OS (before dependency checks so non-macOS gets a clear message)
+    # Detect OS (before dependency checks so unsupported OS gets a clear message)
     os="$(uname -s)"
     case "$os" in
-        Darwin) ;;
-        Linux)
-            printf "  \\033[1m!\\033[0m Pre-built binaries are macOS only for now.\\n"
-            printf "  Install via cargo instead:\\n\\n"
-            printf "    cargo install purple-ssh\\n\\n"
-            exit 1
-            ;;
+        Darwin) os_suffix="apple-darwin" ;;
+        Linux)  os_suffix="unknown-linux-gnu" ;;
         *)
             printf "  \\033[1m!\\033[0m Unsupported OS: %s\\n" "$os"
             printf "  Install via cargo instead:\\n\\n"
@@ -32,16 +27,19 @@ main() {
             ;;
     esac
 
-    # Check dependencies (after OS detection so non-macOS exits with a clear message)
+    # Check dependencies (after OS detection so unsupported OS exits with a clear message)
     need_cmd curl
     need_cmd tar
-    need_cmd shasum
+    case "$os" in
+        Darwin) need_cmd shasum ;;
+        *)      need_cmd sha256sum ;;
+    esac
 
     # Detect architecture
     arch="$(uname -m)"
     case "$arch" in
-        arm64|aarch64) target="aarch64-apple-darwin" ;;
-        x86_64)        target="x86_64-apple-darwin" ;;
+        arm64|aarch64) target="aarch64-\${os_suffix}" ;;
+        x86_64)        target="x86_64-\${os_suffix}" ;;
         *)
             printf "  \\033[1m!\\033[0m Unsupported architecture: %s\\n" "$arch"
             exit 1
@@ -56,7 +54,10 @@ main() {
     if [ -z "$version" ] || ! printf '%s' "$version" | grep -qE '^[0-9]+\\.[0-9]+\\.[0-9]+$'; then
         printf "  \\033[1m!\\033[0m Failed to fetch latest version.\\n"
         printf "  GitHub API may be rate-limited. Try again later or install via:\\n\\n"
-        printf "    brew install erickochen/purple/purple\\n\\n"
+        case "$os" in
+            Darwin) printf "    brew install erickochen/purple/purple\\n\\n" ;;
+            *)      printf "    cargo install purple-ssh\\n\\n" ;;
+        esac
         exit 1
     fi
 
@@ -64,7 +65,8 @@ main() {
 
     # Set up temp directory
     tmp="$(mktemp -d)"
-    trap 'rm -rf "$tmp"' EXIT
+    staged=""
+    trap 'rm -rf "$tmp"; [ -n "$staged" ] && rm -f "$staged"' EXIT INT TERM HUP
 
     tarball="purple-\${version}-\${target}.tar.gz"
     url="https://github.com/\${REPO}/releases/download/v\${version}/\${tarball}"
@@ -78,7 +80,10 @@ main() {
     # Verify checksum
     printf "  Verifying checksum...\\n"
     expected="$(awk '{print $1}' "\${tmp}/\${tarball}.sha256")"
-    actual="$(shasum -a 256 "\${tmp}/\${tarball}" | awk '{print $1}')"
+    case "$os" in
+        Darwin) actual="$(shasum -a 256 "\${tmp}/\${tarball}" | awk '{print $1}')" ;;
+        *)      actual="$(sha256sum "\${tmp}/\${tarball}" | awk '{print $1}')" ;;
+    esac
 
     if [ "$expected" != "$actual" ]; then
         printf "  \\033[1m!\\033[0m Checksum mismatch.\\n"
@@ -97,8 +102,12 @@ main() {
         mkdir -p "$install_dir"
     fi
 
-    cp "\${tmp}/\${BINARY}" "\${install_dir}/\${BINARY}"
-    chmod 755 "\${install_dir}/\${BINARY}"
+    # Stage in target dir then atomic rename (prevents corrupted binary on interrupt)
+    staged="\${install_dir}/.\${BINARY}_new_$$"
+    cp "\${tmp}/\${BINARY}" "$staged"
+    chmod 755 "$staged"
+    mv -f "$staged" "\${install_dir}/\${BINARY}"
+    staged=""
 
     printf "\\n  \\033[1;35mpurple v%s\\033[0m installed to %s/%s\\n\\n" \\
         "$version" "$install_dir" "$BINARY"
@@ -162,7 +171,7 @@ const LANDING_PAGE = `<!DOCTYPE html>
   "url": "https://getpurple.sh",
   "downloadUrl": "https://getpurple.sh",
   "installUrl": "https://github.com/erickochen/purple/releases",
-  "softwareVersion": "2.2.0",
+  "softwareVersion": "2.3.0",
   "programmingLanguage": "Rust",
   "license": "https://opensource.org/licenses/MIT",
   "codeRepository": "https://github.com/erickochen/purple",
@@ -1057,7 +1066,7 @@ purple turns your ~/.ssh/config into a searchable, visual interface. Find any ho
 - Include file support (read-only, recursive up to depth 5, tilde + glob expansion)
 - Host key reset: detects changed host keys after server reinstalls and offers to remove the old key and reconnect
 - Auto-reload: detects external config changes every 4 seconds
-- Self-update mechanism (macOS curl installs). Homebrew and cargo users update via their package manager
+- Self-update mechanism (macOS and Linux curl installs). Homebrew and cargo users update via their package manager
 - Shell completions (bash, zsh, fish)
 - Minimal UI with monochrome base and subtle color for status. Works in any terminal, respects NO_COLOR
 
@@ -1242,7 +1251,7 @@ Q: How does provider sync handle name conflicts?
 A: Synced hosts get an alias prefix (e.g. do-web-1 for DigitalOcean). If a name collides, purple appends a numeric suffix (do-web-1-2).
 
 Q: How do I install purple?
-A: Three options: \`curl -fsSL getpurple.sh | sh\` (macOS, recommended), \`brew install erickochen/purple/purple\` (Homebrew on macOS), or \`cargo install purple-ssh\` (any platform with Rust). Pre-built binaries are macOS only. Linux users should use cargo install.
+A: Three options: \`curl -fsSL getpurple.sh | sh\` (macOS and Linux, recommended), \`brew install erickochen/purple/purple\` (Homebrew on macOS), or \`cargo install purple-ssh\` (any platform with Rust).
 
 Q: Can I transfer files with purple?
 A: Yes. Press f on any host to open the remote file explorer. It shows your local files on the left and the remote server on the right. Navigate directories with j/k and Enter, select files with Ctrl+Space and press Enter to copy via scp. Works through ProxyJump, password sources and active tunnels. Paths are remembered per host.
@@ -1253,7 +1262,7 @@ A: Run purple provider add gcp --token /path/to/sa-key.json --project my-project
 ## Limitations
 
 - macOS and Linux only. No Windows support (works in WSL)
-- Pre-built binaries for macOS. Linux and macOS also supported via cargo install
+- Pre-built binaries for macOS and Linux. Also installable via cargo install on any platform
 - File transfer uses scp. No SFTP or rsync integration
 - Each directory navigation in the file explorer opens a new SSH connection. Configure ControlMaster for faster navigation
 - Cloud sync is pull-only. purple does not provision or modify cloud infrastructure

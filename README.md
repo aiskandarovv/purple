@@ -58,7 +58,7 @@ cd purple && cargo build --release
 purple update
 ```
 
-Downloads the latest release from GitHub, verifies the checksum and replaces the binary in place. macOS only (installed via `curl`). Homebrew users should run `brew upgrade erickochen/purple/purple` instead. Cargo users should run `cargo install purple-ssh`. The TUI also checks for updates on startup and shows a notification in the title bar when a new version is available.
+Downloads the latest release from GitHub, verifies the checksum and replaces the binary in place. macOS and Linux (installed via `curl`). Homebrew users should run `brew upgrade erickochen/purple/purple` instead. Cargo users should run `cargo install purple-ssh`. The TUI also checks for updates on startup and shows a notification in the title bar when a new version is available.
 
 ## Features
 

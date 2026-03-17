@@ -3,9 +3,9 @@ name: Deploy site
 on:
   push:
     branches: [master]
-    paths: [site/**, .github/workflows/site.yml]
+    paths: [site/**, llms.txt, .github/workflows/site.yml]
   pull_request:
-    paths: [site/**, .github/workflows/site.yml]
+    paths: [site/**, llms.txt, .github/workflows/site.yml]
 
 permissions:
   contents: read
@@ -13,7 +13,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    name: Check install script sync
+    name: Check embedded content sync
     steps:
       - uses: actions/checkout@v4
 
@@ -43,6 +43,36 @@ jobs:
           } else {
             console.error('install.sh and worker.ts INSTALL_SCRIPT have drifted!');
             console.error('Update the embedded script in worker.ts to match install.sh.');
+            process.exit(1);
+          }
+          "
+
+      - name: Verify llms.txt matches embedded content in worker.ts
+        run: |
+          node -e "
+          const fs = require('fs');
+          const src = fs.readFileSync('site/worker.ts', 'utf8');
+          const start = src.indexOf('const LLMS_TXT = \x60');
+          if (start === -1) { console.error('LLMS_TXT not found in worker.ts'); process.exit(1); }
+          const bodyStart = src.indexOf('\x60', start) + 1;
+          const bodyEnd = src.indexOf('\x60;', bodyStart);
+          if (bodyEnd === -1) { console.error('Closing backtick not found'); process.exit(1); }
+          const raw = src.substring(bodyStart, bodyEnd);
+          // Unescape JS template literal: \\\\ → \\, \\$ → $ (no eval)
+          let embedded = '';
+          for (let i = 0; i < raw.length; i++) {
+            if (raw[i] === '\\\\' && i + 1 < raw.length) {
+              const next = raw[i + 1];
+              if (next === '\\\\' || next === '$' || next === '\x60') { embedded += next; i++; continue; }
+            }
+            embedded += raw[i];
+          }
+          const standalone = fs.readFileSync('llms.txt', 'utf8');
+          if (embedded === standalone) {
+            console.log('llms.txt and worker.ts LLMS_TXT are in sync.');
+          } else {
+            console.error('llms.txt and worker.ts LLMS_TXT have drifted!');
+            console.error('Update the embedded LLMS_TXT in worker.ts to match llms.txt.');
             process.exit(1);
           }
           "

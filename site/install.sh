@@ -10,16 +10,11 @@ BINARY="purple"
 main() {
     printf "\n  \033[1mpurple.\033[0m installer\n\n"
 
-    # Detect OS (before dependency checks so non-macOS gets a clear message)
+    # Detect OS (before dependency checks so unsupported OS gets a clear message)
     os="$(uname -s)"
     case "$os" in
-        Darwin) ;;
-        Linux)
-            printf "  \033[1m!\033[0m Pre-built binaries are macOS only for now.\n"
-            printf "  Install via cargo instead:\n\n"
-            printf "    cargo install purple-ssh\n\n"
-            exit 1
-            ;;
+        Darwin) os_suffix="apple-darwin" ;;
+        Linux)  os_suffix="unknown-linux-gnu" ;;
         *)
             printf "  \033[1m!\033[0m Unsupported OS: %s\n" "$os"
             printf "  Install via cargo instead:\n\n"
@@ -28,16 +23,19 @@ main() {
             ;;
     esac
 
-    # Check dependencies (after OS detection so non-macOS exits with a clear message)
+    # Check dependencies (after OS detection so unsupported OS exits with a clear message)
     need_cmd curl
     need_cmd tar
-    need_cmd shasum
+    case "$os" in
+        Darwin) need_cmd shasum ;;
+        *)      need_cmd sha256sum ;;
+    esac
 
     # Detect architecture
     arch="$(uname -m)"
     case "$arch" in
-        arm64|aarch64) target="aarch64-apple-darwin" ;;
-        x86_64)        target="x86_64-apple-darwin" ;;
+        arm64|aarch64) target="aarch64-${os_suffix}" ;;
+        x86_64)        target="x86_64-${os_suffix}" ;;
         *)
             printf "  \033[1m!\033[0m Unsupported architecture: %s\n" "$arch"
             exit 1
@@ -52,7 +50,10 @@ main() {
     if [ -z "$version" ] || ! printf '%s' "$version" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
         printf "  \033[1m!\033[0m Failed to fetch latest version.\n"
         printf "  GitHub API may be rate-limited. Try again later or install via:\n\n"
-        printf "    brew install erickochen/purple/purple\n\n"
+        case "$os" in
+            Darwin) printf "    brew install erickochen/purple/purple\n\n" ;;
+            *)      printf "    cargo install purple-ssh\n\n" ;;
+        esac
         exit 1
     fi
 
@@ -60,7 +61,8 @@ main() {
 
     # Set up temp directory
     tmp="$(mktemp -d)"
-    trap 'rm -rf "$tmp"' EXIT
+    staged=""
+    trap 'rm -rf "$tmp"; [ -n "$staged" ] && rm -f "$staged"' EXIT INT TERM HUP
 
     tarball="purple-${version}-${target}.tar.gz"
     url="https://github.com/${REPO}/releases/download/v${version}/${tarball}"
@@ -74,7 +76,10 @@ main() {
     # Verify checksum
     printf "  Verifying checksum...\n"
     expected="$(awk '{print $1}' "${tmp}/${tarball}.sha256")"
-    actual="$(shasum -a 256 "${tmp}/${tarball}" | awk '{print $1}')"
+    case "$os" in
+        Darwin) actual="$(shasum -a 256 "${tmp}/${tarball}" | awk '{print $1}')" ;;
+        *)      actual="$(sha256sum "${tmp}/${tarball}" | awk '{print $1}')" ;;
+    esac
 
     if [ "$expected" != "$actual" ]; then
         printf "  \033[1m!\033[0m Checksum mismatch.\n"
@@ -93,8 +98,12 @@ main() {
         mkdir -p "$install_dir"
     fi
 
-    cp "${tmp}/${BINARY}" "${install_dir}/${BINARY}"
-    chmod 755 "${install_dir}/${BINARY}"
+    # Stage in target dir then atomic rename (prevents corrupted binary on interrupt)
+    staged="${install_dir}/.${BINARY}_new_$$"
+    cp "${tmp}/${BINARY}" "$staged"
+    chmod 755 "$staged"
+    mv -f "$staged" "${install_dir}/${BINARY}"
+    staged=""
 
     printf "\n  \033[1;35mpurple v%s\033[0m installed to %s/%s\n\n" \
         "$version" "$install_dir" "$BINARY"
