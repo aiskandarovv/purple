@@ -9,7 +9,7 @@
   <a href="https://crates.io/crates/purple-ssh"><img src="https://img.shields.io/crates/v/purple-ssh.svg" alt="purple-ssh crate version on crates.io"></a>
   <a href="https://crates.io/crates/purple-ssh"><img src="https://img.shields.io/crates/d/purple-ssh.svg" alt="purple-ssh total downloads"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License"></a>
-  <a href="https://ratatui.rs/"><img src="https://img.shields.io/badge/Built_With_Ratatui-000?logo=ratatui&logoColor=fff" alt="Built With Ratatui"></a>
+  <a href="https://ratatui.rs/"><img src="https://img.shields.io/badge/Built_With-Ratatui-000?logo=ratatui&logoColor=fff" alt="Built With Ratatui"></a>
   <a href="https://getpurple.sh"><img src="https://img.shields.io/badge/Website-getpurple.sh-9333ea.svg" alt="purple website"></a>
 </p>
 
