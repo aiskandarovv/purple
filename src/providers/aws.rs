@@ -308,6 +308,8 @@ struct Ec2Instance {
     tag_set: ItemList<Ec2Tag>,
     #[serde(rename = "ipAddress", default)]
     ip_address: Option<String>,
+    #[serde(rename = "privateIpAddress", default)]
+    private_ip_address: Option<String>,
 }
 
 #[derive(serde::Deserialize, Debug, Default)]
@@ -576,7 +578,10 @@ impl Provider for Aws {
             for instance in instances {
                 let ip = match instance.ip_address {
                     Some(ref ip) if !ip.is_empty() => ip.clone(),
-                    _ => continue,
+                    _ => match instance.private_ip_address {
+                        Some(ref ip) if !ip.is_empty() => ip.clone(),
+                        _ => continue,
+                    },
                 };
 
                 let (name, tags) = extract_tags(&instance.tag_set.item);
@@ -1222,5 +1227,57 @@ mod tests {
     fn test_ami_batch_size_is_reasonable() {
         assert!(AMI_BATCH_SIZE > 0);
         assert!(AMI_BATCH_SIZE <= 200);
+    }
+
+    // =========================================================================
+    // Private IP fallback
+    // =========================================================================
+
+    #[test]
+    fn test_parse_private_ip_address() {
+        let xml = r#"<DescribeInstancesResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
+    <reservationSet><item><instancesSet><item>
+        <instanceId>i-priv</instanceId>
+        <instanceState><name>running</name></instanceState>
+        <privateIpAddress>10.0.1.5</privateIpAddress>
+        <tagSet/>
+    </item></instancesSet></item></reservationSet>
+</DescribeInstancesResponse>"#;
+        let resp: DescribeInstancesResponse = quick_xml::de::from_str(xml).unwrap();
+        let inst = &resp.reservation_set.item[0].instances_set.item[0];
+        assert!(inst.ip_address.is_none());
+        assert_eq!(inst.private_ip_address.as_deref(), Some("10.0.1.5"));
+    }
+
+    #[test]
+    fn test_public_ip_preferred_over_private() {
+        let xml = r#"<DescribeInstancesResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
+    <reservationSet><item><instancesSet><item>
+        <instanceId>i-both</instanceId>
+        <instanceState><name>running</name></instanceState>
+        <ipAddress>54.1.2.3</ipAddress>
+        <privateIpAddress>10.0.1.5</privateIpAddress>
+        <tagSet/>
+    </item></instancesSet></item></reservationSet>
+</DescribeInstancesResponse>"#;
+        let resp: DescribeInstancesResponse = quick_xml::de::from_str(xml).unwrap();
+        let inst = &resp.reservation_set.item[0].instances_set.item[0];
+        assert_eq!(inst.ip_address.as_deref(), Some("54.1.2.3"));
+        assert_eq!(inst.private_ip_address.as_deref(), Some("10.0.1.5"));
+    }
+
+    #[test]
+    fn test_no_ip_at_all_still_parseable() {
+        let xml = r#"<DescribeInstancesResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
+    <reservationSet><item><instancesSet><item>
+        <instanceId>i-noip</instanceId>
+        <instanceState><name>running</name></instanceState>
+        <tagSet/>
+    </item></instancesSet></item></reservationSet>
+</DescribeInstancesResponse>"#;
+        let resp: DescribeInstancesResponse = quick_xml::de::from_str(xml).unwrap();
+        let inst = &resp.reservation_set.item[0].instances_set.item[0];
+        assert!(inst.ip_address.is_none());
+        assert!(inst.private_ip_address.is_none());
     }
 }

@@ -49,21 +49,24 @@ pub const GCP_ZONES: &[(&str, &str)] = &[
     ("us-west4-a", "Las Vegas A"),
     ("us-west4-b", "Las Vegas B"),
     ("us-west4-c", "Las Vegas C"),
-    // North America (28..34)
+    // North America (28..37)
     ("northamerica-northeast1-a", "Montreal A"),
     ("northamerica-northeast1-b", "Montreal B"),
     ("northamerica-northeast1-c", "Montreal C"),
     ("northamerica-northeast2-a", "Toronto A"),
     ("northamerica-northeast2-b", "Toronto B"),
     ("northamerica-northeast2-c", "Toronto C"),
-    // South America (34..40)
+    ("northamerica-south1-a", "Queretaro A"),
+    ("northamerica-south1-b", "Queretaro B"),
+    ("northamerica-south1-c", "Queretaro C"),
+    // South America (37..43)
     ("southamerica-east1-a", "Sao Paulo A"),
     ("southamerica-east1-b", "Sao Paulo B"),
     ("southamerica-east1-c", "Sao Paulo C"),
     ("southamerica-west1-a", "Santiago A"),
     ("southamerica-west1-b", "Santiago B"),
     ("southamerica-west1-c", "Santiago C"),
-    // Europe West (40..67)
+    // Europe West (43..70)
     ("europe-west1-b", "Belgium B"),
     ("europe-west1-c", "Belgium C"),
     ("europe-west1-d", "Belgium D"),
@@ -91,24 +94,27 @@ pub const GCP_ZONES: &[(&str, &str)] = &[
     ("europe-west12-a", "Turin A"),
     ("europe-west12-b", "Turin B"),
     ("europe-west12-c", "Turin C"),
-    // Europe Other (67..76)
+    // Europe Other (70..82)
     ("europe-north1-a", "Finland A"),
     ("europe-north1-b", "Finland B"),
     ("europe-north1-c", "Finland C"),
+    ("europe-north2-a", "Stockholm A"),
+    ("europe-north2-b", "Stockholm B"),
+    ("europe-north2-c", "Stockholm C"),
     ("europe-central2-a", "Warsaw A"),
     ("europe-central2-b", "Warsaw B"),
     ("europe-central2-c", "Warsaw C"),
     ("europe-southwest1-a", "Madrid A"),
     ("europe-southwest1-b", "Madrid B"),
     ("europe-southwest1-c", "Madrid C"),
-    // Asia East (76..82)
+    // Asia East (82..88)
     ("asia-east1-a", "Taiwan A"),
     ("asia-east1-b", "Taiwan B"),
     ("asia-east1-c", "Taiwan C"),
     ("asia-east2-a", "Hong Kong A"),
     ("asia-east2-b", "Hong Kong B"),
     ("asia-east2-c", "Hong Kong C"),
-    // Asia Northeast (82..91)
+    // Asia Northeast (88..97)
     ("asia-northeast1-a", "Tokyo A"),
     ("asia-northeast1-b", "Tokyo B"),
     ("asia-northeast1-c", "Tokyo C"),
@@ -118,28 +124,28 @@ pub const GCP_ZONES: &[(&str, &str)] = &[
     ("asia-northeast3-a", "Seoul A"),
     ("asia-northeast3-b", "Seoul B"),
     ("asia-northeast3-c", "Seoul C"),
-    // Asia South (91..97)
+    // Asia South (97..103)
     ("asia-south1-a", "Mumbai A"),
     ("asia-south1-b", "Mumbai B"),
     ("asia-south1-c", "Mumbai C"),
     ("asia-south2-a", "Delhi A"),
     ("asia-south2-b", "Delhi B"),
     ("asia-south2-c", "Delhi C"),
-    // Asia Southeast (97..103)
+    // Asia Southeast (103..109)
     ("asia-southeast1-a", "Singapore A"),
     ("asia-southeast1-b", "Singapore B"),
     ("asia-southeast1-c", "Singapore C"),
     ("asia-southeast2-a", "Jakarta A"),
     ("asia-southeast2-b", "Jakarta B"),
     ("asia-southeast2-c", "Jakarta C"),
-    // Australia (103..109)
+    // Australia (109..115)
     ("australia-southeast1-a", "Sydney A"),
     ("australia-southeast1-b", "Sydney B"),
     ("australia-southeast1-c", "Sydney C"),
     ("australia-southeast2-a", "Melbourne A"),
     ("australia-southeast2-b", "Melbourne B"),
     ("australia-southeast2-c", "Melbourne C"),
-    // Middle East (109..118)
+    // Middle East (115..124)
     ("me-west1-a", "Tel Aviv A"),
     ("me-west1-b", "Tel Aviv B"),
     ("me-west1-c", "Tel Aviv C"),
@@ -149,7 +155,7 @@ pub const GCP_ZONES: &[(&str, &str)] = &[
     ("me-central2-a", "Dammam A"),
     ("me-central2-b", "Dammam B"),
     ("me-central2-c", "Dammam C"),
-    // Africa (118..121)
+    // Africa (124..127)
     ("africa-south1-a", "Johannesburg A"),
     ("africa-south1-b", "Johannesburg B"),
     ("africa-south1-c", "Johannesburg C"),
@@ -161,17 +167,17 @@ pub const GCP_ZONE_GROUPS: &[(&str, usize, usize)] = &[
     ("US East", 4, 13),
     ("US South", 13, 16),
     ("US West", 16, 28),
-    ("North America", 28, 34),
-    ("South America", 34, 40),
-    ("Europe West", 40, 67),
-    ("Europe Other", 67, 76),
-    ("Asia East", 76, 82),
-    ("Asia Northeast", 82, 91),
-    ("Asia South", 91, 97),
-    ("Asia Southeast", 97, 103),
-    ("Australia", 103, 109),
-    ("Middle East", 109, 118),
-    ("Africa", 118, 121),
+    ("North America", 28, 37),
+    ("South America", 37, 43),
+    ("Europe West", 43, 70),
+    ("Europe Other", 70, 82),
+    ("Asia East", 82, 88),
+    ("Asia Northeast", 88, 97),
+    ("Asia South", 97, 103),
+    ("Asia Southeast", 103, 109),
+    ("Australia", 109, 115),
+    ("Middle East", 115, 124),
+    ("Africa", 124, 127),
 ];
 
 // --- Serde response models ---
@@ -216,12 +222,20 @@ struct NetworkInterface {
     access_configs: Vec<AccessConfig>,
     #[serde(rename = "networkIP", default)]
     network_ip: String,
+    #[serde(rename = "ipv6AccessConfigs", default)]
+    ipv6_access_configs: Vec<Ipv6AccessConfig>,
 }
 
 #[derive(Deserialize)]
 struct AccessConfig {
     #[serde(rename = "natIP", default)]
     nat_ip: String,
+}
+
+#[derive(Deserialize)]
+struct Ipv6AccessConfig {
+    #[serde(rename = "externalIpv6", default)]
+    external_ipv6: String,
 }
 
 #[derive(Deserialize)]
@@ -242,7 +256,7 @@ fn last_url_segment(url: &str) -> &str {
 }
 
 /// Select the best IP for an instance.
-/// Prefers external (natIP) > internal (networkIP).
+/// Prefers external (natIP) > internal (networkIP) > external IPv6.
 fn select_ip(instance: &GcpInstance) -> Option<String> {
     for ni in &instance.network_interfaces {
         for ac in &ni.access_configs {
@@ -254,6 +268,13 @@ fn select_ip(instance: &GcpInstance) -> Option<String> {
     for ni in &instance.network_interfaces {
         if !ni.network_ip.is_empty() {
             return Some(ni.network_ip.clone());
+        }
+    }
+    for ni in &instance.network_interfaces {
+        for v6 in &ni.ipv6_access_configs {
+            if !v6.external_ipv6.is_empty() {
+                return Some(v6.external_ipv6.clone());
+            }
         }
     }
     None
@@ -461,7 +482,7 @@ impl Provider for Gcp {
             }
 
             let mut url = format!(
-                "https://compute.googleapis.com/compute/v1/projects/{}/aggregated/instances?maxResults=500",
+                "https://compute.googleapis.com/compute/v1/projects/{}/aggregated/instances?maxResults=500&returnPartialSuccess=true",
                 self.project
             );
             if let Some(ref pt) = page_token {
@@ -677,6 +698,7 @@ mod tests {
                     vec![AccessConfig { nat_ip: nat_ip.to_string() }]
                 },
                 network_ip: network_ip.to_string(),
+                ipv6_access_configs: vec![],
             }],
             disks: vec![],
             tags: None,
@@ -731,10 +753,12 @@ mod tests {
                 NetworkInterface {
                     access_configs: vec![],
                     network_ip: "10.0.0.2".to_string(),
+                    ipv6_access_configs: vec![],
                 },
                 NetworkInterface {
                     access_configs: vec![AccessConfig { nat_ip: "35.192.0.1".to_string() }],
                     network_ip: "10.0.1.2".to_string(),
+                    ipv6_access_configs: vec![],
                 },
             ],
             disks: vec![],
@@ -744,6 +768,124 @@ mod tests {
         };
         // Should prefer external IP from second interface over internal from first
         assert_eq!(select_ip(&inst), Some("35.192.0.1".to_string()));
+    }
+
+    #[test]
+    fn test_select_ip_falls_back_to_ipv6() {
+        let inst = GcpInstance {
+            id: "123".to_string(),
+            name: "test".to_string(),
+            status: String::new(),
+            machine_type: String::new(),
+            network_interfaces: vec![NetworkInterface {
+                access_configs: vec![],
+                network_ip: String::new(),
+                ipv6_access_configs: vec![Ipv6AccessConfig {
+                    external_ipv6: "2600:1900:4000:318::".to_string(),
+                }],
+            }],
+            disks: vec![],
+            tags: None,
+            labels: None,
+            zone: String::new(),
+        };
+        assert_eq!(select_ip(&inst), Some("2600:1900:4000:318::".to_string()));
+    }
+
+    #[test]
+    fn test_select_ip_prefers_ipv4_over_ipv6() {
+        let inst = GcpInstance {
+            id: "123".to_string(),
+            name: "test".to_string(),
+            status: String::new(),
+            machine_type: String::new(),
+            network_interfaces: vec![NetworkInterface {
+                access_configs: vec![AccessConfig { nat_ip: "35.192.0.1".to_string() }],
+                network_ip: "10.0.0.2".to_string(),
+                ipv6_access_configs: vec![Ipv6AccessConfig {
+                    external_ipv6: "2600:1900:4000:318::".to_string(),
+                }],
+            }],
+            disks: vec![],
+            tags: None,
+            labels: None,
+            zone: String::new(),
+        };
+        assert_eq!(select_ip(&inst), Some("35.192.0.1".to_string()));
+    }
+
+    #[test]
+    fn test_select_ip_prefers_internal_over_ipv6() {
+        let inst = GcpInstance {
+            id: "123".to_string(),
+            name: "test".to_string(),
+            status: String::new(),
+            machine_type: String::new(),
+            network_interfaces: vec![NetworkInterface {
+                access_configs: vec![],
+                network_ip: "10.0.0.2".to_string(),
+                ipv6_access_configs: vec![Ipv6AccessConfig {
+                    external_ipv6: "2600:1900:4000:318::".to_string(),
+                }],
+            }],
+            disks: vec![],
+            tags: None,
+            labels: None,
+            zone: String::new(),
+        };
+        assert_eq!(select_ip(&inst), Some("10.0.0.2".to_string()));
+    }
+
+    #[test]
+    fn test_select_ip_ipv6_empty_returns_none() {
+        let inst = GcpInstance {
+            id: "123".to_string(),
+            name: "test".to_string(),
+            status: String::new(),
+            machine_type: String::new(),
+            network_interfaces: vec![NetworkInterface {
+                access_configs: vec![],
+                network_ip: String::new(),
+                ipv6_access_configs: vec![Ipv6AccessConfig {
+                    external_ipv6: String::new(),
+                }],
+            }],
+            disks: vec![],
+            tags: None,
+            labels: None,
+            zone: String::new(),
+        };
+        assert_eq!(select_ip(&inst), None);
+    }
+
+    #[test]
+    fn test_select_ip_ipv6_cross_interface() {
+        // First interface has no IPs, second has IPv6
+        let inst = GcpInstance {
+            id: "123".to_string(),
+            name: "test".to_string(),
+            status: String::new(),
+            machine_type: String::new(),
+            network_interfaces: vec![
+                NetworkInterface {
+                    access_configs: vec![],
+                    network_ip: String::new(),
+                    ipv6_access_configs: vec![],
+                },
+                NetworkInterface {
+                    access_configs: vec![],
+                    network_ip: String::new(),
+                    ipv6_access_configs: vec![Ipv6AccessConfig {
+                        external_ipv6: "2600:1900:4000:318::".to_string(),
+                    }],
+                },
+            ],
+            disks: vec![],
+            tags: None,
+            labels: None,
+            zone: String::new(),
+        };
+        assert_eq!(select_ip(&inst), Some("2600:1900:4000:318::".to_string()));
     }
 
     // =========================================================================
@@ -889,7 +1031,7 @@ mod tests {
 
     #[test]
     fn test_gcp_zones_count() {
-        assert_eq!(GCP_ZONES.len(), 121);
+        assert_eq!(GCP_ZONES.len(), 127);
     }
 
     #[test]
@@ -1057,5 +1199,55 @@ mod tests {
         let resp: AggregatedListResponse = serde_json::from_str(json).unwrap();
         let inst = &resp.items["zones/us-central1-a"].instances[0];
         assert_eq!(inst.id, "12345678901234567890");
+    }
+
+    // =========================================================================
+    // IPv6 deserialization
+    // =========================================================================
+
+    #[test]
+    fn test_parse_ipv6_access_configs() {
+        let json = r#"{
+            "items": {
+                "zones/us-central1-a": {
+                    "instances": [{
+                        "id": "123",
+                        "name": "test-ipv6",
+                        "networkInterfaces": [{
+                            "networkIP": "10.0.0.2",
+                            "accessConfigs": [],
+                            "ipv6AccessConfigs": [{"externalIpv6": "2600:1900:4000:318::"}]
+                        }],
+                        "disks": []
+                    }]
+                }
+            }
+        }"#;
+        let resp: AggregatedListResponse = serde_json::from_str(json).unwrap();
+        let inst = &resp.items["zones/us-central1-a"].instances[0];
+        assert_eq!(inst.network_interfaces[0].ipv6_access_configs.len(), 1);
+        assert_eq!(inst.network_interfaces[0].ipv6_access_configs[0].external_ipv6, "2600:1900:4000:318::");
+    }
+
+    #[test]
+    fn test_parse_missing_ipv6_access_configs() {
+        let json = r#"{
+            "items": {
+                "zones/us-central1-a": {
+                    "instances": [{
+                        "id": "123",
+                        "name": "test-no-ipv6",
+                        "networkInterfaces": [{
+                            "networkIP": "10.0.0.2",
+                            "accessConfigs": [{"natIP": "35.192.0.1"}]
+                        }],
+                        "disks": []
+                    }]
+                }
+            }
+        }"#;
+        let resp: AggregatedListResponse = serde_json::from_str(json).unwrap();
+        let inst = &resp.items["zones/us-central1-a"].instances[0];
+        assert!(inst.network_interfaces[0].ipv6_access_configs.is_empty());
     }
 }

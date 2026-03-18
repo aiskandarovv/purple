@@ -76,6 +76,10 @@ struct ClusterResource {
     tags: Option<String>,
     #[serde(default)]
     ip: Option<String>,
+    #[serde(default)]
+    maxcpu: Option<u64>,
+    #[serde(default)]
+    maxmem: Option<u64>,
 }
 
 #[derive(Deserialize, Default)]
@@ -134,8 +138,8 @@ struct LxcInterface {
 
 /// Outcome of resolving an IP for a single VM/container.
 enum ResolveOutcome {
-    /// Successfully resolved an IP address.
-    Resolved(String),
+    /// Successfully resolved an IP address (ip, optional ostype).
+    Resolved(String, Option<String>),
     /// VM is stopped, cannot resolve runtime IP.
     Stopped,
     /// No IP could be determined (running but no static or agent IP).
@@ -147,6 +151,60 @@ enum ResolveOutcome {
 }
 
 // --- Helper functions ---
+
+/// Map QEMU ostype codes to human-readable names.
+fn map_qemu_ostype(ostype: &str) -> &str {
+    match ostype {
+        "l26" | "l24" => "Linux",
+        "win11" => "Windows 11",
+        "win10" => "Windows 10",
+        "win8" => "Windows 8",
+        "win7" => "Windows 7",
+        "wvista" => "Windows Vista",
+        "w2k22" => "Windows Server 2022",
+        "w2k19" => "Windows Server 2019",
+        "w2k16" => "Windows Server 2016",
+        "w2k12" => "Windows Server 2012",
+        "w2k8" => "Windows Server 2008",
+        "w2k3" => "Windows Server 2003",
+        "wxp" => "Windows XP",
+        "w2k" => "Windows 2000",
+        "solaris" => "Solaris",
+        "other" => "Other",
+        other => other,
+    }
+}
+
+/// Extract ostype from a VmConfig's extra fields.
+fn extract_ostype(config: &VmConfig) -> Option<String> {
+    config
+        .extra
+        .get("ostype")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+/// Format CPU/memory as a compact plan string (e.g. "2c/4GiB").
+fn format_plan(maxcpu: Option<u64>, maxmem: Option<u64>) -> Option<String> {
+    let format_mem = |mem: u64| -> String {
+        let gib = mem / 1_073_741_824;
+        if gib > 0 {
+            format!("{}GiB", gib)
+        } else {
+            let mib = mem / 1_048_576;
+            format!("{}MiB", mib)
+        }
+    };
+    match (maxcpu, maxmem) {
+        (Some(cpu), Some(mem)) if cpu > 0 && mem > 0 => {
+            Some(format!("{}c/{}", cpu, format_mem(mem)))
+        }
+        (Some(cpu), _) if cpu > 0 => Some(format!("{}c", cpu)),
+        (_, Some(mem)) if mem > 0 => Some(format_mem(mem)),
+        _ => None,
+    }
+}
 
 /// Build the PVE auth header value. Prepends "PVEAPIToken=" if not already present.
 fn auth_header(token: &str) -> String {
@@ -466,17 +524,17 @@ impl Provider for Proxmox {
                 .map(|ip| super::strip_cidr(ip).to_string())
                 .filter(|ip| !is_unusable_ip(ip));
             let outcome = if let Some(ip) = cluster_ip {
-                ResolveOutcome::Resolved(ip)
+                ResolveOutcome::Resolved(ip, None)
             } else if resource.resource_type == "qemu" {
                 self.resolve_qemu_ip(&agent, &base, &auth, resource)
             } else {
                 self.resolve_lxc_ip(&agent, &base, &auth, resource)
             };
 
-            let ip = match outcome {
-                ResolveOutcome::Resolved(ip) => {
+            let (ip, ostype) = match outcome {
+                ResolveOutcome::Resolved(ip, ostype) => {
                     resolved_count += 1;
-                    ip
+                    (ip, ostype)
                 }
                 ResolveOutcome::Stopped => {
                     skipped_stopped += 1;
@@ -509,6 +567,17 @@ impl Provider for Proxmox {
             }
             if !resource.resource_type.is_empty() {
                 metadata.push(("type".to_string(), resource.resource_type.clone()));
+            }
+            if let Some(plan) = format_plan(resource.maxcpu, resource.maxmem) {
+                metadata.push(("plan".to_string(), plan));
+            }
+            if let Some(os) = ostype {
+                let label = if resource.resource_type == "qemu" {
+                    map_qemu_ostype(&os).to_string()
+                } else {
+                    os
+                };
+                metadata.push(("os".to_string(), label));
             }
             if !resource.status.is_empty() {
                 metadata.push(("status".to_string(), resource.status.clone()));
@@ -599,10 +668,12 @@ impl Proxmox {
             Err(_) => return ResolveOutcome::Failed,
         };
 
+        let ostype = extract_ostype(&config);
+
         // Try static IP from ipconfig0..9
         for ipconfig in extract_numbered_values(&config.extra, "ipconfig") {
             if let Some(ip) = parse_ipconfig_ip(&ipconfig) {
-                return ResolveOutcome::Resolved(ip);
+                return ResolveOutcome::Resolved(ip, ostype);
             }
         }
 
@@ -623,7 +694,7 @@ impl Proxmox {
             Ok(resp) => {
                 match resp.into_json::<GuestAgentNetworkResponse>() {
                     Ok(ga) => match select_guest_agent_ip(&ga.data.result) {
-                        Some(ip) => ResolveOutcome::Resolved(ip),
+                        Some(ip) => ResolveOutcome::Resolved(ip, ostype),
                         None => ResolveOutcome::NoIp,
                     },
                     Err(_) => ResolveOutcome::Failed,
@@ -671,10 +742,12 @@ impl Proxmox {
             Err(_) => return ResolveOutcome::Failed,
         };
 
+        let ostype = extract_ostype(&config);
+
         // Try static IP from net0..9
         for net in extract_numbered_values(&config.extra, "net") {
             if let Some(ip) = parse_lxc_net_ip(&net) {
-                return ResolveOutcome::Resolved(ip);
+                return ResolveOutcome::Resolved(ip, ostype);
             }
         }
 
@@ -691,7 +764,7 @@ impl Proxmox {
             Ok(resp) => {
                 match resp.into_json::<PveResponse<Vec<LxcInterface>>>() {
                     Ok(r) => match select_lxc_interface_ip(&r.data) {
-                        Some(ip) => ResolveOutcome::Resolved(ip),
+                        Some(ip) => ResolveOutcome::Resolved(ip, ostype),
                         None => ResolveOutcome::NoIp,
                     },
                     Err(_) => ResolveOutcome::Failed,
@@ -1245,6 +1318,8 @@ mod tests {
             template: 0,
             tags: None,
             ip: None,
+            maxcpu: None,
+            maxmem: None,
         };
         assert_eq!(format!("{}:{}", resource.resource_type, resource.vmid), "qemu:100");
     }
@@ -1286,11 +1361,11 @@ mod tests {
         let resources = [
             ClusterResource {
                 resource_type: "qemu".into(), vmid: 100, name: "vm".into(),
-                node: "n".into(), status: "running".into(), template: 0, tags: None, ip: None,
+                node: "n".into(), status: "running".into(), template: 0, tags: None, ip: None, maxcpu: None, maxmem: None,
             },
             ClusterResource {
                 resource_type: "qemu".into(), vmid: 999, name: "tmpl".into(),
-                node: "n".into(), status: "stopped".into(), template: 1, tags: None, ip: None,
+                node: "n".into(), status: "stopped".into(), template: 1, tags: None, ip: None, maxcpu: None, maxmem: None,
             },
         ];
         let filtered: Vec<_> = resources.iter()
@@ -1593,7 +1668,7 @@ mod tests {
     fn test_name_fallback_when_empty() {
         let resource = ClusterResource {
             resource_type: "lxc".into(), vmid: 200, name: String::new(),
-            node: "n".into(), status: "running".into(), template: 0, tags: None, ip: None,
+            node: "n".into(), status: "running".into(), template: 0, tags: None, ip: None, maxcpu: None, maxmem: None,
         };
         let name = if resource.name.is_empty() {
             format!("{}-{}", resource.resource_type, resource.vmid)
@@ -1917,6 +1992,8 @@ mod tests {
             template: 0,
             tags: None,
             ip: None,
+            maxcpu: None,
+            maxmem: None,
         };
         assert_eq!(format!("{}:{}", resource.resource_type, resource.vmid), "lxc:200");
     }
@@ -2204,6 +2281,8 @@ mod tests {
             template: 0,
             tags: None,
             ip: None,
+            maxcpu: None,
+            maxmem: None,
         };
         assert_eq!(format!("{}:{}", resource.resource_type, resource.vmid), "qemu:0");
     }
@@ -2248,15 +2327,15 @@ mod tests {
         let resources = [
             ClusterResource {
                 resource_type: "storage".into(), vmid: 0, name: "local".into(),
-                node: "n".into(), status: "available".into(), template: 0, tags: None, ip: None,
+                node: "n".into(), status: "available".into(), template: 0, tags: None, ip: None, maxcpu: None, maxmem: None,
             },
             ClusterResource {
                 resource_type: "node".into(), vmid: 0, name: "pve1".into(),
-                node: "pve1".into(), status: "online".into(), template: 0, tags: None, ip: None,
+                node: "pve1".into(), status: "online".into(), template: 0, tags: None, ip: None, maxcpu: None, maxmem: None,
             },
             ClusterResource {
                 resource_type: "qemu".into(), vmid: 100, name: "vm".into(),
-                node: "pve1".into(), status: "running".into(), template: 0, tags: None, ip: None,
+                node: "pve1".into(), status: "running".into(), template: 0, tags: None, ip: None, maxcpu: None, maxmem: None,
             },
         ];
         let filtered: Vec<_> = resources.iter()
@@ -2908,5 +2987,132 @@ mod tests {
             parse_lxc_net_ip("name=eth0,bridge=vmbr0,ip=dhcp,ip6=fd00::1/64"),
             Some("fd00::1".to_string())
         );
+    }
+
+    // =========================================================================
+    // map_qemu_ostype
+    // =========================================================================
+
+    #[test]
+    fn test_map_qemu_ostype_linux() {
+        assert_eq!(map_qemu_ostype("l26"), "Linux");
+        assert_eq!(map_qemu_ostype("l24"), "Linux");
+    }
+
+    #[test]
+    fn test_map_qemu_ostype_windows() {
+        assert_eq!(map_qemu_ostype("win11"), "Windows 11");
+        assert_eq!(map_qemu_ostype("win10"), "Windows 10");
+        assert_eq!(map_qemu_ostype("win8"), "Windows 8");
+        assert_eq!(map_qemu_ostype("win7"), "Windows 7");
+        assert_eq!(map_qemu_ostype("wvista"), "Windows Vista");
+        assert_eq!(map_qemu_ostype("w2k22"), "Windows Server 2022");
+        assert_eq!(map_qemu_ostype("w2k19"), "Windows Server 2019");
+        assert_eq!(map_qemu_ostype("w2k16"), "Windows Server 2016");
+        assert_eq!(map_qemu_ostype("w2k12"), "Windows Server 2012");
+        assert_eq!(map_qemu_ostype("w2k8"), "Windows Server 2008");
+        assert_eq!(map_qemu_ostype("w2k3"), "Windows Server 2003");
+        assert_eq!(map_qemu_ostype("wxp"), "Windows XP");
+        assert_eq!(map_qemu_ostype("w2k"), "Windows 2000");
+    }
+
+    #[test]
+    fn test_map_qemu_ostype_passthrough() {
+        assert_eq!(map_qemu_ostype("freebsd"), "freebsd");
+    }
+
+    // =========================================================================
+    // extract_ostype
+    // =========================================================================
+
+    #[test]
+    fn test_extract_ostype_present() {
+        let mut extra = HashMap::new();
+        extra.insert("ostype".to_string(), Value::String("l26".to_string()));
+        let config = VmConfig { agent: None, extra };
+        assert_eq!(extract_ostype(&config), Some("l26".to_string()));
+    }
+
+    #[test]
+    fn test_extract_ostype_missing() {
+        let config = VmConfig::default();
+        assert_eq!(extract_ostype(&config), None);
+    }
+
+    #[test]
+    fn test_extract_ostype_empty() {
+        let mut extra = HashMap::new();
+        extra.insert("ostype".to_string(), Value::String(String::new()));
+        let config = VmConfig { agent: None, extra };
+        assert_eq!(extract_ostype(&config), None);
+    }
+
+    // =========================================================================
+    // format_plan
+    // =========================================================================
+
+    #[test]
+    fn test_format_plan_both() {
+        assert_eq!(
+            format_plan(Some(2), Some(4_294_967_296)),
+            Some("2c/4GiB".to_string())
+        );
+    }
+
+    #[test]
+    fn test_format_plan_cpu_only() {
+        assert_eq!(format_plan(Some(4), None), Some("4c".to_string()));
+    }
+
+    #[test]
+    fn test_format_plan_mem_only() {
+        assert_eq!(
+            format_plan(None, Some(2_147_483_648)),
+            Some("2GiB".to_string())
+        );
+    }
+
+    #[test]
+    fn test_format_plan_none() {
+        assert_eq!(format_plan(None, None), None);
+    }
+
+    #[test]
+    fn test_format_plan_zeros() {
+        assert_eq!(format_plan(Some(0), Some(0)), None);
+    }
+
+    #[test]
+    fn test_format_plan_sub_gib_memory() {
+        // 512 MiB = 536870912 bytes
+        assert_eq!(
+            format_plan(Some(1), Some(536_870_912)),
+            Some("1c/512MiB".to_string())
+        );
+        // 256 MiB
+        assert_eq!(
+            format_plan(Some(2), Some(268_435_456)),
+            Some("2c/256MiB".to_string())
+        );
+    }
+
+    // =========================================================================
+    // ClusterResource maxcpu/maxmem deserialization
+    // =========================================================================
+
+    #[test]
+    fn test_cluster_resource_with_maxcpu_maxmem() {
+        let json = r#"{"type":"qemu","vmid":100,"name":"web","node":"pve1","status":"running","template":0,"maxcpu":4,"maxmem":8589934592}"#;
+        let r: ClusterResource = serde_json::from_str(json).unwrap();
+        assert_eq!(r.maxcpu, Some(4));
+        assert_eq!(r.maxmem, Some(8_589_934_592));
+    }
+
+    #[test]
+    fn test_cluster_resource_without_maxcpu_maxmem() {
+        let json = r#"{"type":"qemu","vmid":100,"name":"web","node":"pve1","status":"running","template":0}"#;
+        let r: ClusterResource = serde_json::from_str(json).unwrap();
+        assert_eq!(r.maxcpu, None);
+        assert_eq!(r.maxmem, None);
     }
 }

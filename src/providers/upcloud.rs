@@ -60,6 +60,20 @@ struct ServerDetailResponse {
 struct ServerDetail {
     #[serde(default)]
     networking: Networking,
+    #[serde(default)]
+    storage_devices: Option<StorageDevices>,
+}
+
+#[derive(Deserialize)]
+struct StorageDevices {
+    #[serde(default)]
+    storage_device: Vec<StorageDevice>,
+}
+
+#[derive(Deserialize)]
+struct StorageDevice {
+    #[serde(default)]
+    storage_title: String,
 }
 
 #[derive(Deserialize, Default)]
@@ -242,6 +256,13 @@ impl Provider for UpCloud {
             }
             if !server.plan.is_empty() {
                 metadata.push(("plan".to_string(), server.plan.clone()));
+            }
+            if let Some(ref sd) = detail.server.storage_devices {
+                if let Some(first) = sd.storage_device.first() {
+                    if !first.storage_title.is_empty() {
+                        metadata.push(("os".to_string(), first.storage_title.clone()));
+                    }
+                }
             }
             if !server.state.is_empty() {
                 metadata.push(("status".to_string(), server.state.clone()));
@@ -977,5 +998,49 @@ mod tests {
         }
         tags.sort();
         assert_eq!(tags, vec!["apple", "env=prod", "tier", "zebra"]);
+    }
+
+    // =========================================================================
+    // OS metadata from storage_devices
+    // =========================================================================
+
+    #[test]
+    fn test_parse_detail_with_storage_devices() {
+        let json = r#"{"server": {"networking": {"interfaces": {"interface": []}},
+            "storage_devices": {"storage_device": [
+                {"storage_title": "Ubuntu Server 24.04 LTS", "type": "disk"},
+                {"storage_title": "Extra disk", "type": "disk"}
+            ]}}}"#;
+        let resp: ServerDetailResponse = serde_json::from_str(json).unwrap();
+        let sd = resp.server.storage_devices.unwrap();
+        assert_eq!(sd.storage_device[0].storage_title, "Ubuntu Server 24.04 LTS");
+    }
+
+    #[test]
+    fn test_os_metadata_from_storage_devices() {
+        let json = r#"{"server": {"networking": {"interfaces": {"interface": []}},
+            "storage_devices": {"storage_device": [
+                {"storage_title": "Debian GNU/Linux 12"}
+            ]}}}"#;
+        let resp: ServerDetailResponse = serde_json::from_str(json).unwrap();
+        let sd = resp.server.storage_devices.unwrap();
+        let title = &sd.storage_device[0].storage_title;
+        assert_eq!(title, "Debian GNU/Linux 12");
+    }
+
+    #[test]
+    fn test_os_metadata_missing_storage_devices() {
+        let json = r#"{"server": {"networking": {"interfaces": {"interface": []}}}}"#;
+        let resp: ServerDetailResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.server.storage_devices.is_none());
+    }
+
+    #[test]
+    fn test_os_metadata_empty_storage_device_list() {
+        let json = r#"{"server": {"networking": {"interfaces": {"interface": []}},
+            "storage_devices": {"storage_device": []}}}"#;
+        let resp: ServerDetailResponse = serde_json::from_str(json).unwrap();
+        let sd = resp.server.storage_devices.unwrap();
+        assert!(sd.storage_device.is_empty());
     }
 }

@@ -24,6 +24,8 @@ struct HetznerServer {
     #[serde(default)]
     datacenter: Option<HetznerDatacenter>,
     #[serde(default)]
+    location: Option<HetznerLocation>,
+    #[serde(default)]
     status: String,
     #[serde(default)]
     image: Option<HetznerImage>,
@@ -43,6 +45,12 @@ struct HetznerServerType {
 
 #[derive(Deserialize)]
 struct HetznerDatacenter {
+    #[serde(default)]
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct HetznerLocation {
     #[serde(default)]
     name: String,
 }
@@ -141,10 +149,20 @@ impl Provider for Hetzner {
                         .collect();
                     tags.sort();
                     let mut metadata = Vec::new();
-                    if let Some(ref dc) = server.datacenter {
-                        if !dc.name.is_empty() {
-                            metadata.push(("region".to_string(), dc.name.clone()));
-                        }
+                    let region = server
+                        .location
+                        .as_ref()
+                        .map(|l| &l.name)
+                        .filter(|n| !n.is_empty())
+                        .or_else(|| {
+                            server
+                                .datacenter
+                                .as_ref()
+                                .map(|d| &d.name)
+                                .filter(|n| !n.is_empty())
+                        });
+                    if let Some(name) = region {
+                        metadata.push(("region".to_string(), name.clone()));
                     }
                     if let Some(ref st) = server.server_type {
                         if !st.name.is_empty() {
@@ -709,5 +727,69 @@ mod tests {
         let resp: HetznerResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.meta.pagination.page, 1);
         assert_eq!(resp.meta.pagination.last_page, 1);
+    }
+
+    // =========================================================================
+    // location preferred over datacenter
+    // =========================================================================
+
+    fn select_region(server: &HetznerServer) -> Option<String> {
+        server
+            .location
+            .as_ref()
+            .map(|l| &l.name)
+            .filter(|n| !n.is_empty())
+            .or_else(|| {
+                server
+                    .datacenter
+                    .as_ref()
+                    .map(|d| &d.name)
+                    .filter(|n| !n.is_empty())
+            })
+            .cloned()
+    }
+
+    #[test]
+    fn test_location_preferred_over_datacenter() {
+        let json = r#"{
+            "servers": [{"id": 1, "name": "a", "public_net": {"ipv4": {"ip": "1.2.3.4"}},
+                "labels": {}, "datacenter": {"name": "fsn1-dc14"}, "location": {"name": "fsn1"}}],
+            "meta": {"pagination": {"page": 1, "last_page": 1}}
+        }"#;
+        let resp: HetznerResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(select_region(&resp.servers[0]), Some("fsn1".to_string()));
+    }
+
+    #[test]
+    fn test_datacenter_fallback_when_no_location() {
+        let json = r#"{
+            "servers": [{"id": 1, "name": "a", "public_net": {"ipv4": {"ip": "1.2.3.4"}},
+                "labels": {}, "datacenter": {"name": "fsn1-dc14"}}],
+            "meta": {"pagination": {"page": 1, "last_page": 1}}
+        }"#;
+        let resp: HetznerResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(select_region(&resp.servers[0]), Some("fsn1-dc14".to_string()));
+    }
+
+    #[test]
+    fn test_empty_location_falls_back_to_datacenter() {
+        let json = r#"{
+            "servers": [{"id": 1, "name": "a", "public_net": {"ipv4": {"ip": "1.2.3.4"}},
+                "labels": {}, "datacenter": {"name": "fsn1-dc14"}, "location": {"name": ""}}],
+            "meta": {"pagination": {"page": 1, "last_page": 1}}
+        }"#;
+        let resp: HetznerResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(select_region(&resp.servers[0]), Some("fsn1-dc14".to_string()));
+    }
+
+    #[test]
+    fn test_no_location_no_datacenter() {
+        let json = r#"{
+            "servers": [{"id": 1, "name": "a", "public_net": {"ipv4": {"ip": "1.2.3.4"}},
+                "labels": {}}],
+            "meta": {"pagination": {"page": 1, "last_page": 1}}
+        }"#;
+        let resp: HetznerResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(select_region(&resp.servers[0]), None);
     }
 }
