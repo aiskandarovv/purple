@@ -1095,6 +1095,8 @@ purple provider add proxmox --url https://pve:8006 --token user@pam!token=secret
 purple provider add scaleway --token TOKEN --regions fr-par-1,nl-ams-1
 purple provider add gcp --token /path/to/sa-key.json --project my-project --regions us-central1-a
 purple provider add azure --token /path/to/sp.json --regions SUBSCRIPTION_ID
+purple provider add tailscale                               # local CLI, no token needed
+purple provider add tailscale --token tskey-api-YOUR_KEY    # or use API
 purple provider add digitalocean --token TOKEN --no-auto-sync   # --auto-sync to re-enable
 purple provider list                # List configured providers
 purple provider remove digitalocean # Remove provider
@@ -1132,6 +1134,7 @@ Provider-specific details:
 - GCP (Compute Engine): multi-zone sync via the aggregatedList API. Authenticate with a service account JSON key file (JWT RS256, scope: compute.readonly) or a raw access token (e.g. from gcloud auth print-access-token). Requires a GCP project ID. Empty zone filter syncs all zones. Network tags and labels are synced as host tags
 - Proxmox VE: self-signed TLS certificates supported. Per-VM detail API calls. Guest agent and LXC interface detection
 - Azure: multi-subscription sync via the Azure Resource Manager API. Authenticate with a service principal JSON file (tenantId, clientId, clientSecret -> OAuth2 client credentials) or a raw Bearer token (e.g. from az account get-access-token). Requires subscription IDs via --regions. Batch IP resolution (3 list calls: VMs, NICs, Public IPs). VM tags synced as host tags
+- Tailscale: dual mode. Without a token it uses the local \`tailscale status --json\` CLI (no API key needed). With a token it uses the Tailscale HTTP API. Tags are synced (tag: prefix stripped). IPv4 (100.x) preferred over IPv6
 
 Per-provider auto_sync toggle controls startup sync. Default is true for all providers except Proxmox (default false). Manual sync via the TUI (s key) or CLI always works. Preview changes with --dry-run. Remove deleted hosts with --remove. Replace local tags with --reset-tags.
 
