@@ -115,7 +115,7 @@ jobs:
           # Extract the section for this version from CHANGELOG.md
           # Matches from "## X.Y.Z" until the next "## " or end of file
           # Uses awk -v to avoid regex injection (dots in semver escaped)
-          NOTES=$(awk -v ver="$VERSION" 'BEGIN{gsub(/\./,"\\.",ver)} $0 ~ "^## "ver"$",/^## /' CHANGELOG.md | sed '1d;/^## /d')
+          NOTES=$(awk -v ver="$VERSION" 'BEGIN{gsub(/\./,"\\.",ver)} $0 ~ "^## "ver"$"{found=1; next} found && /^## /{exit} found' CHANGELOG.md)
           # Check for missing or whitespace-only entries
           if [ -z "$(printf '%s' "$NOTES" | tr -d '[:space:]')" ]; then
             echo "::error::No changelog entry found for ${VERSION}. Add a '## ${VERSION}' section to CHANGELOG.md."
