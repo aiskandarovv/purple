@@ -331,10 +331,14 @@ fn render_display_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::
         if let Some(update) = update_title {
             block = block.title_top(update.right_aligned());
         }
-        let empty_msg =
-            Paragraph::new("  It's quiet in here... Press 'a' to add a host or 'S' for cloud sync.")
-                .style(theme::muted())
-                .block(block);
+        let msg = if matches!(app.screen, app::Screen::Welcome { .. }) {
+            ""
+        } else {
+            "  It's quiet in here... Press 'a' to add a host or 'S' for cloud sync."
+        };
+        let empty_msg = Paragraph::new(msg)
+            .style(theme::muted())
+            .block(block);
         frame.render_widget(empty_msg, area);
         return;
     }

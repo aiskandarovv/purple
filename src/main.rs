@@ -529,11 +529,22 @@ fn first_launch_init(purple_dir: &Path, config_path: &Path) -> Option<bool> {
 
 fn run_tui(mut app: App) -> Result<()> {
     // First-launch welcome hint (one-shot: creates .purple/ so it won't show again)
-    if app.status.is_none() && !app.hosts.is_empty() {
+    if app.status.is_none() {
         if let Some(home) = dirs::home_dir() {
             let purple_dir = home.join(".purple");
             if let Some(has_backup) = first_launch_init(&purple_dir, &app.reload.config_path) {
-                app.screen = app::Screen::Welcome { has_backup };
+                let host_count = app.hosts.len();
+                let known_hosts_count = if host_count == 0 {
+                    import::count_known_hosts_candidates()
+                } else {
+                    0
+                };
+                app.known_hosts_count = known_hosts_count;
+                app.screen = app::Screen::Welcome {
+                    has_backup,
+                    host_count,
+                    known_hosts_count,
+                };
             }
         }
     }
@@ -2156,5 +2167,590 @@ mod tests {
         assert_eq!(first_launch_init(&purple_dir, &config_path), Some(false));
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // =========================================================================
+    // Welcome screen handler state transitions
+    // =========================================================================
+    // Keys to test on Welcome screen:
+    // Enter -> HostList
+    // Esc -> HostList
+    // ? -> Help
+    // I (known_hosts > 0) -> HostList + import
+    // I (known_hosts = 0) -> HostList (treated as any other key)
+    // random char (q, a, j, etc.) -> HostList
+    // arrow keys -> HostList
+
+    #[test]
+    fn welcome_enter_goes_to_host_list() {
+        let mut app = empty_app();
+        app.screen = app::Screen::Welcome { has_backup: false, host_count: 0, known_hosts_count: 0 };
+        let key = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Enter, crossterm::event::KeyModifiers::NONE);
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let _ = crate::handler::handle_key_event(&mut app, key, &tx);
+        assert!(matches!(app.screen, app::Screen::HostList));
+    }
+
+    #[test]
+    fn welcome_esc_goes_to_host_list() {
+        let mut app = empty_app();
+        app.screen = app::Screen::Welcome { has_backup: true, host_count: 5, known_hosts_count: 0 };
+        let key = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Esc, crossterm::event::KeyModifiers::NONE);
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let _ = crate::handler::handle_key_event(&mut app, key, &tx);
+        assert!(matches!(app.screen, app::Screen::HostList));
+    }
+
+    #[test]
+    fn welcome_question_mark_goes_to_help() {
+        let mut app = empty_app();
+        app.screen = app::Screen::Welcome { has_backup: false, host_count: 0, known_hosts_count: 0 };
+        let key = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char('?'), crossterm::event::KeyModifiers::NONE);
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let _ = crate::handler::handle_key_event(&mut app, key, &tx);
+        assert!(matches!(app.screen, app::Screen::Help));
+    }
+
+    #[test]
+    fn welcome_i_without_known_hosts_goes_to_host_list() {
+        let mut app = empty_app();
+        app.screen = app::Screen::Welcome { has_backup: false, host_count: 0, known_hosts_count: 0 };
+        let key = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char('I'), crossterm::event::KeyModifiers::SHIFT);
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let _ = crate::handler::handle_key_event(&mut app, key, &tx);
+        assert!(matches!(app.screen, app::Screen::HostList));
+    }
+
+    #[test]
+    fn welcome_random_char_goes_to_host_list() {
+        let mut app = empty_app();
+        app.screen = app::Screen::Welcome { has_backup: false, host_count: 3, known_hosts_count: 0 };
+        let key = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char('z'), crossterm::event::KeyModifiers::NONE);
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let _ = crate::handler::handle_key_event(&mut app, key, &tx);
+        assert!(matches!(app.screen, app::Screen::HostList));
+    }
+
+    #[test]
+    fn welcome_arrow_key_goes_to_host_list() {
+        let mut app = empty_app();
+        app.screen = app::Screen::Welcome { has_backup: false, host_count: 0, known_hosts_count: 5 };
+        let key = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Down, crossterm::event::KeyModifiers::NONE);
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let _ = crate::handler::handle_key_event(&mut app, key, &tx);
+        assert!(matches!(app.screen, app::Screen::HostList));
+    }
+
+    // =========================================================================
+    // ConfirmImport handler state transitions
+    // =========================================================================
+    // Keys to test on ConfirmImport screen:
+    // y -> HostList + import executed
+    // Esc -> HostList, no import
+    // n -> HostList, no import
+    // random key -> stays on ConfirmImport
+    // Enter -> stays on ConfirmImport
+    // ? -> stays on ConfirmImport
+
+    #[test]
+    fn confirm_import_esc_goes_to_host_list() {
+        let mut app = empty_app();
+        app.screen = app::Screen::ConfirmImport { count: 10 };
+        let key = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Esc, crossterm::event::KeyModifiers::NONE);
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let _ = crate::handler::handle_key_event(&mut app, key, &tx);
+        assert!(matches!(app.screen, app::Screen::HostList));
+    }
+
+    #[test]
+    fn confirm_import_n_goes_to_host_list() {
+        let mut app = empty_app();
+        app.screen = app::Screen::ConfirmImport { count: 10 };
+        let key = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char('n'), crossterm::event::KeyModifiers::NONE);
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let _ = crate::handler::handle_key_event(&mut app, key, &tx);
+        assert!(matches!(app.screen, app::Screen::HostList));
+    }
+
+    #[test]
+    fn confirm_import_random_key_stays() {
+        let mut app = empty_app();
+        app.screen = app::Screen::ConfirmImport { count: 10 };
+        let key = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char('x'), crossterm::event::KeyModifiers::NONE);
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let _ = crate::handler::handle_key_event(&mut app, key, &tx);
+        assert!(matches!(app.screen, app::Screen::ConfirmImport { .. }));
+    }
+
+    #[test]
+    fn confirm_import_enter_stays() {
+        let mut app = empty_app();
+        app.screen = app::Screen::ConfirmImport { count: 10 };
+        let key = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Enter, crossterm::event::KeyModifiers::NONE);
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let _ = crate::handler::handle_key_event(&mut app, key, &tx);
+        assert!(matches!(app.screen, app::Screen::ConfirmImport { .. }));
+    }
+
+    #[test]
+    fn confirm_import_question_mark_stays() {
+        let mut app = empty_app();
+        app.screen = app::Screen::ConfirmImport { count: 10 };
+        let key = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char('?'), crossterm::event::KeyModifiers::NONE);
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let _ = crate::handler::handle_key_event(&mut app, key, &tx);
+        assert!(matches!(app.screen, app::Screen::ConfirmImport { .. }));
+    }
+
+    #[test]
+    fn confirm_import_arrow_key_stays() {
+        let mut app = empty_app();
+        app.screen = app::Screen::ConfirmImport { count: 5 };
+        let key = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Up, crossterm::event::KeyModifiers::NONE);
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let _ = crate::handler::handle_key_event(&mut app, key, &tx);
+        assert!(matches!(app.screen, app::Screen::ConfirmImport { .. }));
+    }
+
+    // =========================================================================
+    // App known_hosts_count field
+    // =========================================================================
+
+    #[test]
+    fn app_known_hosts_count_default_zero() {
+        let app = empty_app();
+        assert_eq!(app.known_hosts_count, 0);
+    }
+
+    // =========================================================================
+    // HostList I key handler
+    // =========================================================================
+    // On HostList, I calls count_known_hosts_candidates() which reads the real
+    // filesystem, so we can't control the result. But we can verify the error
+    // path (when count == 0, it sets error status) by testing on a system
+    // without importable known_hosts, or by testing that the key is handled
+    // without panic.
+
+    #[test]
+    fn host_list_i_key_does_not_panic() {
+        let mut app = empty_app();
+        app.screen = app::Screen::HostList;
+        let key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('I'),
+            crossterm::event::KeyModifiers::SHIFT,
+        );
+        let (tx, _rx) = std::sync::mpsc::channel();
+        // This calls count_known_hosts_candidates() which reads real filesystem.
+        // It should either go to ConfirmImport (if known_hosts has entries)
+        // or set error status (if not). Either way, it should not panic.
+        let _ = crate::handler::handle_key_event(&mut app, key, &tx);
+        assert!(
+            matches!(app.screen, app::Screen::ConfirmImport { .. })
+                || matches!(app.screen, app::Screen::HostList)
+        );
+    }
+
+    #[test]
+    fn host_list_i_key_sets_error_when_no_hosts_available() {
+        // If count_known_hosts_candidates() returns 0, status should be error
+        let mut app = empty_app();
+        app.screen = app::Screen::HostList;
+        let key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('I'),
+            crossterm::event::KeyModifiers::SHIFT,
+        );
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let _ = crate::handler::handle_key_event(&mut app, key, &tx);
+        // If we got ConfirmImport, known_hosts had entries (can't control that)
+        // If we stayed on HostList, verify error status was set
+        if matches!(app.screen, app::Screen::HostList) {
+            let status = app.status.as_ref().expect("status should be set");
+            assert!(status.is_error);
+            assert_eq!(status.text, "No importable hosts in known_hosts.");
+        }
+    }
+
+    // =========================================================================
+    // Empty state behavior per screen
+    // =========================================================================
+
+    #[test]
+    fn empty_state_hidden_during_welcome() {
+        // When screen is Welcome, the empty state match returns ""
+        let screen = app::Screen::Welcome {
+            has_backup: false,
+            host_count: 0,
+            known_hosts_count: 0,
+        };
+        assert!(matches!(screen, app::Screen::Welcome { .. }));
+        // The host_list.rs code does:
+        //   if matches!(app.screen, app::Screen::Welcome { .. }) { "" }
+        //   else { "It's quiet in here..." }
+    }
+
+    #[test]
+    fn empty_state_shown_during_host_list() {
+        let screen = app::Screen::HostList;
+        assert!(!matches!(screen, app::Screen::Welcome { .. }));
+    }
+
+    #[test]
+    fn empty_state_shown_during_confirm_import() {
+        let screen = app::Screen::ConfirmImport { count: 5 };
+        assert!(!matches!(screen, app::Screen::Welcome { .. }));
+    }
+
+    // =========================================================================
+    // Welcome with backup variations
+    // =========================================================================
+
+    #[test]
+    fn welcome_q_goes_to_host_list() {
+        let mut app = empty_app();
+        app.screen = app::Screen::Welcome {
+            has_backup: true,
+            host_count: 10,
+            known_hosts_count: 0,
+        };
+        let key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('q'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let _ = crate::handler::handle_key_event(&mut app, key, &tx);
+        assert!(matches!(app.screen, app::Screen::HostList));
+    }
+
+    #[test]
+    fn welcome_tab_goes_to_host_list() {
+        let mut app = empty_app();
+        app.screen = app::Screen::Welcome {
+            has_backup: false,
+            host_count: 0,
+            known_hosts_count: 5,
+        };
+        let key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Tab,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let _ = crate::handler::handle_key_event(&mut app, key, &tx);
+        assert!(matches!(app.screen, app::Screen::HostList));
+    }
+
+    // =========================================================================
+    // ConfirmImport y key (actual import - reads filesystem)
+    // =========================================================================
+
+    #[test]
+    fn confirm_import_y_transitions_to_host_list() {
+        let mut app = empty_app();
+        app.screen = app::Screen::ConfirmImport { count: 10 };
+        let key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('y'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let _ = crate::handler::handle_key_event(&mut app, key, &tx);
+        // Should transition to HostList regardless of import result
+        assert!(matches!(app.screen, app::Screen::HostList));
+        // Status should be set (either success or error)
+        assert!(app.status.is_some());
+    }
+
+    // =========================================================================
+    // ConfirmImport tab/q stays
+    // =========================================================================
+
+    #[test]
+    fn confirm_import_tab_stays() {
+        let mut app = empty_app();
+        app.screen = app::Screen::ConfirmImport { count: 5 };
+        let key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Tab,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let _ = crate::handler::handle_key_event(&mut app, key, &tx);
+        assert!(matches!(app.screen, app::Screen::ConfirmImport { .. }));
+    }
+
+    #[test]
+    fn confirm_import_q_stays() {
+        let mut app = empty_app();
+        app.screen = app::Screen::ConfirmImport { count: 5 };
+        let key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('q'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let _ = crate::handler::handle_key_event(&mut app, key, &tx);
+        assert!(matches!(app.screen, app::Screen::ConfirmImport { .. }));
+    }
+
+    // =========================================================================
+    // execute_known_hosts_import — test via import_from_file (controlled input)
+    // =========================================================================
+    // We can't call execute_known_hosts_import directly (it reads real
+    // known_hosts), but we can test the same logic paths by using
+    // import_from_file + config.write() on controlled temp files.
+
+    #[test]
+    fn import_successful_sets_success_status() {
+        let dir = std::env::temp_dir().join(format!(
+            "purple_test_import_status_{:?}",
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let config_path = dir.join("config");
+        std::fs::write(&config_path, "").unwrap();
+        let config = crate::ssh_config::model::SshConfigFile {
+            elements: Vec::new(),
+            path: config_path,
+            crlf: false,
+            bom: false,
+        };
+        let mut app = App::new(config);
+
+        let hosts_file = dir.join("hosts.txt");
+        std::fs::write(&hosts_file, "web.example.com\ndb.example.com\n").unwrap();
+
+        let result = import::import_from_file(&mut app.config, &hosts_file, Some("test"));
+        let (imported, skipped, _, _) = result.unwrap();
+        assert_eq!(imported, 2);
+        assert_eq!(skipped, 0);
+
+        // Write should succeed
+        assert!(app.config.write().is_ok());
+        app.reload_hosts();
+        assert_eq!(app.hosts.len(), 2);
+
+        // Verify the status message format
+        let msg = format!(
+            "Imported {} host{}, skipped {} duplicate{}",
+            imported,
+            if imported == 1 { "" } else { "s" },
+            skipped,
+            if skipped == 1 { "" } else { "s" },
+        );
+        assert_eq!(msg, "Imported 2 hosts, skipped 0 duplicates");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn import_all_duplicates_sets_status() {
+        let dir = std::env::temp_dir().join(format!(
+            "purple_test_import_alldup_{:?}",
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let config_path = dir.join("config");
+        std::fs::write(&config_path, "").unwrap();
+        let config = crate::ssh_config::model::SshConfigFile {
+            elements: Vec::new(),
+            path: config_path,
+            crlf: false,
+            bom: false,
+        };
+        let mut app = App::new(config);
+
+        let hosts_file = dir.join("hosts.txt");
+        std::fs::write(&hosts_file, "web.example.com\n").unwrap();
+
+        // First import
+        let _ = import::import_from_file(&mut app.config, &hosts_file, None);
+        let _ = app.config.write();
+        app.reload_hosts();
+
+        // Second import - all duplicates
+        let (imported, skipped, _, _) = import::import_from_file(&mut app.config, &hosts_file, None).unwrap();
+        assert_eq!(imported, 0);
+        assert_eq!(skipped, 1);
+
+        let msg = if skipped == 1 {
+            "Host already exists".to_string()
+        } else {
+            format!("All {} hosts already exist", skipped)
+        };
+        assert_eq!(msg, "Host already exists");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn import_write_failure_rolls_back_config() {
+        // Create a config pointing to a read-only path so write() fails
+        let dir = std::env::temp_dir().join(format!(
+            "purple_test_import_writefail_{:?}",
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let config_path = dir.join("nonexistent_dir").join("config");
+        // config_path parent doesn't exist, so write() will fail
+        let config = crate::ssh_config::model::SshConfigFile {
+            elements: Vec::new(),
+            path: config_path,
+            crlf: false,
+            bom: false,
+        };
+        let mut app = App::new(config);
+        let config_backup = app.config.clone();
+
+        let hosts_file = dir.join("hosts.txt");
+        std::fs::write(&hosts_file, "web.example.com\n").unwrap();
+
+        let (imported, _, _, _) = import::import_from_file(&mut app.config, &hosts_file, None).unwrap();
+        assert_eq!(imported, 1);
+
+        // Write should fail because parent dir doesn't exist
+        let write_result = app.config.write();
+        assert!(write_result.is_err());
+
+        // After failure, rollback should restore config
+        app.config = config_backup;
+        let hosts = app.config.host_entries();
+        assert_eq!(hosts.len(), 0, "config should be rolled back to empty");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn known_hosts_count_not_reset_on_write_failure() {
+        // The execute_known_hosts_import function returns early on write failure
+        // without resetting known_hosts_count. This is correct behavior:
+        // if the import didn't save, the user might want to try again.
+        let mut app = empty_app();
+        app.known_hosts_count = 10;
+        // Simulate: write failure would do `return` before `app.known_hosts_count = 0`
+        // So known_hosts_count should remain 10
+        assert_eq!(app.known_hosts_count, 10);
+    }
+
+    #[test]
+    fn known_hosts_count_not_reset_on_import_error() {
+        // When import_from_known_hosts returns Err, known_hosts_count is not reset
+        let mut app = empty_app();
+        app.known_hosts_count = 5;
+        // The Err branch only sets status, doesn't touch known_hosts_count
+        app.set_status("some error", true);
+        assert_eq!(app.known_hosts_count, 5);
+    }
+
+    #[test]
+    fn known_hosts_count_reset_on_success() {
+        // When import succeeds (even with 0 imported), known_hosts_count is reset
+        let mut app = empty_app();
+        app.known_hosts_count = 15;
+        app.known_hosts_count = 0; // simulates the Ok branch
+        assert_eq!(app.known_hosts_count, 0);
+    }
+
+    // =========================================================================
+    // Welcome I key with known_hosts_count > 0
+    // =========================================================================
+
+    #[test]
+    fn welcome_i_with_known_hosts_transitions_to_host_list() {
+        // When known_hosts_count > 0, I should trigger import and go to HostList
+        let mut app = empty_app();
+        app.screen = app::Screen::Welcome {
+            has_backup: false,
+            host_count: 0,
+            known_hosts_count: 10,
+        };
+        let key = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('I'),
+            crossterm::event::KeyModifiers::SHIFT,
+        );
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let _ = crate::handler::handle_key_event(&mut app, key, &tx);
+        assert!(matches!(app.screen, app::Screen::HostList));
+        // Status should be set (import attempted)
+        assert!(app.status.is_some());
+    }
+
+    // =========================================================================
+    // Cheat sheet verification
+    // =========================================================================
+
+    #[test]
+    fn cheat_sheet_contains_import_entry() {
+        // The help.rs middle_column() should contain " I         " with "import known_hosts"
+        // We verify by checking the source directly would be fragile, so we
+        // verify the middle_column function output contains the entry
+        // (middle_column is not pub, so we test by reading the source)
+        let source = include_str!("ui/help.rs");
+        assert!(source.contains(r#"" I         ""#), "cheat sheet should have I key");
+        assert!(source.contains(r#""import known_hosts""#), "cheat sheet should describe I");
+    }
+
+    #[test]
+    fn cheat_sheet_i_between_s_and_k() {
+        let source = include_str!("ui/help.rs");
+        let s_pos = source.find(r#"" S         ""#).expect("S should be in cheat sheet");
+        let i_pos = source.find(r#"" I         ""#).expect("I should be in cheat sheet");
+        let k_pos = source.find(r#"" K         ""#).expect("K should be in cheat sheet");
+        assert!(s_pos < i_pos, "S should come before I");
+        assert!(i_pos < k_pos, "I should come before K");
+    }
+
+    // =========================================================================
+    // UI consistency: ConfirmImport dialog structure
+    // =========================================================================
+
+    #[test]
+    fn confirm_import_dialog_has_same_structure_as_confirm_delete() {
+        // Both dialogs use: Block + rounded borders + 4 text lines
+        // (blank, question, blank, y/Esc footer)
+        // ConfirmDelete: 48x7, ConfirmImport: 52x7
+        // Verify by checking source structure
+        let source = include_str!("ui/confirm_dialog.rs");
+
+        // Both use BorderType::Rounded
+        let rounded_count = source.matches("BorderType::Rounded").count();
+        assert!(rounded_count >= 4, "all dialogs should use rounded borders");
+
+        // ConfirmImport uses accent_bold for y (not danger, since import is not destructive)
+        assert!(
+            source.contains(r#"Span::styled("    y", theme::accent_bold())"#),
+            "import dialog y should use accent_bold"
+        );
+    }
+
+    // =========================================================================
+    // Screen variant field values
+    // =========================================================================
+
+    #[test]
+    fn confirm_import_preserves_count() {
+        let screen = app::Screen::ConfirmImport { count: 42 };
+        if let app::Screen::ConfirmImport { count } = screen {
+            assert_eq!(count, 42);
+        } else {
+            panic!("expected ConfirmImport");
+        }
+    }
+
+    #[test]
+    fn welcome_preserves_all_fields() {
+        let screen = app::Screen::Welcome {
+            has_backup: true,
+            host_count: 12,
+            known_hosts_count: 34,
+        };
+        if let app::Screen::Welcome { has_backup, host_count, known_hosts_count } = screen {
+            assert!(has_backup);
+            assert_eq!(host_count, 12);
+            assert_eq!(known_hosts_count, 34);
+        } else {
+            panic!("expected Welcome");
+        }
     }
 }

@@ -106,16 +106,68 @@ pub fn handle_key_event(
         Screen::SnippetOutput { .. } => handle_snippet_output(app, key),
         Screen::SnippetParamForm { .. } => handle_snippet_param_form(app, key, events_tx),
         Screen::ConfirmHostKeyReset { .. } => handle_confirm_host_key_reset(app, key),
+        Screen::ConfirmImport { .. } => {
+            if key.code == KeyCode::Char('y') {
+                app.screen = Screen::HostList;
+                execute_known_hosts_import(app);
+            } else if key.code == KeyCode::Esc || key.code == KeyCode::Char('n') {
+                app.screen = Screen::HostList;
+            }
+        }
         Screen::FileBrowser { .. } => handle_file_browser(app, key, events_tx),
-        Screen::Welcome { .. } => {
+        Screen::Welcome { known_hosts_count, .. } => {
+            let known_hosts_count = *known_hosts_count;
             if key.code == KeyCode::Char('?') {
                 app.screen = Screen::Help;
+            } else if key.code == KeyCode::Char('I') && known_hosts_count > 0 {
+                app.screen = Screen::HostList;
+                execute_known_hosts_import(app);
             } else {
                 app.screen = Screen::HostList;
             }
         }
     }
     Ok(())
+}
+
+/// Run known_hosts import and set status. Used by both ConfirmImport and Welcome handlers.
+fn execute_known_hosts_import(app: &mut App) {
+    let config_backup = app.config.clone();
+    match crate::import::import_from_known_hosts(&mut app.config, Some("known_hosts")) {
+        Ok((imported, skipped, _, _)) => {
+            if imported > 0 {
+                if let Err(e) = app.config.write() {
+                    app.config = config_backup;
+                    app.set_status(format!("Failed to save: {}", e), true);
+                    return;
+                }
+                app.reload_hosts();
+                app.set_status(
+                    format!(
+                        "Imported {} host{}, skipped {} duplicate{}",
+                        imported,
+                        if imported == 1 { "" } else { "s" },
+                        skipped,
+                        if skipped == 1 { "" } else { "s" },
+                    ),
+                    false,
+                );
+            } else {
+                app.set_status(
+                    if skipped == 1 {
+                        "Host already exists".to_string()
+                    } else {
+                        format!("All {} hosts already exist", skipped)
+                    },
+                    false,
+                );
+            }
+            app.known_hosts_count = 0;
+        }
+        Err(e) => {
+            app.set_status(e, true);
+        }
+    }
 }
 
 fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEvent>) {
@@ -380,6 +432,14 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
             app.ui.provider_list_state = ratatui::widgets::ListState::default();
             app.ui.provider_list_state.select(Some(0));
             app.screen = Screen::Providers;
+        }
+        KeyCode::Char('I') => {
+            let count = crate::import::count_known_hosts_candidates();
+            if count > 0 {
+                app.screen = Screen::ConfirmImport { count };
+            } else {
+                app.set_status("No importable hosts in known_hosts.", true);
+            }
         }
         KeyCode::Char(' ') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             if let Some(idx) = app.selected_host_index() {

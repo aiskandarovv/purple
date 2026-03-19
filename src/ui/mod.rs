@@ -135,10 +135,17 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 snippet_param_form::render(frame, app);
             });
         }
-        Screen::Welcome { has_backup } => {
-            let has_backup = *has_backup;
+        Screen::ConfirmImport { count } => {
+            let count = *count;
             host_list::render(frame, app);
-            render_overlay(app, |app| confirm_dialog::render_welcome(frame, app, has_backup));
+            render_overlay(app, |app| confirm_dialog::render_confirm_import(frame, app, count));
+        }
+        Screen::Welcome { has_backup, host_count, known_hosts_count } => {
+            let has_backup = *has_backup;
+            let host_count = *host_count;
+            let known_hosts_count = *known_hosts_count;
+            host_list::render(frame, app);
+            render_overlay(app, |app| confirm_dialog::render_welcome(frame, app, has_backup, host_count, known_hosts_count));
         }
     }
 }

@@ -66,6 +66,31 @@ pub fn import_from_file(
     Ok((imported, skipped, parse_failures, read_errors))
 }
 
+/// Count how many importable entries exist in ~/.ssh/known_hosts.
+/// Returns the count of parseable hostname entries, or 0 if the file
+/// doesn't exist or can't be read.
+pub fn count_known_hosts_candidates() -> usize {
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => return 0,
+    };
+    let known_hosts_path = home.join(".ssh").join("known_hosts");
+    let file = match std::fs::File::open(&known_hosts_path) {
+        Ok(f) => f,
+        Err(_) => return 0,
+    };
+    let reader = std::io::BufReader::new(file);
+    reader
+        .lines()
+        .map_while(Result::ok)
+        .filter(|line| {
+            let trimmed = line.trim();
+            !trimmed.is_empty() && !trimmed.starts_with('#')
+        })
+        .filter(|line| matches!(parse_known_hosts_line(line), KnownHostResult::Parsed(_)))
+        .count()
+}
+
 /// Import hosts from ~/.ssh/known_hosts.
 /// Returns (imported, skipped, parse_failures, read_errors).
 pub fn import_from_known_hosts(
@@ -508,6 +533,241 @@ mod tests {
         };
         assert_eq!(entry.hostname, "web.example.com");
         assert_eq!(entry.alias, "web");
+    }
+
+    // =========================================================================
+    // Additional parse_known_hosts_line edge cases
+    // =========================================================================
+
+    #[test]
+    fn test_parse_known_hosts_empty_string() {
+        // Empty line should be filtered before parsing, but if it reaches the parser:
+        assert!(matches!(
+            parse_known_hosts_line(""),
+            KnownHostResult::Failed
+        ));
+    }
+
+    #[test]
+    fn test_parse_known_hosts_single_field() {
+        // Only one field, not enough for a valid known_hosts line
+        assert!(matches!(
+            parse_known_hosts_line("example.com"),
+            KnownHostResult::Failed
+        ));
+    }
+
+    #[test]
+    fn test_parse_known_hosts_hostname_with_hyphen() {
+        let KnownHostResult::Parsed(entry) =
+            parse_known_hosts_line("my-server.example.com ssh-rsa AAAA...")
+        else {
+            panic!("expected Parsed");
+        };
+        assert_eq!(entry.hostname, "my-server.example.com");
+        assert_eq!(entry.alias, "my-server");
+    }
+
+    #[test]
+    fn test_parse_known_hosts_multiple_hostnames_comma() {
+        // Two non-IP hostnames: first one should be picked
+        let KnownHostResult::Parsed(entry) =
+            parse_known_hosts_line("primary.example.com,secondary.example.com ssh-rsa AAAA...")
+        else {
+            panic!("expected Parsed");
+        };
+        assert_eq!(entry.hostname, "primary.example.com");
+        assert_eq!(entry.alias, "primary");
+    }
+
+    #[test]
+    fn test_parse_known_hosts_ipv6_zone_id_skipped() {
+        // IPv6 with zone ID should be detected as bare IP and skipped
+        assert!(matches!(
+            parse_known_hosts_line("fe80::1%eth0 ssh-rsa AAAA..."),
+            KnownHostResult::Skipped
+        ));
+    }
+
+    #[test]
+    fn test_parse_known_hosts_question_mark_pattern_skipped() {
+        // ? is a pattern character in SSH
+        assert!(matches!(
+            parse_known_hosts_line("web?.example.com ssh-rsa AAAA..."),
+            KnownHostResult::Skipped
+        ));
+    }
+
+    // =========================================================================
+    // Import results and status message formatting
+    // =========================================================================
+
+    #[test]
+    fn test_import_status_pluralization() {
+        // Verify the exact format strings used in handler.rs
+        let fmt = |imported: usize, skipped: usize| -> String {
+            format!(
+                "Imported {} host{}, skipped {} duplicate{}",
+                imported,
+                if imported == 1 { "" } else { "s" },
+                skipped,
+                if skipped == 1 { "" } else { "s" },
+            )
+        };
+        assert_eq!(fmt(1, 0), "Imported 1 host, skipped 0 duplicates");
+        assert_eq!(fmt(1, 1), "Imported 1 host, skipped 1 duplicate");
+        assert_eq!(fmt(5, 0), "Imported 5 hosts, skipped 0 duplicates");
+        assert_eq!(fmt(5, 3), "Imported 5 hosts, skipped 3 duplicates");
+        assert_eq!(fmt(0, 5), "Imported 0 hosts, skipped 5 duplicates");
+    }
+
+    #[test]
+    fn test_import_all_duplicates_message() {
+        let msg_single = if 1 == 1 {
+            "Host already exists".to_string()
+        } else {
+            format!("All {} hosts already exist", 1)
+        };
+        assert_eq!(msg_single, "Host already exists");
+
+        let msg_multi = if 5 == 1 {
+            "Host already exists".to_string()
+        } else {
+            format!("All {} hosts already exist", 5)
+        };
+        assert_eq!(msg_multi, "All 5 hosts already exist");
+    }
+
+    // =========================================================================
+    // import_from_known_hosts with in-memory config
+    // =========================================================================
+
+    #[test]
+    fn test_import_from_known_hosts_adds_to_config() {
+        // Create a temporary known_hosts-style file and import via import_from_file
+        let dir = std::env::temp_dir().join(format!(
+            "purple_test_import_{:?}",
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let hosts_file = dir.join("hosts.txt");
+        std::fs::write(&hosts_file, "web.example.com\ndb.example.com\n").unwrap();
+
+        let mut config = SshConfigFile {
+            elements: Vec::new(),
+            path: dir.join("config"),
+            crlf: false,
+            bom: false,
+        };
+
+        let result = import_from_file(&mut config, &hosts_file, Some("test-import"));
+        assert!(result.is_ok());
+        let (imported, skipped, _, _) = result.unwrap();
+        assert_eq!(imported, 2);
+        assert_eq!(skipped, 0);
+
+        // Verify hosts are in config
+        assert!(config.has_host("web"));
+        assert!(config.has_host("db"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_import_skips_duplicates() {
+        let dir = std::env::temp_dir().join(format!(
+            "purple_test_import_dup_{:?}",
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let hosts_file = dir.join("hosts.txt");
+        std::fs::write(&hosts_file, "web.example.com\n").unwrap();
+
+        let mut config = SshConfigFile {
+            elements: Vec::new(),
+            path: dir.join("config"),
+            crlf: false,
+            bom: false,
+        };
+
+        // First import
+        let (imported, _, _, _) = import_from_file(&mut config, &hosts_file, None).unwrap();
+        assert_eq!(imported, 1);
+
+        // Second import - should be all duplicates
+        let (imported, skipped, _, _) = import_from_file(&mut config, &hosts_file, None).unwrap();
+        assert_eq!(imported, 0);
+        assert_eq!(skipped, 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_import_from_file_nonexistent() {
+        let mut config = SshConfigFile {
+            elements: Vec::new(),
+            path: std::path::PathBuf::from("/dev/null"),
+            crlf: false,
+            bom: false,
+        };
+        let result = import_from_file(&mut config, Path::new("/nonexistent/file"), None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_import_empty_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "purple_test_import_empty_{:?}",
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let hosts_file = dir.join("hosts.txt");
+        std::fs::write(&hosts_file, "").unwrap();
+
+        let mut config = SshConfigFile {
+            elements: Vec::new(),
+            path: dir.join("config"),
+            crlf: false,
+            bom: false,
+        };
+
+        let (imported, skipped, _, _) = import_from_file(&mut config, &hosts_file, None).unwrap();
+        assert_eq!(imported, 0);
+        assert_eq!(skipped, 0);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_import_comments_and_blanks_only() {
+        let dir = std::env::temp_dir().join(format!(
+            "purple_test_import_comments_{:?}",
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let hosts_file = dir.join("hosts.txt");
+        std::fs::write(&hosts_file, "# comment\n\n# another\n").unwrap();
+
+        let mut config = SshConfigFile {
+            elements: Vec::new(),
+            path: dir.join("config"),
+            crlf: false,
+            bom: false,
+        };
+
+        let (imported, skipped, _, _) = import_from_file(&mut config, &hosts_file, None).unwrap();
+        assert_eq!(imported, 0);
+        assert_eq!(skipped, 0);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

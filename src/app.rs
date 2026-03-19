@@ -111,7 +111,8 @@ pub enum Screen {
         askpass: Option<String>,
     },
     FileBrowser { alias: String },
-    Welcome { has_backup: bool },
+    ConfirmImport { count: usize },
+    Welcome { has_backup: bool, host_count: usize, known_hosts_count: usize },
 }
 
 /// Which form field is focused.
@@ -1202,6 +1203,9 @@ pub struct App {
     // File browser
     pub file_browser: Option<crate::file_browser::FileBrowserState>,
     pub file_browser_paths: HashMap<String, (PathBuf, String)>,
+
+    // First-run hints
+    pub known_hosts_count: usize,
 }
 
 impl App {
@@ -1304,6 +1308,7 @@ impl App {
             bw_session: None,
             file_browser: None,
             file_browser_paths: HashMap::new(),
+            known_hosts_count: 0,
         }
     }
 

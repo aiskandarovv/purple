@@ -1,3 +1,8 @@
+## 2.8.0
+
+- Welcome screen shows host count and offers known_hosts import on first launch
+- Import hosts from ~/.ssh/known_hosts with I key
+
 ## 2.7.1
 
 - Detail panel tags wrap across multiple lines to fit panel width
