@@ -14,9 +14,10 @@ pub fn render(frame: &mut Frame, app: &mut App, alias: &str) {
         .any(|h| h.alias == alias && h.source_file.is_some());
 
     // Title
-    let mut title_spans = vec![
-        Span::styled(format!(" Tunnels for {} ", alias), theme::brand()),
-    ];
+    let mut title_spans = vec![Span::styled(
+        format!(" Tunnels for {} ", alias),
+        theme::brand(),
+    )];
     if is_active {
         title_spans.push(Span::styled("[running] ", theme::success()));
     }
@@ -39,11 +40,7 @@ pub fn render(frame: &mut Frame, app: &mut App, alias: &str) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let chunks = Layout::vertical([
-        Constraint::Min(1),
-        Constraint::Length(1),
-    ])
-    .split(inner);
+    let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(inner);
 
     if app.tunnel_list.is_empty() {
         let msg = if is_readonly {
@@ -51,10 +48,7 @@ pub fn render(frame: &mut Frame, app: &mut App, alias: &str) {
         } else {
             "  No tunnels. Press 'a' to add one."
         };
-        frame.render_widget(
-            Paragraph::new(msg).style(theme::muted()),
-            chunks[0],
-        );
+        frame.render_widget(Paragraph::new(msg).style(theme::muted()), chunks[0]);
     } else {
         let items: Vec<ListItem> = app
             .tunnel_list
@@ -97,14 +91,19 @@ pub fn render(frame: &mut Frame, app: &mut App, alias: &str) {
 
     // Footer
     if app.pending_tunnel_delete.is_some() {
-        super::render_footer_with_status(frame, chunks[1], vec![
-            Span::styled(" Remove tunnel? ", theme::bold()),
-            Span::styled("y", theme::accent_bold()),
-            Span::styled(" yes ", theme::muted()),
-            Span::styled("\u{2502} ", theme::muted()),
-            Span::styled("Esc", theme::accent_bold()),
-            Span::styled(" no", theme::muted()),
-        ], app);
+        super::render_footer_with_status(
+            frame,
+            chunks[1],
+            vec![
+                Span::styled(" Remove tunnel? ", theme::bold()),
+                Span::styled("y", theme::accent_bold()),
+                Span::styled(" yes ", theme::muted()),
+                Span::styled("\u{2502} ", theme::muted()),
+                Span::styled("Esc", theme::accent_bold()),
+                Span::styled(" no", theme::muted()),
+            ],
+            app,
+        );
     } else {
         let mut spans: Vec<Span<'_>> = Vec::new();
         if is_active {

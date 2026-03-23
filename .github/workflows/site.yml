@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     name: Check embedded content sync
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Verify install.sh matches embedded script in worker.ts
         run: |
@@ -83,7 +83,7 @@ jobs:
     needs: check
     if: github.event_name == 'push'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: BunnyWay/actions/deploy-script@main
         with:

@@ -1,6 +1,6 @@
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::Arc;
 
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -15,9 +15,7 @@ use crate::quick_add;
 use crate::ssh_config::model::ConfigElement;
 
 /// Create a sender that maps SnippetEvent to AppEvent.
-fn snippet_event_bridge(
-    tx: &mpsc::Sender<AppEvent>,
-) -> mpsc::Sender<crate::snippet::SnippetEvent> {
+fn snippet_event_bridge(tx: &mpsc::Sender<AppEvent>) -> mpsc::Sender<crate::snippet::SnippetEvent> {
     let (stx, srx) = mpsc::channel::<crate::snippet::SnippetEvent>();
     let tx = tx.clone();
     std::thread::Builder::new()
@@ -38,9 +36,15 @@ fn snippet_event_bridge(
                         stderr,
                         exit_code,
                     },
-                    crate::snippet::SnippetEvent::Progress { run_id, completed, total } => {
-                        AppEvent::SnippetProgress { run_id, completed, total }
-                    }
+                    crate::snippet::SnippetEvent::Progress {
+                        run_id,
+                        completed,
+                        total,
+                    } => AppEvent::SnippetProgress {
+                        run_id,
+                        completed,
+                        total,
+                    },
                     crate::snippet::SnippetEvent::AllDone { run_id } => {
                         AppEvent::SnippetAllDone { run_id }
                     }
@@ -115,7 +119,9 @@ pub fn handle_key_event(
             }
         }
         Screen::FileBrowser { .. } => handle_file_browser(app, key, events_tx),
-        Screen::Welcome { known_hosts_count, .. } => {
+        Screen::Welcome {
+            known_hosts_count, ..
+        } => {
             let known_hosts_count = *known_hosts_count;
             if key.code == KeyCode::Char('?') {
                 app.screen = Screen::Help;
@@ -210,10 +216,7 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
                 if let Some(ref source) = host.source_file {
                     let alias = host.alias.clone();
                     let path = source.display();
-                    app.set_status(
-                        format!("{} lives in {}. Edit it there.", alias, path),
-                        true,
-                    );
+                    app.set_status(format!("{} lives in {}. Edit it there.", alias, path), true);
                     return;
                 }
                 let alias = host.alias.clone();
@@ -227,10 +230,7 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
                 if let Some(ref source) = host.source_file {
                     let alias = host.alias.clone();
                     let path = source.display();
-                    app.set_status(
-                        format!("{} lives in {}. Edit it there.", alias, path),
-                        true,
-                    );
+                    app.set_status(format!("{} lives in {}. Edit it there.", alias, path), true);
                     return;
                 }
                 let alias = host.alias.clone();
@@ -273,13 +273,12 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
         KeyCode::Char('x') => {
             if let Some(host) = app.selected_host() {
                 let alias = host.alias.clone();
-                if let Some(block) = serialize_host_block(&app.config.elements, &alias, app.config.crlf) {
+                if let Some(block) =
+                    serialize_host_block(&app.config.elements, &alias, app.config.crlf)
+                {
                     match clipboard::copy_to_clipboard(&block) {
                         Ok(()) => {
-                            app.set_status(
-                                format!("Copied config block for {}.", alias),
-                                false,
-                            );
+                            app.set_status(format!("Copied config block for {}.", alias), false);
                         }
                         Err(e) => {
                             app.set_status(e, true);
@@ -351,7 +350,10 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
             app.sort_mode = app.sort_mode.next();
             app.apply_sort();
             if let Err(e) = preferences::save_sort_mode(app.sort_mode) {
-                app.set_status(format!("Sorted by {}. (save failed: {})", app.sort_mode.label(), e), true);
+                app.set_status(
+                    format!("Sorted by {}. (save failed: {})", app.sort_mode.label(), e),
+                    true,
+                );
             } else {
                 app.set_status(format!("Sorted by {}.", app.sort_mode.label()), false);
             }
@@ -401,7 +403,8 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
                 if let Err(e) = app.config.write() {
                     // Rollback: remove re-inserted host and restore undo buffer
                     if let Some((element, position)) = app.config.delete_host_undoable(&alias) {
-                        app.undo_stack.push(crate::app::DeletedHost { element, position });
+                        app.undo_stack
+                            .push(crate::app::DeletedHost { element, position });
                     }
                     app.set_status(format!("Failed to save: {}", e), true);
                 } else {
@@ -452,9 +455,12 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
         }
         KeyCode::Char('r') => {
             let aliases: Vec<String> = if app.multi_select.is_empty() {
-                app.selected_host().map(|h| vec![h.alias.clone()]).unwrap_or_default()
+                app.selected_host()
+                    .map(|h| vec![h.alias.clone()])
+                    .unwrap_or_default()
             } else {
-                app.multi_select.iter()
+                app.multi_select
+                    .iter()
                     .filter_map(|&idx| app.hosts.get(idx).map(|h| h.alias.clone()))
                     .collect()
             };
@@ -465,10 +471,13 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
             }
         }
         KeyCode::Char('R') => {
-            let aliases: Vec<String> = app.display_list
+            let aliases: Vec<String> = app
+                .display_list
                 .iter()
                 .filter_map(|item| match item {
-                    crate::app::HostListItem::Host { index } => Some(app.hosts[*index].alias.clone()),
+                    crate::app::HostListItem::Host { index } => {
+                        Some(app.hosts[*index].alias.clone())
+                    }
                     _ => None,
                 })
                 .collect();
@@ -488,9 +497,17 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
                     .get(&alias)
                     .cloned()
                     .unwrap_or_else(|| {
-                        (std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/")), String::new())
+                        (
+                            std::env::current_dir()
+                                .unwrap_or_else(|_| std::path::PathBuf::from("/")),
+                            String::new(),
+                        )
                     });
-                let (local_entries, local_error) = match crate::file_browser::list_local(&local_path, false, crate::file_browser::BrowserSort::Name) {
+                let (local_entries, local_error) = match crate::file_browser::list_local(
+                    &local_path,
+                    false,
+                    crate::file_browser::BrowserSort::Name,
+                ) {
                     Ok(entries) => (entries, None),
                     Err(e) => (Vec::new(), Some(e.to_string())),
                 };
@@ -519,7 +536,9 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
                     connection_recorded: false,
                 };
                 app.file_browser = Some(fb);
-                app.screen = Screen::FileBrowser { alias: alias.clone() };
+                app.screen = Screen::FileBrowser {
+                    alias: alias.clone(),
+                };
                 // Fetch remote home dir in background
                 let config_path = app.reload.config_path.clone();
                 let tx = events_tx.clone();
@@ -528,8 +547,11 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
                 std::thread::spawn(move || {
                     let home = if remote.is_empty() {
                         match crate::file_browser::get_remote_home(
-                            &alias, &config_path, askpass.as_deref(),
-                            bw.as_deref(), has_tunnel,
+                            &alias,
+                            &config_path,
+                            askpass.as_deref(),
+                            bw.as_deref(),
+                            has_tunnel,
                         ) {
                             Ok(h) => h,
                             Err(e) => {
@@ -545,9 +567,15 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
                         remote
                     };
                     crate::file_browser::spawn_remote_listing(
-                        alias, config_path, home, false,
+                        alias,
+                        config_path,
+                        home,
+                        false,
                         crate::file_browser::BrowserSort::Name,
-                        askpass, bw, has_tunnel, fb_send(tx),
+                        askpass,
+                        bw,
+                        has_tunnel,
+                        fb_send(tx),
                     );
                 });
             }
@@ -672,38 +700,36 @@ fn handle_form(app: &mut App, key: KeyEvent) {
         KeyCode::End => {
             app.form.sync_cursor_to_end();
         }
-        KeyCode::Enter => {
-            match app.form.focused_field {
-                FormField::IdentityFile => {
-                    app.scan_keys();
-                    app.ui.show_key_picker = true;
-                    app.ui.key_picker_state = ratatui::widgets::ListState::default();
-                    if !app.keys.is_empty() {
-                        app.ui.key_picker_state.select(Some(0));
-                    }
-                }
-                FormField::ProxyJump => {
-                    let candidates = app.proxyjump_candidates();
-                    app.ui.show_proxyjump_picker = true;
-                    app.ui.proxyjump_picker_state = ratatui::widgets::ListState::default();
-                    if !candidates.is_empty() {
-                        app.ui.proxyjump_picker_state.select(Some(0));
-                    }
-                }
-                FormField::AskPass => {
-                    app.ui.show_password_picker = true;
-                    app.ui.password_picker_state = ratatui::widgets::ListState::default();
-                    app.ui.password_picker_state.select(Some(0));
-                }
-                FormField::Alias => {
-                    maybe_smart_paste(app);
-                    submit_form(app);
-                }
-                _ => {
-                    submit_form(app);
+        KeyCode::Enter => match app.form.focused_field {
+            FormField::IdentityFile => {
+                app.scan_keys();
+                app.ui.show_key_picker = true;
+                app.ui.key_picker_state = ratatui::widgets::ListState::default();
+                if !app.keys.is_empty() {
+                    app.ui.key_picker_state.select(Some(0));
                 }
             }
-        }
+            FormField::ProxyJump => {
+                let candidates = app.proxyjump_candidates();
+                app.ui.show_proxyjump_picker = true;
+                app.ui.proxyjump_picker_state = ratatui::widgets::ListState::default();
+                if !candidates.is_empty() {
+                    app.ui.proxyjump_picker_state.select(Some(0));
+                }
+            }
+            FormField::AskPass => {
+                app.ui.show_password_picker = true;
+                app.ui.password_picker_state = ratatui::widgets::ListState::default();
+                app.ui.password_picker_state.select(Some(0));
+            }
+            FormField::Alias => {
+                maybe_smart_paste(app);
+                submit_form(app);
+            }
+            _ => {
+                submit_form(app);
+            }
+        },
         KeyCode::Char(c) => {
             app.form.insert_char(c);
             app.form.update_hint();
@@ -763,7 +789,9 @@ fn submit_form(app: &mut App) {
 
     // Track old askpass to detect keychain removal
     let old_askpass = match &app.screen {
-        Screen::EditHost { alias } => app.hosts.iter()
+        Screen::EditHost { alias } => app
+            .hosts
+            .iter()
             .find(|h| h.alias == *alias)
             .and_then(|h| h.askpass.clone()),
         _ => None,
@@ -831,10 +859,8 @@ fn handle_confirm_delete(app: &mut App, key: KeyEvent) {
                             let _ = tunnel.child.kill();
                             let _ = tunnel.child.wait();
                         }
-                        app.undo_stack.push(crate::app::DeletedHost {
-                            element,
-                            position,
-                        });
+                        app.undo_stack
+                            .push(crate::app::DeletedHost { element, position });
                         if app.undo_stack.len() > 50 {
                             app.undo_stack.remove(0);
                         }
@@ -896,10 +922,7 @@ fn handle_confirm_host_key_reset(app: &mut App, key: KeyEvent) {
                         );
                     }
                     Err(e) => {
-                        app.set_status(
-                            format!("Failed to run ssh-keygen: {}", e),
-                            true,
-                        );
+                        app.set_status(format!("Failed to run ssh-keygen: {}", e), true);
                     }
                 }
             }
@@ -1136,7 +1159,10 @@ fn handle_provider_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<A
                         crate::app::SyncRecord::save_all(&app.sync_history);
                         let display_name = crate::providers::provider_display_name(name.as_str());
                         app.set_status(
-                            format!("Removed {} configuration. Synced hosts remain in your SSH config.", display_name),
+                            format!(
+                                "Removed {} configuration. Synced hosts remain in your SSH config.",
+                                display_name
+                            ),
                             false,
                         );
                     }
@@ -1236,7 +1262,8 @@ fn handle_provider_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<A
                         if !app.syncing_providers.contains_key(name.as_str()) {
                             let cancel = Arc::new(AtomicBool::new(false));
                             app.syncing_providers.insert(name.clone(), cancel.clone());
-                            let display_name = crate::providers::provider_display_name(name.as_str());
+                            let display_name =
+                                crate::providers::provider_display_name(name.as_str());
                             app.set_status(format!("Syncing {}...", display_name), false);
                             spawn_provider_sync(&section, events_tx.clone(), cancel);
                         }
@@ -1258,7 +1285,10 @@ fn handle_provider_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<A
                         app.pending_provider_delete = Some(name.clone());
                     } else {
                         let display_name = crate::providers::provider_display_name(name.as_str());
-                        app.set_status(format!("{} is not configured. Nothing to remove.", display_name), false);
+                        app.set_status(
+                            format!("{} is not configured. Nothing to remove.", display_name),
+                            false,
+                        );
                     }
                 }
             }
@@ -1303,7 +1333,10 @@ fn handle_provider_form(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<A
     };
     let fields = crate::app::ProviderFormField::fields_for(&provider_name);
     let is_toggle = |f: crate::app::ProviderFormField| {
-        matches!(f, crate::app::ProviderFormField::VerifyTls | crate::app::ProviderFormField::AutoSync)
+        matches!(
+            f,
+            crate::app::ProviderFormField::VerifyTls | crate::app::ProviderFormField::AutoSync
+        )
     };
     let is_picker = |f: crate::app::ProviderFormField| {
         matches!(f, crate::app::ProviderFormField::IdentityFile)
@@ -1367,10 +1400,14 @@ fn handle_provider_form(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<A
                 submit_provider_form(app, events_tx);
             }
         }
-        KeyCode::Char(' ') if app.provider_form.focused_field == crate::app::ProviderFormField::VerifyTls => {
+        KeyCode::Char(' ')
+            if app.provider_form.focused_field == crate::app::ProviderFormField::VerifyTls =>
+        {
             app.provider_form.verify_tls = !app.provider_form.verify_tls;
         }
-        KeyCode::Char(' ') if app.provider_form.focused_field == crate::app::ProviderFormField::AutoSync => {
+        KeyCode::Char(' ')
+            if app.provider_form.focused_field == crate::app::ProviderFormField::AutoSync =>
+        {
             app.provider_form.auto_sync = !app.provider_form.auto_sync;
         }
         KeyCode::Char(c) => {
@@ -1431,7 +1468,10 @@ pub(crate) fn zone_data_for(provider: &str) -> (ZoneList, ZoneGroups) {
             crate::providers::gcp::GCP_ZONES,
             crate::providers::gcp::GCP_ZONE_GROUPS,
         ),
-        _ => unreachable!("zone_data_for called for unsupported provider: {}", provider),
+        _ => unreachable!(
+            "zone_data_for called for unsupported provider: {}",
+            provider
+        ),
     }
 }
 
@@ -1452,7 +1492,11 @@ fn handle_region_picker(app: &mut App, key: KeyEvent) {
         .filter(|s| !s.is_empty())
         .collect();
 
-    let zone_label = if matches!(provider_name.as_str(), "scaleway" | "gcp") { "zone" } else { "region" };
+    let zone_label = if matches!(provider_name.as_str(), "scaleway" | "gcp") {
+        "zone"
+    } else {
+        "region"
+    };
 
     match key.code {
         KeyCode::Esc | KeyCode::Enter => {
@@ -1461,7 +1505,15 @@ fn handle_region_picker(app: &mut App, key: KeyEvent) {
             app.ui.show_region_picker = false;
             let count = selected.len();
             if count > 0 {
-                app.set_status(format!("{} {}{} selected.", count, zone_label, if count == 1 { "" } else { "s" }), false);
+                app.set_status(
+                    format!(
+                        "{} {}{} selected.",
+                        count,
+                        zone_label,
+                        if count == 1 { "" } else { "s" }
+                    ),
+                    false,
+                );
             }
         }
         KeyCode::Down | KeyCode::Char('j') => {
@@ -1533,10 +1585,7 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
     ];
     for (value, name) in &pf_fields {
         if value.chars().any(|c| c.is_control()) {
-            app.set_status(
-                format!("{} contains control characters.", name),
-                true,
-            );
+            app.set_status(format!("{} contains control characters.", name), true);
             return;
         }
     }
@@ -1549,7 +1598,10 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
             return;
         }
         if !url.to_ascii_lowercase().starts_with("https://") {
-            app.set_status("URL must start with https://. Toggle Verify TLS off for self-signed certificates.", true);
+            app.set_status(
+                "URL must start with https://. Toggle Verify TLS off for self-signed certificates.",
+                true,
+            );
             return;
         }
     }
@@ -1563,8 +1615,7 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
             "Token can't be empty. Provide a service account JSON key file path or access token."
                 .to_string()
         } else {
-            let display_name =
-                crate::providers::provider_display_name(provider_name.as_str());
+            let display_name = crate::providers::provider_display_name(provider_name.as_str());
             format!(
                 "Token can't be empty. Grab one from your {} dashboard.",
                 display_name
@@ -1618,7 +1669,11 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
 
     let user = {
         let u = app.provider_form.user.trim();
-        if u.is_empty() { "root".to_string() } else { u.to_string() }
+        if u.is_empty() {
+            "root".to_string()
+        } else {
+            u.to_string()
+        }
     };
     if user.contains(char::is_whitespace) {
         app.set_status("User can't contain whitespace.", true);
@@ -1657,8 +1712,12 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
         let sync_section = app.provider_config.section(&provider_name).cloned();
         if let Some(sync_section) = sync_section {
             let cancel = Arc::new(AtomicBool::new(false));
-            app.syncing_providers.insert(provider_name.clone(), cancel.clone());
-            app.set_status(format!("Saved {} configuration. Syncing...", display_name), false);
+            app.syncing_providers
+                .insert(provider_name.clone(), cancel.clone());
+            app.set_status(
+                format!("Saved {} configuration. Syncing...", display_name),
+                false,
+            );
             spawn_provider_sync(&sync_section, events_tx.clone(), cancel);
         }
     } else {
@@ -1681,7 +1740,10 @@ fn handle_password_picker(app: &mut App, key: KeyEvent) {
                         if is_none {
                             app.set_status("Global default cleared.", false);
                         } else {
-                            app.set_status(format!("Global default set to {}.", source.label), false);
+                            app.set_status(
+                                format!("Global default set to {}.", source.label),
+                                false,
+                            );
                         }
                     }
                     Err(e) => {
@@ -1718,7 +1780,10 @@ fn handle_password_picker(app: &mut App, key: KeyEvent) {
                         app.form.askpass = String::new();
                         app.form.focused_field = FormField::AskPass;
                         app.form.sync_cursor_to_end();
-                        app.set_status("Type your command. Use %a (alias) and %h (hostname) as placeholders.", false);
+                        app.set_status(
+                            "Type your command. Use %a (alias) and %h (hostname) as placeholders.",
+                            false,
+                        );
                     } else if is_prefix {
                         app.form.askpass = source.value.to_string();
                         app.form.focused_field = FormField::AskPass;
@@ -1727,10 +1792,7 @@ fn handle_password_picker(app: &mut App, key: KeyEvent) {
                     } else {
                         app.form.askpass = source.value.to_string();
                         app.form.sync_cursor_to_end();
-                        app.set_status(
-                            format!("Password source set to {}.", source.label),
-                            false,
-                        );
+                        app.set_status(format!("Password source set to {}.", source.label), false);
                     }
                 }
             }
@@ -1762,10 +1824,7 @@ fn handle_key_picker_shared(app: &mut App, key: KeyEvent, for_provider: bool) {
                         app.form.identity_file = key_info.display_path.clone();
                         app.form.sync_cursor_to_end();
                     }
-                    app.set_status(
-                        format!("Locked and loaded with {}.", key_info.name),
-                        false,
-                    );
+                    app.set_status(format!("Locked and loaded with {}.", key_info.name), false);
                 }
             }
             app.ui.show_key_picker = false;
@@ -1792,10 +1851,7 @@ fn handle_proxyjump_picker(app: &mut App, key: KeyEvent) {
                 if let Some((alias, _)) = candidates.get(index) {
                     app.form.proxy_jump = alias.clone();
                     app.form.sync_cursor_to_end();
-                    app.set_status(
-                        format!("Jumping through {}.", alias),
-                        false,
-                    );
+                    app.set_status(format!("Jumping through {}.", alias), false);
                 }
             }
             app.ui.show_proxyjump_picker = false;
@@ -1821,10 +1877,7 @@ fn ping_selected_host(app: &mut App, events_tx: &mpsc::Sender<AppEvent>, show_hi
             app.ping_status
                 .insert(alias.clone(), crate::app::PingStatus::Checking);
             if show_hint && !app.has_pinged {
-                app.set_status(
-                    format!("Pinging {}... (Shift+P pings all)", alias),
-                    false,
-                );
+                app.set_status(format!("Pinging {}... (Shift+P pings all)", alias), false);
                 app.has_pinged = true;
             } else {
                 app.set_status(format!("Pinging {}...", alias), false);
@@ -1864,7 +1917,9 @@ fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
                         if app.tunnel_list.is_empty() {
                             app.ui.tunnel_list_state.select(None);
                         } else if sel >= app.tunnel_list.len() {
-                            app.ui.tunnel_list_state.select(Some(app.tunnel_list.len() - 1));
+                            app.ui
+                                .tunnel_list_state
+                                .select(Some(app.tunnel_list.len() - 1));
                         }
                         app.set_status("Tunnel removed.", false);
                     }
@@ -1953,15 +2008,20 @@ fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
                 }
             } else if !app.tunnel_list.is_empty() {
                 // Start
-                let askpass = app.hosts.iter()
+                let askpass = app
+                    .hosts
+                    .iter()
                     .find(|h| h.alias == alias)
                     .and_then(|h| h.askpass.clone());
-                match crate::tunnel::start_tunnel(&alias, &app.reload.config_path, askpass.as_deref(), app.bw_session.as_deref()) {
+                match crate::tunnel::start_tunnel(
+                    &alias,
+                    &app.reload.config_path,
+                    askpass.as_deref(),
+                    app.bw_session.as_deref(),
+                ) {
                     Ok(child) => {
-                        app.active_tunnels.insert(
-                            alias.clone(),
-                            crate::tunnel::ActiveTunnel { child },
-                        );
+                        app.active_tunnels
+                            .insert(alias.clone(), crate::tunnel::ActiveTunnel { child });
                         app.set_status(format!("Tunnel for {} started.", alias), false);
                     }
                     Err(e) => {
@@ -1986,11 +2046,17 @@ fn handle_tunnel_form(app: &mut App, key: KeyEvent) {
             app.screen = Screen::TunnelList { alias };
         }
         KeyCode::Tab | KeyCode::Down => {
-            app.tunnel_form.focused_field = app.tunnel_form.focused_field.next(app.tunnel_form.tunnel_type);
+            app.tunnel_form.focused_field = app
+                .tunnel_form
+                .focused_field
+                .next(app.tunnel_form.tunnel_type);
             app.tunnel_form.sync_cursor_to_end();
         }
         KeyCode::BackTab | KeyCode::Up => {
-            app.tunnel_form.focused_field = app.tunnel_form.focused_field.prev(app.tunnel_form.tunnel_type);
+            app.tunnel_form.focused_field = app
+                .tunnel_form
+                .focused_field
+                .prev(app.tunnel_form.tunnel_type);
             app.tunnel_form.sync_cursor_to_end();
         }
         KeyCode::Left => {
@@ -2004,7 +2070,11 @@ fn handle_tunnel_form(app: &mut App, key: KeyEvent) {
             if app.tunnel_form.focused_field == crate::app::TunnelFormField::Type {
                 app.tunnel_form.tunnel_type = app.tunnel_form.tunnel_type.next();
             } else {
-                let len = app.tunnel_form.focused_value().map(|v| v.chars().count()).unwrap_or(0);
+                let len = app
+                    .tunnel_form
+                    .focused_value()
+                    .map(|v| v.chars().count())
+                    .unwrap_or(0);
                 if app.tunnel_form.cursor_pos < len {
                     app.tunnel_form.cursor_pos += 1;
                 }
@@ -2059,19 +2129,26 @@ fn submit_tunnel_form(app: &mut App, alias: &str, editing: Option<usize>) {
             }
         } else {
             // Index out of bounds (external config change) — abort
-            app.set_status("Tunnel list changed externally. Press Esc and re-open.", true);
+            app.set_status(
+                "Tunnel list changed externally. Press Esc and re-open.",
+                true,
+            );
             return;
         }
     }
 
     // Duplicate detection (runs after old directive removal for edits)
-    if app.config.has_forward(alias, directive_key, &directive_value) {
+    if app
+        .config
+        .has_forward(alias, directive_key, &directive_value)
+    {
         app.config = config_backup;
         app.set_status("Duplicate tunnel already configured.", true);
         return;
     }
 
-    app.config.add_forward(alias, directive_key, &directive_value);
+    app.config
+        .add_forward(alias, directive_key, &directive_value);
     if let Err(e) = app.config.write() {
         app.config = config_backup;
         app.set_status(format!("Failed to save: {}", e), true);
@@ -2087,7 +2164,9 @@ fn submit_tunnel_form(app: &mut App, alias: &str, editing: Option<usize>) {
         app.ui.tunnel_list_state.select(None);
     } else if let Some(sel) = app.ui.tunnel_list_state.selected() {
         if sel >= app.tunnel_list.len() {
-            app.ui.tunnel_list_state.select(Some(app.tunnel_list.len() - 1));
+            app.ui
+                .tunnel_list_state
+                .select(Some(app.tunnel_list.len() - 1));
         }
     } else {
         // First tunnel added to empty list — initialize selection
@@ -2137,7 +2216,8 @@ fn handle_snippet_picker(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<
                         if app.snippet_store.snippets.is_empty() {
                             app.ui.snippet_picker_state.select(None);
                         } else if sel >= app.snippet_store.snippets.len() {
-                            app.ui.snippet_picker_state
+                            app.ui
+                                .snippet_picker_state
                                 .select(Some(app.snippet_store.snippets.len() - 1));
                         }
                         app.set_status(format!("Removed snippet '{}'.", removed.name), false);
@@ -2168,10 +2248,18 @@ fn handle_snippet_picker(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<
             app.select_prev_snippet();
         }
         KeyCode::PageDown => {
-            crate::app::page_down(&mut app.ui.snippet_picker_state, app.snippet_store.snippets.len(), 10);
+            crate::app::page_down(
+                &mut app.ui.snippet_picker_state,
+                app.snippet_store.snippets.len(),
+                10,
+            );
         }
         KeyCode::PageUp => {
-            crate::app::page_up(&mut app.ui.snippet_picker_state, app.snippet_store.snippets.len(), 10);
+            crate::app::page_up(
+                &mut app.ui.snippet_picker_state,
+                app.snippet_store.snippets.len(),
+                10,
+            );
         }
         KeyCode::Char('a') => {
             app.snippet_form = crate::app::SnippetForm::new();
@@ -2243,8 +2331,7 @@ fn run_or_prompt_params(
 }
 
 /// Monotonically increasing run ID to distinguish snippet execution runs.
-static SNIPPET_RUN_COUNTER: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(1);
+static SNIPPET_RUN_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 /// Start in-TUI snippet execution.
 fn start_snippet_output(
@@ -2307,8 +2394,16 @@ fn snippet_result_lines(r: &crate::app::SnippetHostOutput) -> usize {
     let content = if r.stdout.is_empty() && r.stderr.is_empty() {
         1 // "[No output]" placeholder
     } else {
-        let stdout_lines = if r.stdout.is_empty() { 0 } else { r.stdout.lines().count() };
-        let stderr_lines = if r.stderr.is_empty() { 0 } else { r.stderr.lines().count() };
+        let stdout_lines = if r.stdout.is_empty() {
+            0
+        } else {
+            r.stdout.lines().count()
+        };
+        let stderr_lines = if r.stderr.is_empty() {
+            0
+        } else {
+            r.stderr.lines().count()
+        };
         stdout_lines + stderr_lines
     };
     // header + content + blank line
@@ -2455,7 +2550,13 @@ fn handle_snippet_picker_search(
                     let real_idx = filtered[sel];
                     if let Some(snippet) = app.snippet_store.snippets.get(real_idx).cloned() {
                         app.ui.snippet_search = None;
-                        run_or_prompt_params(app, snippet, target_aliases.to_vec(), false, events_tx);
+                        run_or_prompt_params(
+                            app,
+                            snippet,
+                            target_aliases.to_vec(),
+                            false,
+                            events_tx,
+                        );
                     }
                 }
             }
@@ -2498,11 +2599,7 @@ fn handle_snippet_picker_search(
     }
 }
 
-fn handle_snippet_param_form(
-    app: &mut App,
-    key: KeyEvent,
-    events_tx: &mpsc::Sender<AppEvent>,
-) {
+fn handle_snippet_param_form(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEvent>) {
     let (snippet, target_aliases) = match &app.screen {
         Screen::SnippetParamForm {
             snippet,
@@ -2520,9 +2617,7 @@ fn handle_snippet_param_form(
         KeyCode::Esc => {
             app.snippet_param_form = None;
             app.pending_snippet_terminal = false;
-            app.screen = Screen::SnippetPicker {
-                target_aliases,
-            };
+            app.screen = Screen::SnippetPicker { target_aliases };
         }
         KeyCode::Tab | KeyCode::Down => {
             if form.focused_index + 1 < form.params.len() {
@@ -2557,8 +2652,7 @@ fn handle_snippet_param_form(
         KeyCode::Enter => {
             let values_map = form.values_map();
             let mut resolved = snippet.clone();
-            resolved.command =
-                crate::snippet::substitute_params(&snippet.command, &values_map);
+            resolved.command = crate::snippet::substitute_params(&snippet.command, &values_map);
 
             let terminal_mode = app.pending_snippet_terminal;
             app.snippet_param_form = None;
@@ -2588,7 +2682,10 @@ fn handle_snippet_param_form(
 
 fn handle_snippet_form(app: &mut App, key: KeyEvent) {
     let (target_aliases, editing) = match &app.screen {
-        Screen::SnippetForm { target_aliases, editing } => (target_aliases.clone(), *editing),
+        Screen::SnippetForm {
+            target_aliases,
+            editing,
+        } => (target_aliases.clone(), *editing),
         _ => return,
     };
 
@@ -2647,12 +2744,13 @@ fn submit_snippet_form(app: &mut App, target_aliases: &[String], editing: Option
     let new_description = app.snippet_form.description.trim().to_string();
 
     // Check for duplicate name (skip the snippet being edited)
-    let old_name = editing.and_then(|idx| {
-        app.snippet_store.snippets.get(idx).map(|s| s.name.clone())
-    });
-    let name_taken = app.snippet_store.snippets.iter().any(|s| {
-        s.name == new_name && Some(&s.name) != old_name.as_ref()
-    });
+    let old_name =
+        editing.and_then(|idx| app.snippet_store.snippets.get(idx).map(|s| s.name.clone()));
+    let name_taken = app
+        .snippet_store
+        .snippets
+        .iter()
+        .any(|s| s.name == new_name && Some(&s.name) != old_name.as_ref());
     if name_taken {
         app.set_status(format!("'{}' already exists.", new_name), true);
         return;
@@ -2697,7 +2795,9 @@ fn submit_snippet_form(app: &mut App, target_aliases: &[String], editing: Option
     } else {
         app.set_status(format!("Updated snippet '{}'.", name), false);
     }
-    app.screen = Screen::SnippetPicker { target_aliases: target_aliases.to_vec() };
+    app.screen = Screen::SnippetPicker {
+        target_aliases: target_aliases.to_vec(),
+    };
 }
 
 /// Spawn a background thread to fetch hosts from a cloud provider.
@@ -2739,7 +2839,11 @@ pub fn spawn_provider_sync(
                         hosts,
                     });
                 }
-                Err(crate::providers::ProviderError::PartialResult { hosts, failures, total }) => {
+                Err(crate::providers::ProviderError::PartialResult {
+                    hosts,
+                    failures,
+                    total,
+                }) => {
                     let _ = tx.send(AppEvent::SyncPartial {
                         provider: name,
                         hosts,
@@ -2764,9 +2868,16 @@ pub fn spawn_provider_sync(
     }
 }
 
-fn fb_send(tx: mpsc::Sender<AppEvent>) -> impl FnOnce(String, String, Result<Vec<crate::file_browser::FileEntry>, String>) + Send + 'static {
+fn fb_send(
+    tx: mpsc::Sender<AppEvent>,
+) -> impl FnOnce(String, String, Result<Vec<crate::file_browser::FileEntry>, String>) + Send + 'static
+{
     move |alias, path, entries| {
-        let _ = tx.send(AppEvent::FileBrowserListing { alias, path, entries });
+        let _ = tx.send(AppEvent::FileBrowserListing {
+            alias,
+            path,
+            entries,
+        });
     }
 }
 
@@ -2852,7 +2963,9 @@ fn handle_file_browser(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<Ap
                         Err(e) => (false, format!("scp failed: {}", e)),
                     };
                     let _ = tx.send(crate::event::AppEvent::ScpComplete {
-                        alias, success, message,
+                        alias,
+                        success,
+                        message,
                     });
                 });
             }
@@ -2896,44 +3009,38 @@ fn handle_file_browser(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<Ap
                 }
             }
         }
-        KeyCode::Char('k') | KeyCode::Up => {
-            match fb.active_pane {
-                BrowserPane::Local => {
-                    let len = fb.local_entries.len() + 1;
-                    crate::app::cycle_selection(&mut fb.local_list_state, len, false);
-                }
-                BrowserPane::Remote => {
-                    if !fb.remote_loading && fb.remote_error.is_none() {
-                        let len = fb.remote_entries.len() + 1;
-                        crate::app::cycle_selection(&mut fb.remote_list_state, len, false);
-                    }
-                }
+        KeyCode::Char('k') | KeyCode::Up => match fb.active_pane {
+            BrowserPane::Local => {
+                let len = fb.local_entries.len() + 1;
+                crate::app::cycle_selection(&mut fb.local_list_state, len, false);
             }
-        }
-        KeyCode::PageDown => {
-            match fb.active_pane {
-                BrowserPane::Local => {
-                    let len = fb.local_entries.len() + 1;
-                    crate::app::page_down(&mut fb.local_list_state, len, 10);
-                }
-                BrowserPane::Remote => {
+            BrowserPane::Remote => {
+                if !fb.remote_loading && fb.remote_error.is_none() {
                     let len = fb.remote_entries.len() + 1;
-                    crate::app::page_down(&mut fb.remote_list_state, len, 10);
+                    crate::app::cycle_selection(&mut fb.remote_list_state, len, false);
                 }
             }
-        }
-        KeyCode::PageUp => {
-            match fb.active_pane {
-                BrowserPane::Local => {
-                    let len = fb.local_entries.len() + 1;
-                    crate::app::page_up(&mut fb.local_list_state, len, 10);
-                }
-                BrowserPane::Remote => {
-                    let len = fb.remote_entries.len() + 1;
-                    crate::app::page_up(&mut fb.remote_list_state, len, 10);
-                }
+        },
+        KeyCode::PageDown => match fb.active_pane {
+            BrowserPane::Local => {
+                let len = fb.local_entries.len() + 1;
+                crate::app::page_down(&mut fb.local_list_state, len, 10);
             }
-        }
+            BrowserPane::Remote => {
+                let len = fb.remote_entries.len() + 1;
+                crate::app::page_down(&mut fb.remote_list_state, len, 10);
+            }
+        },
+        KeyCode::PageUp => match fb.active_pane {
+            BrowserPane::Local => {
+                let len = fb.local_entries.len() + 1;
+                crate::app::page_up(&mut fb.local_list_state, len, 10);
+            }
+            BrowserPane::Remote => {
+                let len = fb.remote_entries.len() + 1;
+                crate::app::page_up(&mut fb.remote_list_state, len, 10);
+            }
+        },
         KeyCode::Enter => {
             match fb.active_pane {
                 BrowserPane::Local => {
@@ -2942,9 +3049,19 @@ fn handle_file_browser(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<Ap
                         // ".." - go up
                         if let Some(parent) = fb.local_path.parent() {
                             fb.local_path = parent.to_path_buf();
-                            match crate::file_browser::list_local(&fb.local_path, fb.show_hidden, fb.sort) {
-                                Ok(entries) => { fb.local_entries = entries; fb.local_error = None; }
-                                Err(e) => { fb.local_entries = Vec::new(); fb.local_error = Some(e.to_string()); }
+                            match crate::file_browser::list_local(
+                                &fb.local_path,
+                                fb.show_hidden,
+                                fb.sort,
+                            ) {
+                                Ok(entries) => {
+                                    fb.local_entries = entries;
+                                    fb.local_error = None;
+                                }
+                                Err(e) => {
+                                    fb.local_entries = Vec::new();
+                                    fb.local_error = Some(e.to_string());
+                                }
                             }
                             fb.local_list_state.select(Some(0));
                             fb.local_selected.clear();
@@ -2956,9 +3073,9 @@ fn handle_file_browser(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<Ap
                                 return;
                             }
                             let sources: Vec<String> = fb.local_selected.iter().cloned().collect();
-                            let has_dirs = sources.iter().any(|n| {
-                                fb.local_entries.iter().any(|e| e.name == *n && e.is_dir)
-                            });
+                            let has_dirs = sources
+                                .iter()
+                                .any(|n| fb.local_entries.iter().any(|e| e.name == *n && e.is_dir));
                             fb.confirm_copy = Some(CopyRequest {
                                 sources,
                                 source_pane: BrowserPane::Local,
@@ -2967,9 +3084,19 @@ fn handle_file_browser(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<Ap
                         } else if entry.is_dir {
                             // No selection: navigate into directory
                             fb.local_path = fb.local_path.join(&entry.name);
-                            match crate::file_browser::list_local(&fb.local_path, fb.show_hidden, fb.sort) {
-                                Ok(entries) => { fb.local_entries = entries; fb.local_error = None; }
-                                Err(e) => { fb.local_entries = Vec::new(); fb.local_error = Some(e.to_string()); }
+                            match crate::file_browser::list_local(
+                                &fb.local_path,
+                                fb.show_hidden,
+                                fb.sort,
+                            ) {
+                                Ok(entries) => {
+                                    fb.local_entries = entries;
+                                    fb.local_error = None;
+                                }
+                                Err(e) => {
+                                    fb.local_entries = Vec::new();
+                                    fb.local_error = Some(e.to_string());
+                                }
                             }
                             fb.local_list_state.select(Some(0));
                             fb.local_selected.clear();
@@ -3019,8 +3146,15 @@ fn handle_file_browser(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<Ap
                             let show_hidden = fb.show_hidden;
                             let sort = fb.sort;
                             crate::file_browser::spawn_remote_listing(
-                                alias, config_path, parent, show_hidden, sort,
-                                askpass, bw, has_tunnel, fb_send(events_tx.clone()),
+                                alias,
+                                config_path,
+                                parent,
+                                show_hidden,
+                                sort,
+                                askpass,
+                                bw,
+                                has_tunnel,
+                                fb_send(events_tx.clone()),
                             );
                         }
                     } else if let Some(entry) = fb.remote_entries.get(idx - 1).cloned() {
@@ -3056,8 +3190,15 @@ fn handle_file_browser(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<Ap
                             let show_hidden = fb.show_hidden;
                             let sort = fb.sort;
                             crate::file_browser::spawn_remote_listing(
-                                alias, config_path, new_path, show_hidden, sort,
-                                askpass, bw, has_tunnel, fb_send(events_tx.clone()),
+                                alias,
+                                config_path,
+                                new_path,
+                                show_hidden,
+                                sort,
+                                askpass,
+                                bw,
+                                has_tunnel,
+                                fb_send(events_tx.clone()),
                             );
                         } else {
                             // No selection, cursor on file: copy single file
@@ -3077,9 +3218,19 @@ fn handle_file_browser(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<Ap
                 BrowserPane::Local => {
                     if let Some(parent) = fb.local_path.parent() {
                         fb.local_path = parent.to_path_buf();
-                        match crate::file_browser::list_local(&fb.local_path, fb.show_hidden, fb.sort) {
-                            Ok(entries) => { fb.local_entries = entries; fb.local_error = None; }
-                            Err(e) => { fb.local_entries = Vec::new(); fb.local_error = Some(e.to_string()); }
+                        match crate::file_browser::list_local(
+                            &fb.local_path,
+                            fb.show_hidden,
+                            fb.sort,
+                        ) {
+                            Ok(entries) => {
+                                fb.local_entries = entries;
+                                fb.local_error = None;
+                            }
+                            Err(e) => {
+                                fb.local_entries = Vec::new();
+                                fb.local_error = Some(e.to_string());
+                            }
                         }
                         fb.local_list_state.select(Some(0));
                         fb.local_selected.clear();
@@ -3112,8 +3263,15 @@ fn handle_file_browser(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<Ap
                         let show_hidden = fb.show_hidden;
                         let sort = fb.sort;
                         crate::file_browser::spawn_remote_listing(
-                            alias, config_path, parent, show_hidden, sort,
-                            askpass, bw, has_tunnel, fb_send(events_tx.clone()),
+                            alias,
+                            config_path,
+                            parent,
+                            show_hidden,
+                            sort,
+                            askpass,
+                            bw,
+                            has_tunnel,
+                            fb_send(events_tx.clone()),
                         );
                     }
                 }
@@ -3154,17 +3312,23 @@ fn handle_file_browser(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<Ap
             // Select all / deselect all (toggle)
             match fb.active_pane {
                 BrowserPane::Local => {
-                    if fb.local_selected.len() == fb.local_entries.len() && !fb.local_entries.is_empty() {
+                    if fb.local_selected.len() == fb.local_entries.len()
+                        && !fb.local_entries.is_empty()
+                    {
                         fb.local_selected.clear();
                     } else {
-                        fb.local_selected = fb.local_entries.iter().map(|e| e.name.clone()).collect();
+                        fb.local_selected =
+                            fb.local_entries.iter().map(|e| e.name.clone()).collect();
                     }
                 }
                 BrowserPane::Remote => {
-                    if fb.remote_selected.len() == fb.remote_entries.len() && !fb.remote_entries.is_empty() {
+                    if fb.remote_selected.len() == fb.remote_entries.len()
+                        && !fb.remote_entries.is_empty()
+                    {
                         fb.remote_selected.clear();
                     } else {
-                        fb.remote_selected = fb.remote_entries.iter().map(|e| e.name.clone()).collect();
+                        fb.remote_selected =
+                            fb.remote_entries.iter().map(|e| e.name.clone()).collect();
                     }
                 }
             }
@@ -3173,8 +3337,14 @@ fn handle_file_browser(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<Ap
             fb.show_hidden = !fb.show_hidden;
             // Refresh local
             match crate::file_browser::list_local(&fb.local_path, fb.show_hidden, fb.sort) {
-                Ok(entries) => { fb.local_entries = entries; fb.local_error = None; }
-                Err(e) => { fb.local_entries = Vec::new(); fb.local_error = Some(e.to_string()); }
+                Ok(entries) => {
+                    fb.local_entries = entries;
+                    fb.local_error = None;
+                }
+                Err(e) => {
+                    fb.local_entries = Vec::new();
+                    fb.local_error = Some(e.to_string());
+                }
             }
             fb.local_list_state.select(Some(0));
             fb.local_selected.clear();
@@ -3194,16 +3364,29 @@ fn handle_file_browser(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<Ap
                 let show_hidden = fb.show_hidden;
                 let sort = fb.sort;
                 crate::file_browser::spawn_remote_listing(
-                    alias, config_path, path, show_hidden, sort,
-                    askpass, bw, has_tunnel, fb_send(events_tx.clone()),
+                    alias,
+                    config_path,
+                    path,
+                    show_hidden,
+                    sort,
+                    askpass,
+                    bw,
+                    has_tunnel,
+                    fb_send(events_tx.clone()),
                 );
             }
         }
         KeyCode::Char('R') => {
             // Refresh both panes
             match crate::file_browser::list_local(&fb.local_path, fb.show_hidden, fb.sort) {
-                Ok(entries) => { fb.local_entries = entries; fb.local_error = None; }
-                Err(e) => { fb.local_entries = Vec::new(); fb.local_error = Some(e.to_string()); }
+                Ok(entries) => {
+                    fb.local_entries = entries;
+                    fb.local_error = None;
+                }
+                Err(e) => {
+                    fb.local_entries = Vec::new();
+                    fb.local_error = Some(e.to_string());
+                }
             }
             fb.local_list_state.select(Some(0));
             fb.local_selected.clear();
@@ -3222,8 +3405,15 @@ fn handle_file_browser(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<Ap
                 let show_hidden = fb.show_hidden;
                 let sort = fb.sort;
                 crate::file_browser::spawn_remote_listing(
-                    alias, config_path, path, show_hidden, sort,
-                    askpass, bw, has_tunnel, fb_send(events_tx.clone()),
+                    alias,
+                    config_path,
+                    path,
+                    show_hidden,
+                    sort,
+                    askpass,
+                    bw,
+                    has_tunnel,
+                    fb_send(events_tx.clone()),
                 );
             }
         }
@@ -3406,7 +3596,9 @@ mod tests {
 
     fn make_form_app_focused_on(provider: &str, field: ProviderFormField) -> App {
         let mut app = make_app("Host test\n  HostName test.com\n");
-        app.screen = Screen::ProviderForm { provider: provider.to_string() };
+        app.screen = Screen::ProviderForm {
+            provider: provider.to_string(),
+        };
         app.provider_form = ProviderFormFields {
             url: String::new(),
             token: "tok".to_string(),
@@ -3440,7 +3632,12 @@ mod tests {
         if msg.contains("changed externally") {
             return; // inconclusive due to race
         }
-        assert!(msg.contains(expected), "Expected status to contain '{}', got: '{}'", expected, msg);
+        assert!(
+            msg.contains(expected),
+            "Expected status to contain '{}', got: '{}'",
+            expected,
+            msg
+        );
     }
 
     fn assert_status_not_contains(app: &App, not_expected: &str) {
@@ -3448,7 +3645,12 @@ mod tests {
         if msg.contains("changed externally") {
             return; // inconclusive due to race
         }
-        assert!(!msg.contains(not_expected), "Status should NOT contain '{}', got: '{}'", not_expected, msg);
+        assert!(
+            !msg.contains(not_expected),
+            "Status should NOT contain '{}', got: '{}'",
+            not_expected,
+            msg
+        );
     }
 
     #[test]
@@ -3507,7 +3709,9 @@ mod tests {
     fn test_submit_provider_form_persists_auto_sync_false() {
         // Submit met auto_sync=false moet de sectie opslaan met auto_sync=false.
         let mut app = make_app("Host test\n  HostName test.com\n");
-        app.screen = Screen::ProviderForm { provider: "digitalocean".to_string() };
+        app.screen = Screen::ProviderForm {
+            provider: "digitalocean".to_string(),
+        };
         app.provider_config = test_provider_config();
         app.provider_form = ProviderFormFields {
             url: String::new(),
@@ -3531,7 +3735,10 @@ mod tests {
 
         // Ongeacht of save() slaagde: de sectie in provider_config is bijgewerkt.
         if let Some(section) = app.provider_config.section("digitalocean") {
-            assert!(!section.auto_sync, "Opgeslagen sectie moet auto_sync=false hebben");
+            assert!(
+                !section.auto_sync,
+                "Opgeslagen sectie moet auto_sync=false hebben"
+            );
         }
         // Als het form is gesloten (save geslaagd), controleert de screen-state
         // dat de toggle correct is doorgegeven.
@@ -3540,7 +3747,9 @@ mod tests {
     #[test]
     fn test_submit_provider_form_persists_auto_sync_true() {
         let mut app = make_app("Host test\n  HostName test.com\n");
-        app.screen = Screen::ProviderForm { provider: "digitalocean".to_string() };
+        app.screen = Screen::ProviderForm {
+            provider: "digitalocean".to_string(),
+        };
         app.provider_config = test_provider_config();
         app.provider_form = ProviderFormFields {
             url: String::new(),
@@ -3561,7 +3770,10 @@ mod tests {
         let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
 
         if let Some(section) = app.provider_config.section("digitalocean") {
-            assert!(section.auto_sync, "Opgeslagen sectie moet auto_sync=true hebben");
+            assert!(
+                section.auto_sync,
+                "Opgeslagen sectie moet auto_sync=true hebben"
+            );
         }
     }
 
@@ -3715,7 +3927,9 @@ mod tests {
 
     fn make_gcp_form_app() -> App {
         let mut app = make_app("Host test\n  HostName test.com\n");
-        app.screen = Screen::ProviderForm { provider: "gcp".to_string() };
+        app.screen = Screen::ProviderForm {
+            provider: "gcp".to_string(),
+        };
         app.provider_form = ProviderFormFields {
             url: String::new(),
             token: "/path/to/sa.json".to_string(),
@@ -3801,7 +4015,9 @@ mod tests {
 
     fn make_azure_form_app() -> App {
         let mut app = make_app("Host test\n  HostName test.com\n");
-        app.screen = Screen::ProviderForm { provider: "azure".to_string() };
+        app.screen = Screen::ProviderForm {
+            provider: "azure".to_string(),
+        };
         app.provider_config = test_provider_config();
         app.provider_form = ProviderFormFields {
             url: String::new(),
@@ -3855,7 +4071,10 @@ mod tests {
         let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
         assert_eq!(app.provider_form.focused_field, ProviderFormField::Regions);
         let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
-        assert_eq!(app.provider_form.focused_field, ProviderFormField::AliasPrefix);
+        assert_eq!(
+            app.provider_form.focused_field,
+            ProviderFormField::AliasPrefix
+        );
     }
 
     #[test]
@@ -3909,11 +4128,17 @@ mod tests {
         let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::Token);
         let (tx, _rx) = mpsc::channel();
         let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
-        assert_eq!(app.provider_form.focused_field, ProviderFormField::AliasPrefix);
+        assert_eq!(
+            app.provider_form.focused_field,
+            ProviderFormField::AliasPrefix
+        );
         let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
         assert_eq!(app.provider_form.focused_field, ProviderFormField::User);
         let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
-        assert_eq!(app.provider_form.focused_field, ProviderFormField::IdentityFile);
+        assert_eq!(
+            app.provider_form.focused_field,
+            ProviderFormField::IdentityFile
+        );
         let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
         assert_eq!(app.provider_form.focused_field, ProviderFormField::AutoSync);
     }
@@ -3923,7 +4148,10 @@ mod tests {
         let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::AutoSync);
         let (tx, _rx) = mpsc::channel();
         let _ = handle_key_event(&mut app, key(KeyCode::BackTab), &tx);
-        assert_eq!(app.provider_form.focused_field, ProviderFormField::IdentityFile);
+        assert_eq!(
+            app.provider_form.focused_field,
+            ProviderFormField::IdentityFile
+        );
     }
 
     #[test]
@@ -3933,13 +4161,22 @@ mod tests {
         let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
         assert_eq!(app.provider_form.focused_field, ProviderFormField::Token);
         let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
-        assert_eq!(app.provider_form.focused_field, ProviderFormField::AliasPrefix);
+        assert_eq!(
+            app.provider_form.focused_field,
+            ProviderFormField::AliasPrefix
+        );
         let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
         assert_eq!(app.provider_form.focused_field, ProviderFormField::User);
         let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
-        assert_eq!(app.provider_form.focused_field, ProviderFormField::IdentityFile);
+        assert_eq!(
+            app.provider_form.focused_field,
+            ProviderFormField::IdentityFile
+        );
         let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
-        assert_eq!(app.provider_form.focused_field, ProviderFormField::VerifyTls);
+        assert_eq!(
+            app.provider_form.focused_field,
+            ProviderFormField::VerifyTls
+        );
         let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
         assert_eq!(app.provider_form.focused_field, ProviderFormField::AutoSync);
     }
@@ -4096,10 +4333,14 @@ mod tests {
     fn test_provider_list_esc_cancels_running_syncs() {
         let mut app = make_providers_app_with_do();
         let cancel = Arc::new(AtomicBool::new(false));
-        app.syncing_providers.insert("digitalocean".to_string(), cancel.clone());
+        app.syncing_providers
+            .insert("digitalocean".to_string(), cancel.clone());
         let (tx, _rx) = mpsc::channel();
         let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
-        assert!(cancel.load(Ordering::Relaxed), "Cancel flag should be set on Esc");
+        assert!(
+            cancel.load(Ordering::Relaxed),
+            "Cancel flag should be set on Esc"
+        );
         assert!(matches!(app.screen, Screen::HostList));
     }
 
@@ -4107,7 +4348,9 @@ mod tests {
     fn test_provider_list_enter_opens_form_with_existing_config() {
         let mut app = make_providers_app_with_do();
         open_provider_form(&mut app, "digitalocean");
-        assert!(matches!(app.screen, Screen::ProviderForm { ref provider } if provider == "digitalocean"));
+        assert!(
+            matches!(app.screen, Screen::ProviderForm { ref provider } if provider == "digitalocean")
+        );
         assert_eq!(app.provider_form.token, "tok");
         assert_eq!(app.provider_form.alias_prefix, "do");
         assert_eq!(app.provider_form.user, "root");
@@ -4141,14 +4384,26 @@ mod tests {
 
     #[test]
     fn test_all_cloud_providers_default_auto_sync_true() {
-        for provider in &["digitalocean", "vultr", "linode", "hetzner", "upcloud", "aws", "scaleway", "gcp", "azure", "tailscale"] {
+        for provider in &[
+            "digitalocean",
+            "vultr",
+            "linode",
+            "hetzner",
+            "upcloud",
+            "aws",
+            "scaleway",
+            "gcp",
+            "azure",
+            "tailscale",
+        ] {
             let mut app = make_app("Host test\n  HostName test.com\n");
             app.screen = Screen::Providers;
             app.provider_config = test_provider_config();
             open_provider_form(&mut app, provider);
             assert!(
                 app.provider_form.auto_sync,
-                "{} should default auto_sync=true", provider
+                "{} should default auto_sync=true",
+                provider
             );
         }
     }
@@ -4441,7 +4696,9 @@ mod tests {
     #[test]
     fn test_password_picker_works_on_edit_host() {
         let mut app = make_app("Host test\n  HostName test.com\n");
-        app.screen = Screen::EditHost { alias: "test".to_string() };
+        app.screen = Screen::EditHost {
+            alias: "test".to_string(),
+        };
         app.form = crate::app::HostForm::new();
         app.form.focused_field = FormField::AskPass;
         let (tx, _rx) = mpsc::channel();
@@ -4486,7 +4743,9 @@ mod tests {
 
     #[test]
     fn test_host_list_enter_carries_vault_askpass() {
-        let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass vault:secret/ssh#pass\n");
+        let mut app = make_app(
+            "Host myserver\n  HostName 10.0.0.1\n  # purple:askpass vault:secret/ssh#pass\n",
+        );
         app.screen = Screen::HostList;
         app.ui.list_state.select(Some(0));
         let (tx, _rx) = mpsc::channel();
@@ -4513,7 +4772,8 @@ mod tests {
 
     #[test]
     fn test_search_enter_carries_askpass() {
-        let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass op://V/I/p\n");
+        let mut app =
+            make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass op://V/I/p\n");
         app.screen = Screen::HostList;
         app.start_search();
         // In search mode, filtered_indices should contain our host
@@ -4548,7 +4808,9 @@ mod tests {
     fn test_tunnel_handler_reads_askpass_from_hosts() {
         // Verify the askpass lookup logic: find host by alias and extract askpass
         let app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass bw:my-item\n");
-        let askpass = app.hosts.iter()
+        let askpass = app
+            .hosts
+            .iter()
             .find(|h| h.alias == "myserver")
             .and_then(|h| h.askpass.clone());
         assert_eq!(askpass, Some("bw:my-item".to_string()));
@@ -4557,7 +4819,9 @@ mod tests {
     #[test]
     fn test_tunnel_handler_askpass_none_when_absent() {
         let app = make_app("Host myserver\n  HostName 10.0.0.1\n");
-        let askpass = app.hosts.iter()
+        let askpass = app
+            .hosts
+            .iter()
             .find(|h| h.alias == "myserver")
             .and_then(|h| h.askpass.clone());
         assert_eq!(askpass, None);
@@ -4569,7 +4833,8 @@ mod tests {
 
     #[test]
     fn test_edit_host_populates_askpass_in_form() {
-        let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass pass:ssh/prod\n");
+        let mut app =
+            make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass pass:ssh/prod\n");
         app.screen = Screen::HostList;
         app.ui.list_state.select(Some(0));
         let (tx, _rx) = mpsc::channel();
@@ -4776,7 +5041,9 @@ mod tests {
 
     #[test]
     fn test_edit_form_populates_askpass() {
-        let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass vault:secret/ssh#pw\n");
+        let mut app = make_app(
+            "Host myserver\n  HostName 10.0.0.1\n  # purple:askpass vault:secret/ssh#pw\n",
+        );
         // Simulate what happens when user presses 'e' on a host
         let entry = app.config.host_entries()[0].clone();
         app.form = crate::app::HostForm::from_entry(&entry);
@@ -4813,7 +5080,8 @@ mod tests {
 
     #[test]
     fn test_search_enter_carries_askpass_op_uri() {
-        let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass op://V/I/p\n");
+        let mut app =
+            make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass op://V/I/p\n");
         app.search.query = Some("myserver".to_string());
         app.apply_filter();
         let (tx, _rx) = mpsc::channel();
@@ -4834,8 +5102,11 @@ mod tests {
     fn test_askpass_placeholder_text() {
         let placeholder = crate::ui::host_form::placeholder_text(FormField::AskPass);
         // When no global default is set, shows guidance text
-        assert!(placeholder.contains("Enter") || placeholder.contains("default:"),
-            "Should show guidance or default: {}", placeholder);
+        assert!(
+            placeholder.contains("Enter") || placeholder.contains("default:"),
+            "Should show guidance or default: {}",
+            placeholder
+        );
     }
 
     #[test]
@@ -4847,7 +5118,11 @@ mod tests {
             assert!(
                 total <= max_content_width,
                 "Source '{}' (label={}, hint={}) total {} exceeds max {}",
-                source.label, source.label.len(), source.hint.len(), total, max_content_width
+                source.label,
+                source.label.len(),
+                source.hint.len(),
+                total,
+                max_content_width
             );
         }
     }
@@ -4953,7 +5228,9 @@ mod tests {
     #[test]
     fn test_ctrl_p_on_provider_form_does_not_open_password_picker() {
         let mut app = make_app("Host test\n  HostName test.com\n");
-        app.screen = Screen::ProviderForm { provider: "digitalocean".to_string() };
+        app.screen = Screen::ProviderForm {
+            provider: "digitalocean".to_string(),
+        };
         app.provider_form = crate::app::ProviderFormFields::new();
         let (tx, _rx) = mpsc::channel();
         let _ = handle_key_event(&mut app, ctrl_key('p'), &tx);
@@ -5060,10 +5337,14 @@ Host beta
 
     #[test]
     fn test_delete_undo_preserves_askpass_in_config() {
-        let config_str = "Host myserver\n  HostName 10.0.0.1\n  # purple:askpass vault:secret/ssh#pw\n";
+        let config_str =
+            "Host myserver\n  HostName 10.0.0.1\n  # purple:askpass vault:secret/ssh#pw\n";
         let mut app = make_app(config_str);
         // Verify askpass is present
-        assert_eq!(app.config.host_entries()[0].askpass, Some("vault:secret/ssh#pw".to_string()));
+        assert_eq!(
+            app.config.host_entries()[0].askpass,
+            Some("vault:secret/ssh#pw".to_string())
+        );
 
         // Delete the host (undoable)
         if let Some((element, position)) = app.config.delete_host_undoable("myserver") {
@@ -5134,7 +5415,10 @@ Host beta
         let app = make_app("Host srv\n  HostName 1.2.3.4\n  # purple:askpass pass:ssh/srv\n");
         // Simulate --connect lookup logic from main.rs
         let alias = "srv";
-        let askpass = app.config.host_entries().iter()
+        let askpass = app
+            .config
+            .host_entries()
+            .iter()
             .find(|h| h.alias == alias)
             .and_then(|h| h.askpass.clone());
         assert_eq!(askpass, Some("pass:ssh/srv".to_string()));
@@ -5144,7 +5428,10 @@ Host beta
     fn test_connect_mode_askpass_none() {
         let app = make_app("Host srv\n  HostName 1.2.3.4\n");
         let alias = "srv";
-        let askpass = app.config.host_entries().iter()
+        let askpass = app
+            .config
+            .host_entries()
+            .iter()
             .find(|h| h.alias == alias)
             .and_then(|h| h.askpass.clone());
         assert_eq!(askpass, None);
@@ -5154,7 +5441,10 @@ Host beta
     fn test_connect_mode_nonexistent_host() {
         let app = make_app("Host srv\n  HostName 1.2.3.4\n");
         let alias = "nonexistent";
-        let askpass = app.config.host_entries().iter()
+        let askpass = app
+            .config
+            .host_entries()
+            .iter()
             .find(|h| h.alias == alias)
             .and_then(|h| h.askpass.clone());
         assert_eq!(askpass, None);
@@ -5166,7 +5456,8 @@ Host beta
 
     #[test]
     fn test_e_key_opens_edit_form_with_askpass() {
-        let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass op://Vault/SSH/pw\n");
+        let mut app =
+            make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass op://Vault/SSH/pw\n");
         let (tx, _rx) = mpsc::channel();
         // Press 'e' to edit the selected host
         let _ = handle_key_event(&mut app, key(KeyCode::Char('e')), &tx);
@@ -5236,7 +5527,11 @@ Host beta
         let mut app = make_form_app();
         app.form.focused_field = FormField::AskPass;
         let (tx, _rx) = mpsc::channel();
-        let _ = handle_key_event(&mut app, KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT), &tx);
+        let _ = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+            &tx,
+        );
         assert_eq!(app.form.focused_field, FormField::ProxyJump);
     }
 
@@ -5260,7 +5555,8 @@ Host gamma
 ";
         let app = make_app(config);
         let lookup = |alias: &str| -> Option<String> {
-            app.hosts.iter()
+            app.hosts
+                .iter()
                 .find(|h| h.alias == alias)
                 .and_then(|h| h.askpass.clone())
         };
@@ -5281,7 +5577,11 @@ Host gamma
         let (tx, _rx) = mpsc::channel();
         let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
         let status = app.status.as_ref().unwrap();
-        assert!(status.text.contains("OS Keychain"), "Status should mention OS Keychain, got: {}", status.text);
+        assert!(
+            status.text.contains("OS Keychain"),
+            "Status should mention OS Keychain, got: {}",
+            status.text
+        );
     }
 
     #[test]
@@ -5293,7 +5593,11 @@ Host gamma
         let (tx, _rx) = mpsc::channel();
         let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
         let status = app.status.as_ref().unwrap();
-        assert!(status.text.contains("cleared"), "Status should say cleared, got: {}", status.text);
+        assert!(
+            status.text.contains("cleared"),
+            "Status should say cleared, got: {}",
+            status.text
+        );
     }
 
     #[test]
@@ -5303,7 +5607,11 @@ Host gamma
         app.ui.password_picker_state.select(Some(1)); // 1Password (op://)
         let (tx, _rx) = mpsc::channel();
         let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
-        assert_eq!(app.form.focused_field, FormField::AskPass, "Prefix source should focus AskPass field");
+        assert_eq!(
+            app.form.focused_field,
+            FormField::AskPass,
+            "Prefix source should focus AskPass field"
+        );
         // No status message for prefix sources (user needs to keep typing)
         assert!(app.status.is_none() || !app.status.as_ref().unwrap().text.contains("set to"));
     }
@@ -5360,7 +5668,8 @@ Host gamma
 
     #[test]
     fn test_included_host_connect_still_carries_askpass() {
-        let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass op://V/I/p\n");
+        let mut app =
+            make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass op://V/I/p\n");
         app.screen = Screen::HostList;
         if let Some(host) = app.hosts.first_mut() {
             host.source_file = Some(std::path::PathBuf::from("/etc/ssh/ssh_config.d/work.conf"));
@@ -5393,7 +5702,14 @@ Host gamma
 
     #[test]
     fn test_form_submit_with_all_password_source_types() {
-        let sources = ["keychain", "op://V/I/p", "bw:item", "pass:ssh/srv", "vault:kv/ssh#pw", "my-cmd %h"];
+        let sources = [
+            "keychain",
+            "op://V/I/p",
+            "bw:item",
+            "pass:ssh/srv",
+            "vault:kv/ssh#pw",
+            "my-cmd %h",
+        ];
         for source in &sources {
             let mut app = make_app("");
             app.screen = Screen::AddHost;
@@ -5401,8 +5717,12 @@ Host gamma
             app.form.hostname = "10.0.0.1".to_string();
             app.form.askpass = source.to_string();
             let entry = app.form.to_entry();
-            assert_eq!(entry.askpass.as_deref(), Some(*source),
-                "Form with askpass '{}' should produce entry with same askpass", source);
+            assert_eq!(
+                entry.askpass.as_deref(),
+                Some(*source),
+                "Form with askpass '{}' should produce entry with same askpass",
+                source
+            );
         }
     }
 
@@ -5513,13 +5833,17 @@ Host gamma
         let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
         assert_eq!(app.hosts[0].askpass, Some("keychain".to_string()));
         // Simulate opening edit form
-        app.screen = Screen::EditHost { alias: "myserver".to_string() };
+        app.screen = Screen::EditHost {
+            alias: "myserver".to_string(),
+        };
         app.form.alias = "myserver".to_string();
         app.form.hostname = "10.0.0.1".to_string();
         // Change askpass to something else
         app.form.askpass = "op://Vault/Item/pw".to_string();
         // The old_askpass detection in submit_form looks up app.hosts by alias
-        let old = app.hosts.iter()
+        let old = app
+            .hosts
+            .iter()
             .find(|h| h.alias == "myserver")
             .and_then(|h| h.askpass.clone());
         assert_eq!(old, Some("keychain".to_string()));
@@ -5528,12 +5852,16 @@ Host gamma
     #[test]
     fn test_submit_form_no_keychain_removal_when_unchanged() {
         let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
-        app.screen = Screen::EditHost { alias: "myserver".to_string() };
+        app.screen = Screen::EditHost {
+            alias: "myserver".to_string(),
+        };
         app.form.alias = "myserver".to_string();
         app.form.hostname = "10.0.0.1".to_string();
         // Keep askpass as keychain
         app.form.askpass = "keychain".to_string();
-        let old = app.hosts.iter()
+        let old = app
+            .hosts
+            .iter()
             .find(|h| h.alias == "myserver")
             .and_then(|h| h.askpass.clone());
         // Same source, no removal needed
@@ -5557,7 +5885,8 @@ Host gamma
     fn make_snippet_app() -> App {
         let mut app = make_app("Host myserver\n  HostName 1.2.3.4\n");
         let dir = std::env::temp_dir().join(format!(
-            "purple_handler_snip_{}_{:?}", std::process::id(),
+            "purple_handler_snip_{}_{:?}",
+            std::process::id(),
             std::thread::current().id()
         ));
         let _ = std::fs::create_dir_all(&dir);
@@ -5619,7 +5948,10 @@ Host gamma
 
         let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
         match &app.screen {
-            Screen::SnippetOutput { snippet_name, target_aliases } => {
+            Screen::SnippetOutput {
+                snippet_name,
+                target_aliases,
+            } => {
                 assert_eq!(snippet_name, "check-disk");
                 assert_eq!(target_aliases, &vec!["myserver".to_string()]);
             }
@@ -5644,7 +5976,10 @@ Host gamma
         let (tx, _rx) = mpsc::channel();
 
         let _ = handle_key_event(&mut app, key(KeyCode::Char('a')), &tx);
-        assert!(matches!(app.screen, Screen::SnippetForm { editing: None, .. }));
+        assert!(matches!(
+            app.screen,
+            Screen::SnippetForm { editing: None, .. }
+        ));
         assert!(app.snippet_form.name.is_empty());
     }
 
@@ -5654,7 +5989,13 @@ Host gamma
         let (tx, _rx) = mpsc::channel();
 
         let _ = handle_key_event(&mut app, key(KeyCode::Char('e')), &tx);
-        assert!(matches!(app.screen, Screen::SnippetForm { editing: Some(0), .. }));
+        assert!(matches!(
+            app.screen,
+            Screen::SnippetForm {
+                editing: Some(0),
+                ..
+            }
+        ));
         assert_eq!(app.snippet_form.name, "check-disk");
         assert_eq!(app.snippet_form.command, "df -h");
     }
@@ -5743,16 +6084,28 @@ Host gamma
         };
         let (tx, _rx) = mpsc::channel();
 
-        assert_eq!(app.snippet_form.focused_field, crate::app::SnippetFormField::Name);
+        assert_eq!(
+            app.snippet_form.focused_field,
+            crate::app::SnippetFormField::Name
+        );
 
         let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
-        assert_eq!(app.snippet_form.focused_field, crate::app::SnippetFormField::Command);
+        assert_eq!(
+            app.snippet_form.focused_field,
+            crate::app::SnippetFormField::Command
+        );
 
         let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
-        assert_eq!(app.snippet_form.focused_field, crate::app::SnippetFormField::Description);
+        assert_eq!(
+            app.snippet_form.focused_field,
+            crate::app::SnippetFormField::Description
+        );
 
         let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
-        assert_eq!(app.snippet_form.focused_field, crate::app::SnippetFormField::Name);
+        assert_eq!(
+            app.snippet_form.focused_field,
+            crate::app::SnippetFormField::Name
+        );
     }
 
     #[test]
@@ -5812,7 +6165,8 @@ Host gamma
     fn test_snippet_form_submit_edit() {
         let mut app = make_snippet_app();
         let _ = app.snippet_store.save();
-        app.snippet_form = crate::app::SnippetForm::from_snippet(&app.snippet_store.snippets[0].clone());
+        app.snippet_form =
+            crate::app::SnippetForm::from_snippet(&app.snippet_store.snippets[0].clone());
         app.snippet_form.command = "df -hT".to_string();
         app.screen = Screen::SnippetForm {
             target_aliases: vec!["myserver".to_string()],
@@ -5888,7 +6242,8 @@ Host gamma
         let mut app = make_snippet_app();
         // Force save failure
         app.snippet_store.path_override = Some(PathBuf::from("/nonexistent/dir/snippets"));
-        app.snippet_form = crate::app::SnippetForm::from_snippet(&app.snippet_store.snippets[0].clone());
+        app.snippet_form =
+            crate::app::SnippetForm::from_snippet(&app.snippet_store.snippets[0].clone());
         app.snippet_form.name = "renamed".to_string();
         app.snippet_form.cursor_pos = 7;
         app.screen = Screen::SnippetForm {
@@ -5921,7 +6276,8 @@ Host gamma
     fn test_host_list_r_opens_snippet_picker() {
         let mut app = make_app("Host myserver\n  HostName 1.2.3.4\n");
         app.ui.list_state.select(Some(0));
-        let dir = std::env::temp_dir().join(format!("purple_handler_snip_r_{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("purple_handler_snip_r_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         app.snippet_store.path_override = Some(dir.join("snippets"));
         let (tx, _rx) = mpsc::channel();
@@ -5939,7 +6295,8 @@ Host gamma
     fn test_host_list_r_shift_opens_snippet_picker_all() {
         let mut app = make_app("Host a\n  HostName 1.1.1.1\nHost b\n  HostName 2.2.2.2\n");
         app.ui.list_state.select(Some(0));
-        let dir = std::env::temp_dir().join(format!("purple_handler_snip_R_{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("purple_handler_snip_R_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         app.snippet_store.path_override = Some(dir.join("snippets"));
         let (tx, _rx) = mpsc::channel();

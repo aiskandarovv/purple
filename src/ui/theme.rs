@@ -73,7 +73,6 @@ pub fn section_header() -> Style {
     Style::default().add_modifier(Modifier::BOLD)
 }
 
-
 /// Error message. Red when color is available.
 pub fn error() -> Style {
     match COLOR_MODE.load(Ordering::Acquire) {
@@ -81,9 +80,7 @@ pub fn error() -> Style {
         2 => Style::default()
             .fg(Color::Rgb(239, 68, 68))
             .add_modifier(Modifier::BOLD),
-        _ => Style::default()
-            .fg(Color::Red)
-            .add_modifier(Modifier::BOLD),
+        _ => Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
     }
 }
 
@@ -107,9 +104,7 @@ pub fn danger() -> Style {
         2 => Style::default()
             .fg(Color::Rgb(239, 68, 68))
             .add_modifier(Modifier::BOLD),
-        _ => Style::default()
-            .fg(Color::Red)
-            .add_modifier(Modifier::BOLD),
+        _ => Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
     }
 }
 
@@ -162,9 +157,7 @@ pub fn border_danger() -> Style {
         2 => Style::default()
             .fg(Color::Rgb(239, 68, 68))
             .add_modifier(Modifier::BOLD),
-        _ => Style::default()
-            .fg(Color::Red)
-            .add_modifier(Modifier::BOLD),
+        _ => Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
     }
 }
 

@@ -229,11 +229,7 @@ fn parse_known_hosts_line(line: &str) -> KnownHostResult {
         return KnownHostResult::Skipped;
     }
 
-    let alias = hostname
-        .split('.')
-        .next()
-        .unwrap_or(&hostname)
-        .to_string();
+    let alias = hostname.split('.').next().unwrap_or(&hostname).to_string();
 
     // Skip wildcard/pattern entries
     if crate::ssh_config::model::is_host_pattern(&alias) {
@@ -267,13 +263,17 @@ fn add_entries(
         // Write group header before the first actually-imported host
         if let Some(group_name) = group.filter(|_| !header_written) {
             if !config.elements.is_empty() && !config.last_element_has_trailing_blank() {
-                config.elements.push(
-                    crate::ssh_config::model::ConfigElement::GlobalLine(String::new()),
-                );
+                config
+                    .elements
+                    .push(crate::ssh_config::model::ConfigElement::GlobalLine(
+                        String::new(),
+                    ));
             }
-            config.elements.push(
-                crate::ssh_config::model::ConfigElement::GlobalLine(format!("# {}", group_name)),
-            );
+            config
+                .elements
+                .push(crate::ssh_config::model::ConfigElement::GlobalLine(
+                    format!("# {}", group_name),
+                ));
             header_written = true;
         }
 
@@ -292,15 +292,13 @@ fn add_entries(
     Ok((imported, skipped))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_parse_known_hosts_simple() {
-        let KnownHostResult::Parsed(entry) =
-            parse_known_hosts_line("example.com ssh-rsa AAAA...")
+        let KnownHostResult::Parsed(entry) = parse_known_hosts_line("example.com ssh-rsa AAAA...")
         else {
             panic!("expected Parsed");
         };
@@ -353,8 +351,7 @@ mod tests {
     #[test]
     fn test_parse_known_hosts_hex_hostname_not_skipped() {
         // Pure hex hostnames without colons are valid hostnames, not IPs
-        let KnownHostResult::Parsed(entry) =
-            parse_known_hosts_line("deadbeef ssh-rsa AAAA...")
+        let KnownHostResult::Parsed(entry) = parse_known_hosts_line("deadbeef ssh-rsa AAAA...")
         else {
             panic!("expected Parsed");
         };
@@ -457,8 +454,7 @@ mod tests {
     #[test]
     fn test_parse_known_hosts_bracket_no_port() {
         // [host] with no port should default to 22
-        let KnownHostResult::Parsed(entry) =
-            parse_known_hosts_line("[myhost.com] ssh-rsa AAAA...")
+        let KnownHostResult::Parsed(entry) = parse_known_hosts_line("[myhost.com] ssh-rsa AAAA...")
         else {
             panic!("expected Parsed");
         };

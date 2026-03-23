@@ -78,17 +78,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         lines.push(Line::from(vec![
             Span::styled(prefix, theme::bold()),
             Span::styled(status_text, status_style),
-            Span::styled(
-                format!(" {}", "\u{2500}".repeat(fill)),
-                theme::border(),
-            ),
+            Span::styled(format!(" {}", "\u{2500}".repeat(fill)), theme::border()),
         ]));
 
         if result.stdout.is_empty() && result.stderr.is_empty() {
-            lines.push(Line::from(Span::styled(
-                "  [No output]",
-                theme::muted(),
-            )));
+            lines.push(Line::from(Span::styled("  [No output]", theme::muted())));
         } else {
             for line in result.stdout.lines() {
                 lines.push(Line::from(Span::raw(format!("  {}", line))));
@@ -108,7 +102,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let total = lines.len();
     let max_offset = total.saturating_sub(visible_height);
     let offset = state.scroll_offset.min(max_offset);
-    let visible: Vec<Line<'_>> = lines.into_iter().skip(offset).take(visible_height).collect();
+    let visible: Vec<Line<'_>> = lines
+        .into_iter()
+        .skip(offset)
+        .take(visible_height)
+        .collect();
 
     frame.render_widget(Paragraph::new(visible), chunks[0]);
 

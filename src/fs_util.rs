@@ -15,10 +15,7 @@ impl FileLock {
     /// Creates a `.purple_lock` file alongside the target and holds an `flock` on it.
     /// Blocks until the lock is acquired (or returns an error on failure).
     pub fn acquire(path: &Path) -> io::Result<Self> {
-        let mut lock_name = path
-            .file_name()
-            .unwrap_or_default()
-            .to_os_string();
+        let mut lock_name = path.file_name().unwrap_or_default().to_os_string();
         lock_name.push(".purple_lock");
         let lock_path = path.with_file_name(lock_name);
 
@@ -33,12 +30,16 @@ impl FileLock {
                 .open(&lock_path)?;
 
             // LOCK_EX = exclusive, blocks until acquired
-            let ret = unsafe { libc::flock(std::os::unix::io::AsRawFd::as_raw_fd(&file), libc::LOCK_EX) };
+            let ret =
+                unsafe { libc::flock(std::os::unix::io::AsRawFd::as_raw_fd(&file), libc::LOCK_EX) };
             if ret != 0 {
                 return Err(io::Error::last_os_error());
             }
 
-            Ok(FileLock { lock_path, _file: file })
+            Ok(FileLock {
+                lock_path,
+                _file: file,
+            })
         }
 
         #[cfg(not(unix))]
@@ -57,7 +58,10 @@ impl FileLock {
                         .create_new(true)
                         .open(&lock_path)
                 })?;
-            Ok(FileLock { lock_path, _file: file })
+            Ok(FileLock {
+                lock_path,
+                _file: file,
+            })
         }
     }
 }
@@ -79,10 +83,7 @@ pub fn atomic_write(path: &Path, content: &[u8]) -> io::Result<()> {
         fs::create_dir_all(parent)?;
     }
 
-    let mut tmp_name = path
-        .file_name()
-        .unwrap_or_default()
-        .to_os_string();
+    let mut tmp_name = path.file_name().unwrap_or_default().to_os_string();
     tmp_name.push(format!(".purple_tmp.{}", std::process::id()));
     let tmp_path = path.with_file_name(tmp_name);
 

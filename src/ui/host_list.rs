@@ -77,22 +77,57 @@ impl Columns {
         let mut history = history_w;
 
         // Dynamic gap: more breathing room on wider terminals
-        let base_gap = if content >= 160 { 7 } else if content >= 130 { 6 } else if content >= 100 { 5 } else { 4 };
+        let base_gap = if content >= 160 {
+            7
+        } else if content >= 130 {
+            6
+        } else if content >= 100 {
+            5
+        } else {
+            4
+        };
 
         // Sum of all non-HOST fixed columns + gaps
-        let fixed_rest = |gap: usize, tags: usize, tunnel: usize, auth: usize, ping: bool, history: usize| -> usize {
+        let fixed_rest = |gap: usize,
+                          tags: usize,
+                          tunnel: usize,
+                          auth: usize,
+                          ping: bool,
+                          history: usize|
+         -> usize {
             let mut n = 2usize; // NAME + HOST always present
             let mut w = alias;
-            if tags > 0 { w += tags; n += 1; }
-            if tunnel > 0 { w += tunnel; n += 1; }
-            if auth > 0 { w += auth; n += 1; }
-            if ping { w += 4; n += 1; }
-            if history > 0 { w += history; n += 1; }
+            if tags > 0 {
+                w += tags;
+                n += 1;
+            }
+            if tunnel > 0 {
+                w += tunnel;
+                n += 1;
+            }
+            if auth > 0 {
+                w += auth;
+                n += 1;
+            }
+            if ping {
+                w += 4;
+                n += 1;
+            }
+            if history > 0 {
+                w += history;
+                n += 1;
+            }
             1 + w + (n - 1) * gap // 1 for marker
         };
 
         // HOST gets remaining space: at least content width, absorbs extra
-        let calc_host = |gap: usize, tags: usize, tunnel: usize, auth: usize, ping: bool, history: usize| -> usize {
+        let calc_host = |gap: usize,
+                         tags: usize,
+                         tunnel: usize,
+                         auth: usize,
+                         ping: bool,
+                         history: usize|
+         -> usize {
             content.saturating_sub(fixed_rest(gap, tags, tunnel, auth, ping, history))
         };
 
@@ -121,7 +156,17 @@ impl Columns {
         }
         host = host.max(HOST_MIN);
 
-        Columns { alias, host, tags, tunnel, auth, show_ping, history, gap: base_gap, content }
+        Columns {
+            alias,
+            host,
+            tags,
+            tunnel,
+            auth,
+            show_ping,
+            history,
+            gap: base_gap,
+            content,
+        }
     }
 }
 
@@ -235,30 +280,27 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // Layout: host list + optional input bar + footer/status
     let chunks = if is_searching || is_tagging {
         Layout::vertical([
-            Constraint::Min(5),   // Host list (maximized)
+            Constraint::Min(5),    // Host list (maximized)
             Constraint::Length(1), // Search/tag bar
             Constraint::Length(1), // Footer or status message
         ])
         .split(area)
     } else {
         Layout::vertical([
-            Constraint::Min(5),   // Host list (maximized)
+            Constraint::Min(5),    // Host list (maximized)
             Constraint::Length(1), // Footer or status message
         ])
         .split(area)
     };
 
     let content_area = chunks[0];
-    let use_detail =
-        app.view_mode == ViewMode::Detailed && content_area.width >= DETAIL_MIN_WIDTH;
+    let use_detail = app.view_mode == ViewMode::Detailed && content_area.width >= DETAIL_MIN_WIDTH;
 
     let (list_area, detail_area) = if use_detail {
         let detail_width = if content_area.width >= 140 { 42 } else { 36 };
-        let [left, right] = Layout::horizontal([
-            Constraint::Fill(1),
-            Constraint::Length(detail_width),
-        ])
-        .areas(content_area);
+        let [left, right] =
+            Layout::horizontal([Constraint::Fill(1), Constraint::Length(detail_width)])
+                .areas(content_area);
         (left, Some(right))
     } else {
         (content_area, None)
@@ -274,7 +316,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         super::render_footer_with_status(frame, chunks[2], tag_footer_spans(), app);
     } else {
         render_display_list(frame, app, list_area);
-        super::render_footer_with_status(frame, chunks[1], footer_spans(use_detail, app.multi_select.len()), app);
+        super::render_footer_with_status(
+            frame,
+            chunks[1],
+            footer_spans(use_detail, app.multi_select.len()),
+            app,
+        );
     }
 
     if let Some(detail) = detail_area {
@@ -289,8 +336,14 @@ fn render_display_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::
         Line::from(Span::styled(" purple. ", theme::brand_badge()))
     } else {
         let pos = if let Some(sel) = app.ui.list_state.selected() {
-            app.display_list.get(..=sel)
-                .map(|slice| slice.iter().filter(|item| matches!(item, HostListItem::Host { .. })).count())
+            app.display_list
+                .get(..=sel)
+                .map(|slice| {
+                    slice
+                        .iter()
+                        .filter(|item| matches!(item, HostListItem::Host { .. }))
+                        .count()
+                })
                 .unwrap_or(0)
         } else {
             0
@@ -316,7 +369,12 @@ fn render_display_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::
     };
 
     let update_title = app.update_available.as_ref().map(|ver| {
-        let label = build_update_label(ver, app.update_headline.as_deref(), app.update_hint, area.width);
+        let label = build_update_label(
+            ver,
+            app.update_headline.as_deref(),
+            app.update_hint,
+            area.width,
+        );
         Line::from(Span::styled(label, theme::update_badge()))
     });
 
@@ -336,9 +394,7 @@ fn render_display_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::
         } else {
             "  It's quiet in here... Press 'a' to add a host or 'S' for cloud sync."
         };
-        let empty_msg = Paragraph::new(msg)
-            .style(theme::muted())
-            .block(block);
+        let empty_msg = Paragraph::new(msg).style(theme::muted()).block(block);
         frame.render_widget(empty_msg, area);
         return;
     }
@@ -369,29 +425,48 @@ fn render_display_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::
     // Compute column layout
     let content_width = (inner.width as usize).saturating_sub(1);
     let alias_w = app.hosts.iter().map(|h| h.alias.width()).max().unwrap_or(8);
-    let host_w = app.hosts.iter().map(composite_host_width).max().unwrap_or(12);
+    let host_w = app
+        .hosts
+        .iter()
+        .map(composite_host_width)
+        .max()
+        .unwrap_or(12);
     let tags_w = app.hosts.iter().map(host_tags_width).max().unwrap_or(0);
-    let tunnel_w = tunnel_summaries.values().map(|s| s.width()).max().unwrap_or(0);
-    let auth_w = app.hosts.iter()
+    let tunnel_w = tunnel_summaries
+        .values()
+        .map(|s| s.width())
+        .max()
+        .unwrap_or(0);
+    let auth_w = app
+        .hosts
+        .iter()
         .map(|h| auth_label(h).width())
         .max()
         .unwrap_or(0);
     let has_ping = !app.ping_status.is_empty();
-    let history_w = app.hosts.iter()
+    let history_w = app
+        .hosts
+        .iter()
         .filter_map(|h| app.history.entries.get(&h.alias))
         .map(|e| crate::history::ConnectionHistory::format_time_ago(e.last_connected))
         .filter(|s| !s.is_empty())
         .map(|s| s.width())
         .max()
         .unwrap_or(0);
-    let cols = Columns::compute(alias_w, host_w, tags_w, tunnel_w, auth_w, has_ping, history_w, content_width);
+    let cols = Columns::compute(
+        alias_w,
+        host_w,
+        tags_w,
+        tunnel_w,
+        auth_w,
+        has_ping,
+        history_w,
+        content_width,
+    );
 
     // Column header + list body
-    let [header_area, list_area] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Min(1),
-    ])
-    .areas(inner);
+    let [header_area, list_area] =
+        Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(inner);
 
     render_header(frame, header_area, &cols);
 
@@ -454,7 +529,6 @@ fn render_display_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::
         .highlight_symbol(" ");
 
     frame.render_stateful_widget(list, list_area, &mut app.ui.list_state);
-
 }
 
 fn render_search_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
@@ -468,7 +542,12 @@ fn render_search_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::R
     ]);
 
     let update_title = app.update_available.as_ref().map(|ver| {
-        let label = build_update_label(ver, app.update_headline.as_deref(), app.update_hint, area.width);
+        let label = build_update_label(
+            ver,
+            app.update_headline.as_deref(),
+            app.update_hint,
+            area.width,
+        );
         Line::from(Span::styled(label, theme::update_badge()))
     });
 
@@ -513,9 +592,17 @@ fn render_search_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::R
     let tunnel_summaries = &app.tunnel_summaries_cache;
 
     let content_width = (inner.width as usize).saturating_sub(1);
-    let filtered_hosts = || app.search.filtered_indices.iter().filter_map(|&i| app.hosts.get(i));
+    let filtered_hosts = || {
+        app.search
+            .filtered_indices
+            .iter()
+            .filter_map(|&i| app.hosts.get(i))
+    };
     let alias_w = filtered_hosts().map(|h| h.alias.width()).max().unwrap_or(8);
-    let host_w = filtered_hosts().map(composite_host_width).max().unwrap_or(12);
+    let host_w = filtered_hosts()
+        .map(composite_host_width)
+        .max()
+        .unwrap_or(12);
     let tags_w = filtered_hosts().map(host_tags_width).max().unwrap_or(0);
     let tunnel_w = filtered_hosts()
         .filter_map(|h| tunnel_summaries.get(&h.alias))
@@ -534,13 +621,19 @@ fn render_search_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::R
         .map(|s| s.width())
         .max()
         .unwrap_or(0);
-    let cols = Columns::compute(alias_w, host_w, tags_w, tunnel_w, auth_w, has_ping, history_w, content_width);
+    let cols = Columns::compute(
+        alias_w,
+        host_w,
+        tags_w,
+        tunnel_w,
+        auth_w,
+        has_ping,
+        history_w,
+        content_width,
+    );
 
-    let [header_area, list_area] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Min(1),
-    ])
-    .areas(inner);
+    let [header_area, list_area] =
+        Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(inner);
 
     render_header(frame, header_area, &cols);
 
@@ -568,7 +661,6 @@ fn render_search_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::R
         .highlight_symbol(" ");
 
     frame.render_stateful_widget(list, list_area, &mut app.ui.list_state);
-
 }
 
 fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, cols: &Columns) {
@@ -581,11 +673,17 @@ fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, cols: &Columns)
     ];
     if cols.auth > 0 {
         spans.push(Span::raw(gap.clone()));
-        spans.push(Span::styled(format!("{:<width$}", "AUTH", width = cols.auth), style));
+        spans.push(Span::styled(
+            format!("{:<width$}", "AUTH", width = cols.auth),
+            style,
+        ));
     }
     if cols.tunnel > 0 {
         spans.push(Span::raw(gap.clone()));
-        spans.push(Span::styled(format!("{:<width$}", "TUNNEL", width = cols.tunnel), style));
+        spans.push(Span::styled(
+            format!("{:<width$}", "TUNNEL", width = cols.tunnel),
+            style,
+        ));
     }
     if cols.show_ping {
         spans.push(Span::raw(gap.clone()));
@@ -593,11 +691,17 @@ fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, cols: &Columns)
     }
     if cols.tags > 0 {
         spans.push(Span::raw(gap.clone()));
-        spans.push(Span::styled(format!("{:<width$}", "TAGS", width = cols.tags), style));
+        spans.push(Span::styled(
+            format!("{:<width$}", "TAGS", width = cols.tags),
+            style,
+        ));
     }
     if cols.history > 0 {
         spans.push(Span::raw(gap));
-        spans.push(Span::styled(format!("{:>width$}", "LAST", width = cols.history), style));
+        spans.push(Span::styled(
+            format!("{:>width$}", "LAST", width = cols.history),
+            style,
+        ));
     }
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
@@ -606,17 +710,26 @@ fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, cols: &Columns)
 fn host_tags_width(host: &crate::ssh_config::model::HostEntry) -> usize {
     let mut w = 0usize;
     for tag in &host.tags {
-        if w > 0 { w += 1; } // space between tags
+        if w > 0 {
+            w += 1;
+        } // space between tags
         w += 1 + tag.width(); // # + tag
     }
     if let Some(ref label) = host.provider {
-        if w > 0 { w += 1; }
+        if w > 0 {
+            w += 1;
+        }
         w += 1 + label.width();
     }
     if let Some(ref source) = host.source_file {
-        let name = source.file_name().map(|f| f.to_string_lossy().width()).unwrap_or(0);
+        let name = source
+            .file_name()
+            .map(|f| f.to_string_lossy().width())
+            .unwrap_or(0);
         if name > 0 {
-            if w > 0 { w += 1; }
+            if w > 0 {
+                w += 1;
+            }
             w += name + 2; // (filename)
         }
     }
@@ -639,9 +752,9 @@ fn build_host_item<'a>(
 
     // Determine which field matches for search highlighting
     let alias_matches = !q.is_empty() && app::contains_ci(&host.alias, q);
-    let host_matches = !alias_matches && !q.is_empty()
-        && (app::contains_ci(&host.hostname, q)
-            || app::contains_ci(&host.user, q));
+    let host_matches = !alias_matches
+        && !q.is_empty()
+        && (app::contains_ci(&host.hostname, q) || app::contains_ci(&host.user, q));
 
     let mut spans: Vec<Span> = Vec::new();
 
@@ -673,8 +786,16 @@ fn build_host_item<'a>(
         // Split into styled parts: user@ (dim), hostname (normal), :port (dim)
         let has_user = !host.user.is_empty();
         let has_port = host.port != 22;
-        let user_prefix = if has_user { format!("{}@", host.user) } else { String::new() };
-        let port_suffix = if has_port { format!(":{}", host.port) } else { String::new() };
+        let user_prefix = if has_user {
+            format!("{}@", host.user)
+        } else {
+            String::new()
+        };
+        let port_suffix = if has_port {
+            format!(":{}", host.port)
+        } else {
+            String::new()
+        };
 
         let available = cols.host;
         let prefix_w = user_prefix.width();
@@ -724,7 +845,11 @@ fn build_host_item<'a>(
     if cols.tunnel > 0 {
         spans.push(Span::raw(gap.clone()));
         if let Some(summary) = tunnel_summaries.get(&host.alias) {
-            let style = if tunnel_active { theme::success() } else { theme::muted() };
+            let style = if tunnel_active {
+                theme::success()
+            } else {
+                theme::muted()
+            };
             spans.push(Span::styled(
                 format!("{:<width$}", summary, width = cols.tunnel),
                 style,
@@ -830,15 +955,24 @@ fn build_tag_column(
             0
         };
 
-        if used + sep + tag_w <= width && (remaining == 0 || used + sep + tag_w + overflow_reserve <= width) {
-            if shown > 0 { spans.push(Span::raw(" ")); used += 1; }
+        if used + sep + tag_w <= width
+            && (remaining == 0 || used + sep + tag_w + overflow_reserve <= width)
+        {
+            if shown > 0 {
+                spans.push(Span::raw(" "));
+                used += 1;
+            }
             spans.push(Span::styled(tag.clone(), *style));
             used += tag_w;
             shown += 1;
         } else {
             // Show +N for all remaining (including this one)
             let count = all_tags.len() - i;
-            let overflow = if shown > 0 { format!(" +{}", count) } else { format!("+{}", count) };
+            let overflow = if shown > 0 {
+                format!(" +{}", count)
+            } else {
+                format!("+{}", count)
+            };
             spans.push(Span::styled(overflow.clone(), theme::muted()));
             used += overflow.width();
             break;
@@ -874,7 +1008,11 @@ fn render_search_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) 
 }
 
 fn footer_spans(detail_active: bool, multi_count: usize) -> Vec<Span<'static>> {
-    let view_label = if detail_active { " compact " } else { " detail " };
+    let view_label = if detail_active {
+        " compact "
+    } else {
+        " detail "
+    };
     let mut spans = vec![
         Span::styled(" Enter", theme::primary_action()),
         Span::styled(" connect ", theme::muted()),
@@ -898,7 +1036,10 @@ fn footer_spans(detail_active: bool, multi_count: usize) -> Vec<Span<'static>> {
     ];
     if multi_count > 0 {
         spans.push(Span::styled("\u{2502} ", theme::muted()));
-        spans.push(Span::styled(format!("{} selected", multi_count), theme::accent_bold()));
+        spans.push(Span::styled(
+            format!("{} selected", multi_count),
+            theme::accent_bold(),
+        ));
     }
     spans
 }
@@ -967,15 +1108,27 @@ mod tests {
 
         // 80 cols: budget 76, headline truncated with ellipsis
         let label_80 = build_update_label("2.7.0", Some(hl), hint, 80);
-        assert!(label_80.contains('\u{2026}'), "Should contain ellipsis: {}", label_80);
+        assert!(
+            label_80.contains('\u{2026}'),
+            "Should contain ellipsis: {}",
+            label_80
+        );
         assert!(label_80.contains("(run purple update)"));
-        assert!(label_80.width() <= 76, "Should fit in budget: width={}", label_80.width());
+        assert!(
+            label_80.width() <= 76,
+            "Should fit in budget: width={}",
+            label_80.width()
+        );
 
         // 60 cols: budget 56, headline truncated further
         let label_60 = build_update_label("2.7.0", Some(hl), hint, 60);
         assert!(label_60.contains('\u{2026}'));
         assert!(label_60.contains("(run purple update)"));
-        assert!(label_60.width() <= 56, "Should fit in budget: width={}", label_60.width());
+        assert!(
+            label_60.width() <= 56,
+            "Should fit in budget: width={}",
+            label_60.width()
+        );
 
         // Verify progressive truncation
         assert!(label_60.width() < label_80.width());
@@ -995,8 +1148,16 @@ mod tests {
 
     #[test]
     fn label_brew_hint() {
-        let label = build_update_label("2.7.0", Some("Fix"), "brew upgrade erickochen/purple/purple", 80);
-        assert_eq!(label, " v2.7.0: Fix (run brew upgrade erickochen/purple/purple) ");
+        let label = build_update_label(
+            "2.7.0",
+            Some("Fix"),
+            "brew upgrade erickochen/purple/purple",
+            80,
+        );
+        assert_eq!(
+            label,
+            " v2.7.0: Fix (run brew upgrade erickochen/purple/purple) "
+        );
     }
 
     #[test]

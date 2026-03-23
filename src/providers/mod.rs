@@ -100,7 +100,19 @@ pub trait Provider {
 }
 
 /// All known provider names.
-pub const PROVIDER_NAMES: &[&str] = &["digitalocean", "vultr", "linode", "hetzner", "upcloud", "proxmox", "aws", "scaleway", "gcp", "azure", "tailscale"];
+pub const PROVIDER_NAMES: &[&str] = &[
+    "digitalocean",
+    "vultr",
+    "linode",
+    "hetzner",
+    "upcloud",
+    "proxmox",
+    "aws",
+    "scaleway",
+    "gcp",
+    "azure",
+    "tailscale",
+];
 
 /// Get a provider implementation by name.
 pub fn get_provider(name: &str) -> Option<Box<dyn Provider>> {
@@ -118,9 +130,7 @@ pub fn get_provider(name: &str) -> Option<Box<dyn Provider>> {
             regions: Vec::new(),
             profile: String::new(),
         })),
-        "scaleway" => Some(Box::new(scaleway::Scaleway {
-            zones: Vec::new(),
-        })),
+        "scaleway" => Some(Box::new(scaleway::Scaleway { zones: Vec::new() })),
         "gcp" => Some(Box::new(gcp::Gcp {
             zones: Vec::new(),
             project: String::new(),
@@ -136,34 +146,45 @@ pub fn get_provider(name: &str) -> Option<Box<dyn Provider>> {
 /// Get a provider implementation configured from a provider section.
 /// For providers that need extra config (e.g. Proxmox base URL), this
 /// creates a properly configured instance.
-pub fn get_provider_with_config(name: &str, section: &config::ProviderSection) -> Option<Box<dyn Provider>> {
+pub fn get_provider_with_config(
+    name: &str,
+    section: &config::ProviderSection,
+) -> Option<Box<dyn Provider>> {
     match name {
         "proxmox" => Some(Box::new(proxmox::Proxmox {
             base_url: section.url.clone(),
             verify_tls: section.verify_tls,
         })),
         "aws" => Some(Box::new(aws::Aws {
-            regions: section.regions.split(',')
+            regions: section
+                .regions
+                .split(',')
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect(),
             profile: section.profile.clone(),
         })),
         "scaleway" => Some(Box::new(scaleway::Scaleway {
-            zones: section.regions.split(',')
+            zones: section
+                .regions
+                .split(',')
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect(),
         })),
         "gcp" => Some(Box::new(gcp::Gcp {
-            zones: section.regions.split(',')
+            zones: section
+                .regions
+                .split(',')
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect(),
             project: section.project.clone(),
         })),
         "azure" => Some(Box::new(azure::Azure {
-            subscriptions: section.regions.split(',')
+            subscriptions: section
+                .regions
+                .split(',')
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect(),
@@ -333,7 +354,11 @@ mod tests {
     #[test]
     fn test_get_provider_all_names_resolve() {
         for name in PROVIDER_NAMES {
-            assert!(get_provider(name).is_some(), "Provider '{}' should resolve", name);
+            assert!(
+                get_provider(name).is_some(),
+                "Provider '{}' should resolve",
+                name
+            );
         }
     }
 
@@ -515,7 +540,12 @@ mod tests {
 
     #[test]
     fn test_provider_host_construction() {
-        let host = ProviderHost::new("12345".to_string(), "web-01".to_string(), "1.2.3.4".to_string(), vec!["prod".to_string(), "web".to_string()]);
+        let host = ProviderHost::new(
+            "12345".to_string(),
+            "web-01".to_string(),
+            "1.2.3.4".to_string(),
+            vec!["prod".to_string(), "web".to_string()],
+        );
         assert_eq!(host.server_id, "12345");
         assert_eq!(host.name, "web-01");
         assert_eq!(host.ip, "1.2.3.4");
@@ -524,7 +554,12 @@ mod tests {
 
     #[test]
     fn test_provider_host_clone() {
-        let host = ProviderHost::new("1".to_string(), "a".to_string(), "1.1.1.1".to_string(), vec![]);
+        let host = ProviderHost::new(
+            "1".to_string(),
+            "a".to_string(),
+            "1.1.1.1".to_string(),
+            vec![],
+        );
         let cloned = host.clone();
         assert_eq!(cloned.server_id, host.server_id);
         assert_eq!(cloned.name, host.name);
@@ -589,7 +624,12 @@ mod tests {
     #[test]
     fn test_provider_error_debug_partial_result() {
         let err = ProviderError::PartialResult {
-            hosts: vec![ProviderHost::new("1".to_string(), "web".to_string(), "1.2.3.4".to_string(), vec![])],
+            hosts: vec![ProviderHost::new(
+                "1".to_string(),
+                "web".to_string(),
+                "1.2.3.4".to_string(),
+                vec![],
+            )],
             failures: 2,
             total: 5,
         };
@@ -635,7 +675,11 @@ mod tests {
                 project: String::new(),
             };
             let p = get_provider_with_config(name, &section);
-            assert!(p.is_some(), "get_provider_with_config({}) should return Some", name);
+            assert!(
+                p.is_some(),
+                "get_provider_with_config({}) should return Some",
+                name
+            );
             assert_eq!(p.unwrap().name(), name);
         }
     }
@@ -694,7 +738,11 @@ mod tests {
     #[test]
     fn test_get_provider_all_known() {
         for name in PROVIDER_NAMES {
-            assert!(get_provider(name).is_some(), "get_provider({}) should return Some", name);
+            assert!(
+                get_provider(name).is_some(),
+                "get_provider({}) should return Some",
+                name
+            );
         }
     }
 

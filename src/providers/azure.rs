@@ -190,9 +190,10 @@ pub fn is_valid_subscription_id(id: &str) -> bool {
         return false;
     }
     let expected_lens = [8, 4, 4, 4, 12];
-    parts.iter().zip(expected_lens.iter()).all(|(part, &len)| {
-        part.len() == len && part.chars().all(|c| c.is_ascii_hexdigit())
-    })
+    parts
+        .iter()
+        .zip(expected_lens.iter())
+        .all(|(part, &len)| part.len() == len && part.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
 /// Detect whether a token string is a path to a service principal JSON file.
@@ -261,7 +262,12 @@ fn select_ip(
     let nic_ref = net_profile
         .network_interfaces
         .iter()
-        .find(|n| n.properties.as_ref().and_then(|p| p.primary).unwrap_or(false))
+        .find(|n| {
+            n.properties
+                .as_ref()
+                .and_then(|p| p.primary)
+                .unwrap_or(false)
+        })
         .or_else(|| net_profile.network_interfaces.first())?;
 
     let nic_id_lower = nic_ref.id.to_ascii_lowercase();
@@ -381,7 +387,11 @@ fn fetch_paginated<T: serde::de::DeserializeOwned>(
             None => break,
         };
 
-        progress(&format!("Fetching {} ({} so far)...", resource_name, all_items.len()));
+        progress(&format!(
+            "Fetching {} ({} so far)...",
+            resource_name,
+            all_items.len()
+        ));
 
         let response = match agent
             .get(&url)
@@ -409,7 +419,10 @@ fn fetch_paginated<T: serde::de::DeserializeOwned>(
                 if !all_items.is_empty() {
                     break;
                 }
-                return Err(ProviderError::Parse(format!("{} response: {}", resource_name, e)));
+                return Err(ProviderError::Parse(format!(
+                    "{} response: {}",
+                    resource_name, e
+                )));
             }
         };
 
@@ -489,12 +502,7 @@ impl Provider for Azure {
                 return Err(ProviderError::Cancelled);
             }
 
-            progress(&format!(
-                "Subscription {}/{} ({})...",
-                i + 1,
-                total,
-                sub
-            ));
+            progress(&format!("Subscription {}/{} ({})...", i + 1, total, sub));
 
             match self.fetch_subscription(&agent, &access_token, sub, cancel, progress) {
                 Ok(hosts) => all_hosts.extend(hosts),
@@ -564,8 +572,14 @@ impl Azure {
             "https://management.azure.com/subscriptions/{}/providers/Microsoft.Network/publicIPAddresses?api-version=2024-05-01",
             subscription_id
         );
-        let public_ips: Vec<PublicIp> =
-            fetch_paginated(agent, &pip_url, access_token, cancel, "public IPs", progress)?;
+        let public_ips: Vec<PublicIp> = fetch_paginated(
+            agent,
+            &pip_url,
+            access_token,
+            cancel,
+            "public IPs",
+            progress,
+        )?;
 
         // Build lookup maps (case-insensitive Azure resource IDs)
         let nic_map: HashMap<String, &Nic> = nics
@@ -619,19 +633,33 @@ mod tests {
 
     #[test]
     fn test_valid_subscription_id() {
-        assert!(is_valid_subscription_id("12345678-1234-1234-1234-123456789012"));
-        assert!(is_valid_subscription_id("abcdef00-1234-5678-9abc-def012345678"));
-        assert!(is_valid_subscription_id("ABCDEF00-1234-5678-9ABC-DEF012345678"));
+        assert!(is_valid_subscription_id(
+            "12345678-1234-1234-1234-123456789012"
+        ));
+        assert!(is_valid_subscription_id(
+            "abcdef00-1234-5678-9abc-def012345678"
+        ));
+        assert!(is_valid_subscription_id(
+            "ABCDEF00-1234-5678-9ABC-DEF012345678"
+        ));
     }
 
     #[test]
     fn test_invalid_subscription_id() {
         assert!(!is_valid_subscription_id(""));
         assert!(!is_valid_subscription_id("not-a-uuid"));
-        assert!(!is_valid_subscription_id("12345678-1234-1234-1234-12345678901")); // too short last segment
-        assert!(!is_valid_subscription_id("12345678-1234-1234-1234-1234567890123")); // too long
-        assert!(!is_valid_subscription_id("1234567g-1234-1234-1234-123456789012")); // 'g' not hex
-        assert!(!is_valid_subscription_id("12345678123412341234123456789012")); // no dashes
+        assert!(!is_valid_subscription_id(
+            "12345678-1234-1234-1234-12345678901"
+        )); // too short last segment
+        assert!(!is_valid_subscription_id(
+            "12345678-1234-1234-1234-1234567890123"
+        )); // too long
+        assert!(!is_valid_subscription_id(
+            "1234567g-1234-1234-1234-123456789012"
+        )); // 'g' not hex
+        assert!(!is_valid_subscription_id(
+            "12345678123412341234123456789012"
+        )); // no dashes
     }
 
     #[test]
@@ -705,7 +733,10 @@ mod tests {
     #[test]
     fn test_sp_file_missing_fields() {
         let dir = std::env::temp_dir();
-        let path = dir.join(format!("purple_test_sp_incomplete_{}.json", std::process::id()));
+        let path = dir.join(format!(
+            "purple_test_sp_incomplete_{}.json",
+            std::process::id()
+        ));
         std::fs::write(&path, r#"{"tenantId":"t"}"#).unwrap();
         let result = resolve_sp_token(path.to_str().unwrap());
         std::fs::remove_file(&path).ok();
@@ -720,7 +751,10 @@ mod tests {
     #[test]
     fn test_sp_file_invalid_json() {
         let dir = std::env::temp_dir();
-        let path = dir.join(format!("purple_test_sp_invalid_{}.json", std::process::id()));
+        let path = dir.join(format!(
+            "purple_test_sp_invalid_{}.json",
+            std::process::id()
+        ));
         std::fs::write(&path, "not json at all").unwrap();
         let result = resolve_sp_token(path.to_str().unwrap());
         std::fs::remove_file(&path).ok();
@@ -894,25 +928,28 @@ mod tests {
     fn test_select_ip_prefers_public() {
         let vm = make_vm(vec![("/nic1", true)]);
         let nic = make_nic("/nic1", "10.0.0.4", Some("/pip1"));
-        let nic_map: HashMap<String, &Nic> =
-            [("/nic1".to_string(), &nic)].into_iter().collect();
-        let pip_map: HashMap<String, String> =
-            [("/pip1".to_string(), "52.168.1.1".to_string())]
-                .into_iter()
-                .collect();
+        let nic_map: HashMap<String, &Nic> = [("/nic1".to_string(), &nic)].into_iter().collect();
+        let pip_map: HashMap<String, String> = [("/pip1".to_string(), "52.168.1.1".to_string())]
+            .into_iter()
+            .collect();
 
-        assert_eq!(select_ip(&vm, &nic_map, &pip_map), Some("52.168.1.1".to_string()));
+        assert_eq!(
+            select_ip(&vm, &nic_map, &pip_map),
+            Some("52.168.1.1".to_string())
+        );
     }
 
     #[test]
     fn test_select_ip_falls_back_to_private() {
         let vm = make_vm(vec![("/nic1", true)]);
         let nic = make_nic("/nic1", "10.0.0.4", None);
-        let nic_map: HashMap<String, &Nic> =
-            [("/nic1".to_string(), &nic)].into_iter().collect();
+        let nic_map: HashMap<String, &Nic> = [("/nic1".to_string(), &nic)].into_iter().collect();
         let pip_map: HashMap<String, String> = HashMap::new();
 
-        assert_eq!(select_ip(&vm, &nic_map, &pip_map), Some("10.0.0.4".to_string()));
+        assert_eq!(
+            select_ip(&vm, &nic_map, &pip_map),
+            Some("10.0.0.4".to_string())
+        );
     }
 
     #[test]
@@ -945,28 +982,38 @@ mod tests {
         ]
         .into_iter()
         .collect();
-        let pip_map: HashMap<String, String> =
-            [("/pip1".to_string(), "52.168.1.1".to_string())]
-                .into_iter()
-                .collect();
+        let pip_map: HashMap<String, String> = [("/pip1".to_string(), "52.168.1.1".to_string())]
+            .into_iter()
+            .collect();
 
-        assert_eq!(select_ip(&vm, &nic_map, &pip_map), Some("52.168.1.1".to_string()));
+        assert_eq!(
+            select_ip(&vm, &nic_map, &pip_map),
+            Some("52.168.1.1".to_string())
+        );
     }
 
     #[test]
     fn test_select_ip_case_insensitive_ids() {
         let vm = make_vm(vec![("/Subscriptions/Sub/NIC1", true)]);
-        let nic = make_nic("/subscriptions/sub/nic1", "10.0.0.4", Some("/Subscriptions/Sub/PIP1"));
-        let nic_map: HashMap<String, &Nic> =
-            [("/subscriptions/sub/nic1".to_string(), &nic)]
-                .into_iter()
-                .collect();
-        let pip_map: HashMap<String, String> =
-            [("/subscriptions/sub/pip1".to_string(), "52.168.1.1".to_string())]
-                .into_iter()
-                .collect();
+        let nic = make_nic(
+            "/subscriptions/sub/nic1",
+            "10.0.0.4",
+            Some("/Subscriptions/Sub/PIP1"),
+        );
+        let nic_map: HashMap<String, &Nic> = [("/subscriptions/sub/nic1".to_string(), &nic)]
+            .into_iter()
+            .collect();
+        let pip_map: HashMap<String, String> = [(
+            "/subscriptions/sub/pip1".to_string(),
+            "52.168.1.1".to_string(),
+        )]
+        .into_iter()
+        .collect();
 
-        assert_eq!(select_ip(&vm, &nic_map, &pip_map), Some("52.168.1.1".to_string()));
+        assert_eq!(
+            select_ip(&vm, &nic_map, &pip_map),
+            Some("52.168.1.1".to_string())
+        );
     }
 
     // =========================================================================
@@ -1024,7 +1071,10 @@ mod tests {
             sku: Some("22_04-lts".to_string()),
             id: None,
         });
-        assert_eq!(build_os_string(&img), Some("UbuntuServer-22_04-lts".to_string()));
+        assert_eq!(
+            build_os_string(&img),
+            Some("UbuntuServer-22_04-lts".to_string())
+        );
     }
 
     #[test]
@@ -1164,10 +1214,12 @@ mod tests {
     fn test_select_ip_pip_not_in_map_falls_back_to_private() {
         let vm = make_vm(vec![("/nic1", true)]);
         let nic = make_nic("/nic1", "10.0.0.4", Some("/pip-missing"));
-        let nic_map: HashMap<String, &Nic> =
-            [("/nic1".to_string(), &nic)].into_iter().collect();
+        let nic_map: HashMap<String, &Nic> = [("/nic1".to_string(), &nic)].into_iter().collect();
         let pip_map: HashMap<String, String> = HashMap::new();
-        assert_eq!(select_ip(&vm, &nic_map, &pip_map), Some("10.0.0.4".to_string()));
+        assert_eq!(
+            select_ip(&vm, &nic_map, &pip_map),
+            Some("10.0.0.4".to_string())
+        );
     }
 
     #[test]
@@ -1196,15 +1248,16 @@ mod tests {
         let vm = make_vm(vec![("/nic1", false), ("/nic2", false)]);
         let nic1 = make_nic("/nic1", "10.0.0.4", None);
         let nic2 = make_nic("/nic2", "10.0.0.5", None);
-        let nic_map: HashMap<String, &Nic> = [
-            ("/nic1".to_string(), &nic1),
-            ("/nic2".to_string(), &nic2),
-        ]
-        .into_iter()
-        .collect();
+        let nic_map: HashMap<String, &Nic> =
+            [("/nic1".to_string(), &nic1), ("/nic2".to_string(), &nic2)]
+                .into_iter()
+                .collect();
         let pip_map: HashMap<String, String> = HashMap::new();
         // No primary NIC, should fall back to first
-        assert_eq!(select_ip(&vm, &nic_map, &pip_map), Some("10.0.0.4".to_string()));
+        assert_eq!(
+            select_ip(&vm, &nic_map, &pip_map),
+            Some("10.0.0.4".to_string())
+        );
     }
 
     #[test]
@@ -1287,7 +1340,10 @@ mod tests {
             tags: None,
             properties: VmProperties::default(),
         };
-        assert!(vm.properties.vm_id.is_empty(), "Default VmProperties should have empty vm_id");
+        assert!(
+            vm.properties.vm_id.is_empty(),
+            "Default VmProperties should have empty vm_id"
+        );
         // The actual skip happens in fetch_subscription:
         // if vm.properties.vm_id.is_empty() { continue; }
         // We verify the condition that triggers it.
@@ -1345,14 +1401,14 @@ mod tests {
     fn test_select_ip_pip_empty_address_falls_back_to_private() {
         let vm = make_vm(vec![("/nic1", true)]);
         let nic = make_nic("/nic1", "10.0.0.4", Some("/pip1"));
-        let nic_map: HashMap<String, &Nic> =
-            [("/nic1".to_string(), &nic)].into_iter().collect();
+        let nic_map: HashMap<String, &Nic> = [("/nic1".to_string(), &nic)].into_iter().collect();
         // Public IP exists in map but has empty address
         let pip_map: HashMap<String, String> =
-            [("/pip1".to_string(), String::new())]
-                .into_iter()
-                .collect();
-        assert_eq!(select_ip(&vm, &nic_map, &pip_map), Some("10.0.0.4".to_string()));
+            [("/pip1".to_string(), String::new())].into_iter().collect();
+        assert_eq!(
+            select_ip(&vm, &nic_map, &pip_map),
+            Some("10.0.0.4".to_string())
+        );
     }
 
     #[test]
@@ -1364,8 +1420,7 @@ mod tests {
                 ip_configurations: vec![],
             },
         };
-        let nic_map: HashMap<String, &Nic> =
-            [("/nic1".to_string(), &nic)].into_iter().collect();
+        let nic_map: HashMap<String, &Nic> = [("/nic1".to_string(), &nic)].into_iter().collect();
         let pip_map: HashMap<String, String> = HashMap::new();
         assert_eq!(select_ip(&vm, &nic_map, &pip_map), None);
     }
@@ -1394,11 +1449,13 @@ mod tests {
                 ],
             },
         };
-        let nic_map: HashMap<String, &Nic> =
-            [("/nic1".to_string(), &nic)].into_iter().collect();
+        let nic_map: HashMap<String, &Nic> = [("/nic1".to_string(), &nic)].into_iter().collect();
         let pip_map: HashMap<String, String> = HashMap::new();
         // No primary IP config, should fall back to first
-        assert_eq!(select_ip(&vm, &nic_map, &pip_map), Some("10.0.0.4".to_string()));
+        assert_eq!(
+            select_ip(&vm, &nic_map, &pip_map),
+            Some("10.0.0.4".to_string())
+        );
     }
 
     // =========================================================================

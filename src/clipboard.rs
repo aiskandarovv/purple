@@ -4,10 +4,10 @@ use std::process::{Command, Stdio};
 /// Try to find a working clipboard command by checking PATH.
 fn clipboard_cmd() -> Result<&'static str, String> {
     let candidates = [
-        ("pbcopy", &[][..]),                              // macOS
-        ("wl-copy", &[][..]),                             // Wayland
-        ("xclip", &["-selection", "clipboard"][..]),      // X11
-        ("xsel", &["--clipboard", "--input"][..]),        // X11 alt
+        ("pbcopy", &[][..]),                         // macOS
+        ("wl-copy", &[][..]),                        // Wayland
+        ("xclip", &["-selection", "clipboard"][..]), // X11
+        ("xsel", &["--clipboard", "--input"][..]),   // X11 alt
     ];
 
     for (cmd, _) in &candidates {
@@ -22,7 +22,10 @@ fn clipboard_cmd() -> Result<&'static str, String> {
         }
     }
 
-    Err("No clipboard tool found. Install pbcopy (macOS), wl-copy (Wayland), or xclip/xsel (X11).".to_string())
+    Err(
+        "No clipboard tool found. Install pbcopy (macOS), wl-copy (Wayland), or xclip/xsel (X11)."
+            .to_string(),
+    )
 }
 
 /// Get the extra args needed for a clipboard command.

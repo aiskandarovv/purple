@@ -89,7 +89,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         Screen::ProviderForm { provider } => {
             let provider = provider.clone();
             host_list::render(frame, app);
-            render_overlay(app, |app| provider_list::render_provider_form(frame, app, &provider));
+            render_overlay(app, |app| {
+                provider_list::render_provider_form(frame, app, &provider)
+            });
         }
         Screen::TunnelList { alias } => {
             let alias = alias.clone();
@@ -118,7 +120,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         Screen::ConfirmHostKeyReset { hostname, .. } => {
             let hostname = hostname.clone();
             host_list::render(frame, app);
-            render_overlay(app, |app| confirm_dialog::render_host_key_reset(frame, app, &hostname));
+            render_overlay(app, |app| {
+                confirm_dialog::render_host_key_reset(frame, app, &hostname)
+            });
         }
         Screen::FileBrowser { .. } => {
             host_list::render(frame, app);
@@ -138,14 +142,28 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         Screen::ConfirmImport { count } => {
             let count = *count;
             host_list::render(frame, app);
-            render_overlay(app, |app| confirm_dialog::render_confirm_import(frame, app, count));
+            render_overlay(app, |app| {
+                confirm_dialog::render_confirm_import(frame, app, count)
+            });
         }
-        Screen::Welcome { has_backup, host_count, known_hosts_count } => {
+        Screen::Welcome {
+            has_backup,
+            host_count,
+            known_hosts_count,
+        } => {
             let has_backup = *has_backup;
             let host_count = *host_count;
             let known_hosts_count = *known_hosts_count;
             host_list::render(frame, app);
-            render_overlay(app, |app| confirm_dialog::render_welcome(frame, app, has_backup, host_count, known_hosts_count));
+            render_overlay(app, |app| {
+                confirm_dialog::render_welcome(
+                    frame,
+                    app,
+                    has_backup,
+                    host_count,
+                    known_hosts_count,
+                )
+            });
         }
     }
 }

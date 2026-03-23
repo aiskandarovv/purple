@@ -69,7 +69,10 @@ impl ProviderConfig {
             }
             if trimmed.starts_with('[') && trimmed.ends_with(']') {
                 if let Some(section) = current.take() {
-                    if !sections.iter().any(|s: &ProviderSection| s.provider == section.provider) {
+                    if !sections
+                        .iter()
+                        .any(|s: &ProviderSection| s.provider == section.provider)
+                    {
                         sections.push(section);
                     }
                 }
@@ -105,12 +108,14 @@ impl ProviderConfig {
                         "user" => section.user = value,
                         "key" => section.identity_file = value,
                         "url" => section.url = value,
-                        "verify_tls" => section.verify_tls = !matches!(
-                            value.to_lowercase().as_str(), "false" | "0" | "no"
-                        ),
-                        "auto_sync" => section.auto_sync = !matches!(
-                            value.to_lowercase().as_str(), "false" | "0" | "no"
-                        ),
+                        "verify_tls" => {
+                            section.verify_tls =
+                                !matches!(value.to_lowercase().as_str(), "false" | "0" | "no")
+                        }
+                        "auto_sync" => {
+                            section.auto_sync =
+                                !matches!(value.to_lowercase().as_str(), "false" | "0" | "no")
+                        }
                         "profile" => section.profile = value,
                         "regions" => section.regions = value,
                         "project" => section.project = value,
@@ -124,7 +129,10 @@ impl ProviderConfig {
                 sections.push(section);
             }
         }
-        Self { sections, path_override: None }
+        Self {
+            sections,
+            path_override: None,
+        }
     }
 
     /// Save provider config to ~/.purple/providers (atomic write, chmod 600).
@@ -138,7 +146,7 @@ impl ProviderConfig {
                     return Err(io::Error::new(
                         io::ErrorKind::NotFound,
                         "Could not determine home directory",
-                    ))
+                    ));
                 }
             },
         };
@@ -171,7 +179,11 @@ impl ProviderConfig {
                 content.push_str(&format!("project={}\n", section.project));
             }
             if section.auto_sync != default_auto_sync(&section.provider) {
-                content.push_str(if section.auto_sync { "auto_sync=true\n" } else { "auto_sync=false\n" });
+                content.push_str(if section.auto_sync {
+                    "auto_sync=true\n"
+                } else {
+                    "auto_sync=false\n"
+                });
             }
         }
 
@@ -185,7 +197,11 @@ impl ProviderConfig {
 
     /// Add or replace a provider section.
     pub fn set_section(&mut self, section: ProviderSection) {
-        if let Some(existing) = self.sections.iter_mut().find(|s| s.provider == section.provider) {
+        if let Some(existing) = self
+            .sections
+            .iter_mut()
+            .find(|s| s.provider == section.provider)
+        {
             *existing = section;
         } else {
             self.sections.push(section);
@@ -403,18 +419,32 @@ verify_tls=false
     #[test]
     fn test_verify_tls_false_variants() {
         for value in &["false", "False", "FALSE", "0", "no", "No", "NO"] {
-            let content = format!("[proxmox]\ntoken=abc\nurl=https://pve:8006\nverify_tls={}\n", value);
+            let content = format!(
+                "[proxmox]\ntoken=abc\nurl=https://pve:8006\nverify_tls={}\n",
+                value
+            );
             let config = ProviderConfig::parse(&content);
-            assert!(!config.sections[0].verify_tls, "verify_tls={} should be false", value);
+            assert!(
+                !config.sections[0].verify_tls,
+                "verify_tls={} should be false",
+                value
+            );
         }
     }
 
     #[test]
     fn test_verify_tls_true_variants() {
         for value in &["true", "True", "1", "yes"] {
-            let content = format!("[proxmox]\ntoken=abc\nurl=https://pve:8006\nverify_tls={}\n", value);
+            let content = format!(
+                "[proxmox]\ntoken=abc\nurl=https://pve:8006\nverify_tls={}\n",
+                value
+            );
             let config = ProviderConfig::parse(&content);
-            assert!(config.sections[0].verify_tls, "verify_tls={} should be true", value);
+            assert!(
+                config.sections[0].verify_tls,
+                "verify_tls={} should be true",
+                value
+            );
         }
     }
 
@@ -427,9 +457,9 @@ verify_tls=false
             alias_prefix: "do".to_string(),
             user: "root".to_string(),
             identity_file: String::new(),
-            url: String::new(),     // empty: not written
-            verify_tls: true,       // default: not written
-            auto_sync: true,        // default for non-proxmox: not written
+            url: String::new(), // empty: not written
+            verify_tls: true,   // default: not written
+            auto_sync: true,    // default for non-proxmox: not written
             profile: String::new(),
             regions: String::new(),
             project: String::new(),
@@ -448,7 +478,10 @@ verify_tls=false
         let existing = ProviderConfig::parse(
             "[proxmox]\ntoken=old\nalias_prefix=pve\nuser=root\nurl=https://pve.local:8006\n",
         );
-        let existing_url = existing.section("proxmox").map(|s| s.url.clone()).unwrap_or_default();
+        let existing_url = existing
+            .section("proxmox")
+            .map(|s| s.url.clone())
+            .unwrap_or_default();
         assert_eq!(existing_url, "https://pve.local:8006");
 
         let mut config = existing;
@@ -483,7 +516,8 @@ verify_tls=false
 
     #[test]
     fn test_auto_sync_explicit_true() {
-        let config = ProviderConfig::parse("[proxmox]\ntoken=abc\nurl=https://pve:8006\nauto_sync=true\n");
+        let config =
+            ProviderConfig::parse("[proxmox]\ntoken=abc\nurl=https://pve:8006\nauto_sync=true\n");
         assert!(config.sections[0].auto_sync);
     }
 
@@ -536,7 +570,11 @@ verify_tls=false
         for value in &["false", "False", "FALSE", "0", "no"] {
             let content = format!("[digitalocean]\ntoken=abc\nauto_sync={}\n", value);
             let config = ProviderConfig::parse(&content);
-            assert!(!config.sections[0].auto_sync, "auto_sync={} should be false", value);
+            assert!(
+                !config.sections[0].auto_sync,
+                "auto_sync={} should be false",
+                value
+            );
         }
     }
 
@@ -544,16 +582,24 @@ verify_tls=false
     fn test_auto_sync_true_variants() {
         for value in &["true", "True", "TRUE", "1", "yes"] {
             // Start from proxmox default=false, override to true via explicit value
-            let content = format!("[proxmox]\ntoken=abc\nurl=https://pve:8006\nauto_sync={}\n", value);
+            let content = format!(
+                "[proxmox]\ntoken=abc\nurl=https://pve:8006\nauto_sync={}\n",
+                value
+            );
             let config = ProviderConfig::parse(&content);
-            assert!(config.sections[0].auto_sync, "auto_sync={} should be true", value);
+            assert!(
+                config.sections[0].auto_sync,
+                "auto_sync={} should be true",
+                value
+            );
         }
     }
 
     #[test]
     fn test_auto_sync_malformed_value_treated_as_true() {
         // Unrecognised value is not "false"/"0"/"no", so treated as true (like verify_tls)
-        let config = ProviderConfig::parse("[proxmox]\ntoken=abc\nurl=https://pve:8006\nauto_sync=maybe\n");
+        let config =
+            ProviderConfig::parse("[proxmox]\ntoken=abc\nurl=https://pve:8006\nauto_sync=maybe\n");
         assert!(config.sections[0].auto_sync);
     }
 
@@ -763,10 +809,25 @@ verify_tls=false
 
     #[test]
     fn test_auto_sync_default_all_others_true() {
-        for provider in &["digitalocean", "vultr", "linode", "hetzner", "upcloud", "aws", "scaleway", "gcp", "azure", "tailscale"] {
+        for provider in &[
+            "digitalocean",
+            "vultr",
+            "linode",
+            "hetzner",
+            "upcloud",
+            "aws",
+            "scaleway",
+            "gcp",
+            "azure",
+            "tailscale",
+        ] {
             let content = format!("[{}]\ntoken=abc\n", provider);
             let config = ProviderConfig::parse(&content);
-            assert!(config.sections[0].auto_sync, "auto_sync should default to true for {}", provider);
+            assert!(
+                config.sections[0].auto_sync,
+                "auto_sync should default to true for {}",
+                provider
+            );
         }
     }
 
@@ -922,9 +983,17 @@ verify_tls=false
     #[test]
     fn test_verify_tls_values() {
         for (val, expected) in [
-            ("false", false), ("False", false), ("FALSE", false),
-            ("0", false), ("no", false), ("No", false), ("NO", false),
-            ("true", true), ("True", true), ("1", true), ("yes", true),
+            ("false", false),
+            ("False", false),
+            ("FALSE", false),
+            ("0", false),
+            ("no", false),
+            ("No", false),
+            ("NO", false),
+            ("true", true),
+            ("True", true),
+            ("1", true),
+            ("yes", true),
             ("anything", true), // any unrecognized value defaults to true
         ] {
             let content = format!("[digitalocean]\ntoken=t\nverify_tls={}\n", val);
@@ -944,9 +1013,15 @@ verify_tls=false
     #[test]
     fn test_auto_sync_values() {
         for (val, expected) in [
-            ("false", false), ("False", false), ("FALSE", false),
-            ("0", false), ("no", false), ("No", false),
-            ("true", true), ("1", true), ("yes", true),
+            ("false", false),
+            ("False", false),
+            ("FALSE", false),
+            ("0", false),
+            ("no", false),
+            ("No", false),
+            ("true", true),
+            ("1", true),
+            ("yes", true),
         ] {
             let content = format!("[digitalocean]\ntoken=t\nauto_sync={}\n", val);
             let config = ProviderConfig::parse(&content);
@@ -1024,9 +1099,7 @@ verify_tls=false
         // Re-serialize and parse
         let serialized = format!(
             "[gcp]\ntoken={}\nproject={}\nregions={}\n",
-            config.sections[0].token,
-            config.sections[0].project,
-            config.sections[0].regions,
+            config.sections[0].token, config.sections[0].project, config.sections[0].regions,
         );
         let reparsed = ProviderConfig::parse(&serialized);
         assert_eq!(reparsed.sections[0].project, "my-project");

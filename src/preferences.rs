@@ -212,7 +212,9 @@ mod tests {
             let trimmed = line.trim();
             if !trimmed.starts_with('#')
                 && !trimmed.is_empty()
-                && trimmed.split_once('=').is_some_and(|(k, _)| k.trim() == key)
+                && trimmed
+                    .split_once('=')
+                    .is_some_and(|(k, _)| k.trim() == key)
             {
                 lines.push(format!("{}={}", key, new_value));
                 found = true;
@@ -242,7 +244,9 @@ mod tests {
             let trimmed = line.trim();
             if !trimmed.starts_with('#')
                 && !trimmed.is_empty()
-                && trimmed.split_once('=').is_some_and(|(k, _)| k.trim() == key)
+                && trimmed
+                    .split_once('=')
+                    .is_some_and(|(k, _)| k.trim() == key)
             {
                 lines.push(format!("{}={}", key, new_value));
                 found = true;

@@ -1,3 +1,13 @@
+## 2.8.1
+
+- Add CI workflow with format, clippy, test, cargo-deny and MSRV checks
+- Fix parser handling of lone \r line endings breaking round-trip idempotency
+- Add property-based and fuzz testing for SSH config parser
+- Add Dependabot for weekly cargo and GitHub Actions updates
+- Add cargo-deny for license and vulnerability scanning
+- Update GitHub Actions to latest versions (checkout v6, upload-artifact v7, download-artifact v8)
+- Update rustls-webpki to 0.103.10 (security fix)
+
 ## 2.8.0
 
 - Welcome screen shows host count and offers known_hosts import on first launch

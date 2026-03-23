@@ -161,10 +161,7 @@ impl Provider for Tailscale {
 }
 
 impl Tailscale {
-    fn fetch_from_cli(
-        &self,
-        cancel: &AtomicBool,
-    ) -> Result<Vec<ProviderHost>, ProviderError> {
+    fn fetch_from_cli(&self, cancel: &AtomicBool) -> Result<Vec<ProviderHost>, ProviderError> {
         let binary = find_tailscale_binary()?;
 
         let mut child = std::process::Command::new(&binary)
@@ -253,8 +250,9 @@ impl Tailscale {
             .map_err(|_| ProviderError::Parse("stdout reader thread panicked".to_string()))?
             .map_err(ProviderError::Parse)?;
 
-        let status: CliStatus = serde_json::from_str(&stdout_data)
-            .map_err(|e| ProviderError::Parse(format!("Failed to parse tailscale output: {}", e)))?;
+        let status: CliStatus = serde_json::from_str(&stdout_data).map_err(|e| {
+            ProviderError::Parse(format!("Failed to parse tailscale output: {}", e))
+        })?;
 
         Self::hosts_from_cli(status)
     }
@@ -306,7 +304,8 @@ impl Tailscale {
         // Validate token prefix
         if token.starts_with("tskey-auth-") {
             return Err(ProviderError::Execute(
-                "This is a device auth key, not an API key. Use a key starting with tskey-api-.".to_string(),
+                "This is a device auth key, not an API key. Use a key starting with tskey-api-."
+                    .to_string(),
             ));
         }
 
@@ -319,8 +318,7 @@ impl Tailscale {
         // Tailscale API keys (tskey-api-*) use HTTP Basic auth (key as username,
         // empty password). OAuth access tokens use Bearer auth.
         let auth_header = if token.starts_with("tskey-") {
-            let encoded = base64::engine::general_purpose::STANDARD
-                .encode(format!("{}:", token));
+            let encoded = base64::engine::general_purpose::STANDARD.encode(format!("{}:", token));
             format!("Basic {}", encoded)
         } else {
             format!("Bearer {}", token)
@@ -353,7 +351,12 @@ impl Tailscale {
 
             // Use hostname, or strip FQDN from name if hostname is empty
             let name = if device.hostname.is_empty() {
-                device.name.split('.').next().unwrap_or(&device.name).to_string()
+                device
+                    .name
+                    .split('.')
+                    .next()
+                    .unwrap_or(&device.name)
+                    .to_string()
             } else {
                 device.hostname.clone()
             };
@@ -364,7 +367,11 @@ impl Tailscale {
             if !device.os.is_empty() {
                 metadata.push(("os".to_string(), device.os.clone()));
             }
-            let status_str = if device.connected_to_control { "online" } else { "offline" };
+            let status_str = if device.connected_to_control {
+                "online"
+            } else {
+                "offline"
+            };
             metadata.push(("status".to_string(), status_str.to_string()));
 
             hosts.push(ProviderHost {
@@ -409,8 +416,18 @@ mod tests {
         assert_eq!(hosts[0].name, "web-server");
         assert_eq!(hosts[0].ip, "100.64.0.1");
         assert_eq!(hosts[0].tags, vec!["server"]);
-        assert!(hosts[0].metadata.iter().any(|(k, v)| k == "os" && v == "linux"));
-        assert!(hosts[0].metadata.iter().any(|(k, v)| k == "status" && v == "online"));
+        assert!(
+            hosts[0]
+                .metadata
+                .iter()
+                .any(|(k, v)| k == "os" && v == "linux")
+        );
+        assert!(
+            hosts[0]
+                .metadata
+                .iter()
+                .any(|(k, v)| k == "status" && v == "online")
+        );
     }
 
     #[test]
@@ -521,7 +538,12 @@ mod tests {
         }"#;
         let status: CliStatus = serde_json::from_str(json).unwrap();
         let hosts = Tailscale::hosts_from_cli(status).unwrap();
-        assert!(hosts[0].metadata.iter().any(|(k, v)| k == "status" && v == "unknown"));
+        assert!(
+            hosts[0]
+                .metadata
+                .iter()
+                .any(|(k, v)| k == "status" && v == "unknown")
+        );
     }
 
     #[test]
@@ -575,8 +597,18 @@ mod tests {
         assert_eq!(hosts[0].name, "api-server");
         assert_eq!(hosts[0].ip, "100.64.0.10");
         assert_eq!(hosts[0].tags, vec!["web"]);
-        assert!(hosts[0].metadata.iter().any(|(k, v)| k == "os" && v == "linux"));
-        assert!(hosts[0].metadata.iter().any(|(k, v)| k == "status" && v == "online"));
+        assert!(
+            hosts[0]
+                .metadata
+                .iter()
+                .any(|(k, v)| k == "os" && v == "linux")
+        );
+        assert!(
+            hosts[0]
+                .metadata
+                .iter()
+                .any(|(k, v)| k == "status" && v == "online")
+        );
     }
 
     #[test]
@@ -598,7 +630,12 @@ mod tests {
         let resp: ApiResponse = serde_json::from_str(json).unwrap();
         let hosts = Tailscale::hosts_from_api(resp).unwrap();
         assert_eq!(hosts.len(), 1);
-        assert!(hosts[0].metadata.iter().any(|(k, v)| k == "status" && v == "offline"));
+        assert!(
+            hosts[0]
+                .metadata
+                .iter()
+                .any(|(k, v)| k == "status" && v == "offline")
+        );
     }
 
     #[test]
@@ -770,7 +807,12 @@ mod tests {
         let status: CliStatus = serde_json::from_str(json).unwrap();
         let hosts = Tailscale::hosts_from_cli(status).unwrap();
         assert_eq!(hosts.len(), 1);
-        assert!(hosts[0].metadata.iter().any(|(k, v)| k == "status" && v == "offline"));
+        assert!(
+            hosts[0]
+                .metadata
+                .iter()
+                .any(|(k, v)| k == "status" && v == "offline")
+        );
     }
 
     #[test]
@@ -906,6 +948,10 @@ mod tests {
         let result = ts.fetch_hosts_cancellable("tskey-auth-abc123", &cancel);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("device auth key"), "Error should mention device auth key: {}", err);
+        assert!(
+            err.contains("device auth key"),
+            "Error should mention device auth key: {}",
+            err
+        );
     }
 }

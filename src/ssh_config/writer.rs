@@ -17,8 +17,8 @@ impl SshConfigFile {
         let target_path = fs::canonicalize(&self.path).unwrap_or_else(|_| self.path.clone());
 
         // Acquire advisory lock (blocks until available)
-        let _lock = fs_util::FileLock::acquire(&target_path)
-            .context("Failed to acquire config lock")?;
+        let _lock =
+            fs_util::FileLock::acquire(&target_path).context("Failed to acquire config lock")?;
 
         // Create backup if the file exists, keep only last 5
         if self.path.exists() {

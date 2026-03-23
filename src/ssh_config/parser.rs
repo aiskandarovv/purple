@@ -57,7 +57,14 @@ impl SshConfigFile {
         let mut elements = Vec::new();
         let mut current_block: Option<HostBlock> = None;
 
-        for line in content.lines() {
+        for raw_line in content.lines() {
+            // Strip trailing \r characters that may be left when a file mixes
+            // line endings or contains lone \r (old Mac style). Rust's
+            // str::lines() splits on \n and strips \r from \r\n pairs, but
+            // lone \r (not followed by \n) stays in the line. Stripping
+            // prevents stale \r from leaking into raw_line and breaking
+            // round-trip idempotency.
+            let line = raw_line.trim_end_matches('\r');
             let trimmed = line.trim();
 
             // Check for Include directive.
@@ -163,9 +170,7 @@ impl SshConfigFile {
     fn parse_include_line(trimmed: &str) -> Option<&str> {
         let bytes = trimmed.as_bytes();
         // "include" is 7 ASCII bytes; byte 7 must be whitespace or '='
-        if bytes.len() > 7
-            && bytes[..7].eq_ignore_ascii_case(b"include")
-        {
+        if bytes.len() > 7 && bytes[..7].eq_ignore_ascii_case(b"include") {
             let sep = bytes[7];
             if sep.is_ascii_whitespace() || sep == b'=' {
                 // Skip whitespace, optional '=', and more whitespace after keyword.
@@ -250,9 +255,7 @@ impl SshConfigFile {
                         match std::fs::read_to_string(&path) {
                             Ok(content) => {
                                 // Strip UTF-8 BOM if present (same as main config)
-                                let content = content
-                                    .strip_prefix('\u{FEFF}')
-                                    .unwrap_or(&content);
+                                let content = content.strip_prefix('\u{FEFF}').unwrap_or(&content);
                                 let elements = Self::parse_content_with_includes(
                                     content,
                                     path.parent(),
@@ -424,9 +427,8 @@ mod tests {
 
     #[test]
     fn test_basic_host() {
-        let config = parse_str(
-            "Host myserver\n  HostName 192.168.1.10\n  User admin\n  Port 2222\n",
-        );
+        let config =
+            parse_str("Host myserver\n  HostName 192.168.1.10\n  User admin\n  Port 2222\n");
         let entries = config.host_entries();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].alias, "myserver");
@@ -481,7 +483,9 @@ Host myserver
 ";
         let config = parse_str(content);
         // Check that the global comment is preserved
-        assert!(matches!(&config.elements[0], ConfigElement::GlobalLine(s) if s == "# Global comment"));
+        assert!(
+            matches!(&config.elements[0], ConfigElement::GlobalLine(s) if s == "# Global comment")
+        );
         // Check that the host block has the comment directive
         if let ConfigElement::HostBlock(block) = &config.elements[1] {
             assert!(block.directives[0].is_non_directive);
@@ -535,7 +539,9 @@ Host myserver
 ";
         let config = parse_str(content);
         // parse_content uses no config_dir, so Include resolves to no files
-        assert!(matches!(&config.elements[0], ConfigElement::Include(inc) if inc.raw_line == "Include config.d/*"));
+        assert!(
+            matches!(&config.elements[0], ConfigElement::Include(inc) if inc.raw_line == "Include config.d/*")
+        );
         // Blank line becomes a GlobalLine between Include and HostBlock
         assert!(matches!(&config.elements[1], ConfigElement::GlobalLine(s) if s.is_empty()));
         assert!(matches!(&config.elements[2], ConfigElement::HostBlock(_)));
@@ -565,7 +571,10 @@ Host myserver
         let default_path = dirs::home_dir().unwrap().join(".ssh/config");
         assert_eq!(entry.ssh_command(&default_path), "ssh -- 'myserver'");
         let custom_path = PathBuf::from("/tmp/my_config");
-        assert_eq!(entry.ssh_command(&custom_path), "ssh -F '/tmp/my_config' -- 'myserver'");
+        assert_eq!(
+            entry.ssh_command(&custom_path),
+            "ssh -F '/tmp/my_config' -- 'myserver'"
+        );
     }
 
     #[test]
@@ -601,28 +610,36 @@ Host myserver
     fn test_include_with_tab_separator() {
         let content = "Include\tconfig.d/*\n\nHost myserver\n  HostName 10.0.0.1\n";
         let config = parse_str(content);
-        assert!(matches!(&config.elements[0], ConfigElement::Include(inc) if inc.pattern == "config.d/*"));
+        assert!(
+            matches!(&config.elements[0], ConfigElement::Include(inc) if inc.pattern == "config.d/*")
+        );
     }
 
     #[test]
     fn test_include_with_equals_separator() {
         let content = "Include=config.d/*\n\nHost myserver\n  HostName 10.0.0.1\n";
         let config = parse_str(content);
-        assert!(matches!(&config.elements[0], ConfigElement::Include(inc) if inc.pattern == "config.d/*"));
+        assert!(
+            matches!(&config.elements[0], ConfigElement::Include(inc) if inc.pattern == "config.d/*")
+        );
     }
 
     #[test]
     fn test_include_with_space_equals_separator() {
         let content = "Include =config.d/*\n\nHost myserver\n  HostName 10.0.0.1\n";
         let config = parse_str(content);
-        assert!(matches!(&config.elements[0], ConfigElement::Include(inc) if inc.pattern == "config.d/*"));
+        assert!(
+            matches!(&config.elements[0], ConfigElement::Include(inc) if inc.pattern == "config.d/*")
+        );
     }
 
     #[test]
     fn test_include_with_space_equals_space_separator() {
         let content = "Include = config.d/*\n\nHost myserver\n  HostName 10.0.0.1\n";
         let config = parse_str(content);
-        assert!(matches!(&config.elements[0], ConfigElement::Include(inc) if inc.pattern == "config.d/*"));
+        assert!(
+            matches!(&config.elements[0], ConfigElement::Include(inc) if inc.pattern == "config.d/*")
+        );
     }
 
     #[test]
@@ -662,7 +679,11 @@ Host myserver
         assert_eq!(entries.len(), 1);
         // The value should preserve the # inside quotes
         if let ConfigElement::HostBlock(block) = &config.elements[0] {
-            let proxy_cmd = block.directives.iter().find(|d| d.key == "ProxyCommand").unwrap();
+            let proxy_cmd = block
+                .directives
+                .iter()
+                .find(|d| d.key == "ProxyCommand")
+                .unwrap();
             assert_eq!(proxy_cmd.value, "ssh -W \"%h #test\" gateway");
         } else {
             panic!("Expected HostBlock");
@@ -704,12 +725,25 @@ Match host *.example.com
 ";
         let config = parse_str(content);
         // Match line should flush the Host block and become a GlobalLine
-        let host_count = config.elements.iter().filter(|e| matches!(e, ConfigElement::HostBlock(_))).count();
+        let host_count = config
+            .elements
+            .iter()
+            .filter(|e| matches!(e, ConfigElement::HostBlock(_)))
+            .count();
         assert_eq!(host_count, 1);
         // Match line itself
-        assert!(config.elements.iter().any(|e| matches!(e, ConfigElement::GlobalLine(s) if s == "Match host *.example.com")));
+        assert!(
+            config.elements.iter().any(
+                |e| matches!(e, ConfigElement::GlobalLine(s) if s == "Match host *.example.com")
+            )
+        );
         // Indented lines after Match (no current_block) become GlobalLines
-        assert!(config.elements.iter().any(|e| matches!(e, ConfigElement::GlobalLine(s) if s.contains("ForwardAgent"))));
+        assert!(
+            config
+                .elements
+                .iter()
+                .any(|e| matches!(e, ConfigElement::GlobalLine(s) if s.contains("ForwardAgent")))
+        );
     }
 
     #[test]
@@ -757,7 +791,9 @@ Host myserver
 ";
         let config = parse_str(content);
         assert!(matches!(&config.elements[0], ConfigElement::GlobalLine(s) if s == "Match all"));
-        assert!(matches!(&config.elements[1], ConfigElement::GlobalLine(s) if s.contains("ServerAliveInterval")));
+        assert!(
+            matches!(&config.elements[1], ConfigElement::GlobalLine(s) if s.contains("ServerAliveInterval"))
+        );
         let entries = config.host_entries();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].alias, "myserver");
@@ -907,9 +943,6 @@ Host myserver
     #[test]
     fn test_split_include_patterns_multiple_unquoted() {
         let result = SshConfigFile::split_include_patterns("~/.ssh/conf.d/* /etc/ssh/config.d/*");
-        assert_eq!(
-            result,
-            vec!["~/.ssh/conf.d/*", "/etc/ssh/config.d/*"]
-        );
+        assert_eq!(result, vec!["~/.ssh/conf.d/*", "/etc/ssh/config.d/*"]);
     }
 }

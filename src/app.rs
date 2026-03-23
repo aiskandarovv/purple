@@ -1,16 +1,16 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::SystemTime;
 
 use ratatui::widgets::ListState;
 
 use crate::history::ConnectionHistory;
 use crate::providers::config::ProviderConfig;
-use crate::tunnel::{TunnelRule, TunnelType};
 use crate::ssh_config::model::{ConfigElement, HostEntry, SshConfigFile};
 use crate::ssh_keys::{self, SshKeyInfo};
+use crate::tunnel::{TunnelRule, TunnelType};
 
 /// Case-insensitive substring check without allocation.
 /// Uses a byte-window approach for ASCII strings (the common case for SSH
@@ -31,7 +31,10 @@ pub(crate) fn contains_ci(haystack: &str, needle: &str) -> bool {
     let needle_lower: Vec<char> = needle.chars().map(|c| c.to_ascii_lowercase()).collect();
     let haystack_chars: Vec<char> = haystack.chars().collect();
     haystack_chars.windows(needle_lower.len()).any(|window| {
-        window.iter().zip(needle_lower.iter()).all(|(h, n)| h.to_ascii_lowercase() == *n)
+        window
+            .iter()
+            .zip(needle_lower.iter())
+            .all(|(h, n)| h.to_ascii_lowercase() == *n)
     })
 }
 
@@ -53,19 +56,30 @@ impl SyncRecord {
     /// Format: provider\ttimestamp\tis_error\tmessage
     pub fn load_all() -> HashMap<String, SyncRecord> {
         let mut map = HashMap::new();
-        let Some(home) = dirs::home_dir() else { return map };
+        let Some(home) = dirs::home_dir() else {
+            return map;
+        };
         let path = home.join(".purple").join("sync_history.tsv");
-        let Ok(content) = std::fs::read_to_string(&path) else { return map };
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            return map;
+        };
         for line in content.lines() {
             let parts: Vec<&str> = line.splitn(4, '\t').collect();
-            if parts.len() < 4 { continue; }
-            let Some(ts) = parts[1].parse::<u64>().ok() else { continue };
+            if parts.len() < 4 {
+                continue;
+            }
+            let Some(ts) = parts[1].parse::<u64>().ok() else {
+                continue;
+            };
             let is_error = parts[2] == "1";
-            map.insert(parts[0].to_string(), SyncRecord {
-                timestamp: ts,
-                message: parts[3].to_string(),
-                is_error,
-            });
+            map.insert(
+                parts[0].to_string(),
+                SyncRecord {
+                    timestamp: ts,
+                    message: parts[3].to_string(),
+                    is_error,
+                },
+            );
         }
         map
     }
@@ -77,8 +91,13 @@ impl SyncRecord {
         let path = dir.join("sync_history.tsv");
         let mut lines = Vec::new();
         for (provider, record) in history {
-            lines.push(format!("{}\t{}\t{}\t{}",
-                provider, record.timestamp, if record.is_error { "1" } else { "0" }, record.message));
+            lines.push(format!(
+                "{}\t{}\t{}\t{}",
+                provider,
+                record.timestamp,
+                if record.is_error { "1" } else { "0" },
+                record.message
+            ));
         }
         let _ = crate::fs_util::atomic_write(&path, lines.join("\n").as_bytes());
     }
@@ -89,30 +108,64 @@ impl SyncRecord {
 pub enum Screen {
     HostList,
     AddHost,
-    EditHost { alias: String },
-    ConfirmDelete { alias: String },
+    EditHost {
+        alias: String,
+    },
+    ConfirmDelete {
+        alias: String,
+    },
     Help,
     KeyList,
-    KeyDetail { index: usize },
-    HostDetail { index: usize },
+    KeyDetail {
+        index: usize,
+    },
+    HostDetail {
+        index: usize,
+    },
     TagPicker,
     Providers,
-    ProviderForm { provider: String },
-    TunnelList { alias: String },
-    TunnelForm { alias: String, editing: Option<usize> },
-    SnippetPicker { target_aliases: Vec<String> },
-    SnippetForm { target_aliases: Vec<String>, editing: Option<usize> },
-    SnippetOutput { snippet_name: String, target_aliases: Vec<String> },
-    SnippetParamForm { snippet: crate::snippet::Snippet, target_aliases: Vec<String> },
+    ProviderForm {
+        provider: String,
+    },
+    TunnelList {
+        alias: String,
+    },
+    TunnelForm {
+        alias: String,
+        editing: Option<usize>,
+    },
+    SnippetPicker {
+        target_aliases: Vec<String>,
+    },
+    SnippetForm {
+        target_aliases: Vec<String>,
+        editing: Option<usize>,
+    },
+    SnippetOutput {
+        snippet_name: String,
+        target_aliases: Vec<String>,
+    },
+    SnippetParamForm {
+        snippet: crate::snippet::Snippet,
+        target_aliases: Vec<String>,
+    },
     ConfirmHostKeyReset {
         alias: String,
         hostname: String,
         known_hosts_path: String,
         askpass: Option<String>,
     },
-    FileBrowser { alias: String },
-    ConfirmImport { count: usize },
-    Welcome { has_backup: bool, host_count: usize, known_hosts_count: usize },
+    FileBrowser {
+        alias: String,
+    },
+    ConfirmImport {
+        count: usize,
+    },
+    Welcome {
+        has_backup: bool,
+        host_count: usize,
+        known_hosts_count: usize,
+    },
 }
 
 /// Which form field is focused.
@@ -326,7 +379,9 @@ impl HostForm {
             return Err("Alias can't contain whitespace. Keep it simple.".to_string());
         }
         if alias.contains('#') {
-            return Err("Alias can't contain '#'. That's a comment character in SSH config.".to_string());
+            return Err(
+                "Alias can't contain '#'. That's a comment character in SSH config.".to_string(),
+            );
         }
         if crate::ssh_config::model::is_host_pattern(alias) {
             return Err(
@@ -347,7 +402,10 @@ impl HostForm {
         ];
         for (value, name) in &fields {
             if value.chars().any(|c| c.is_control()) {
-                return Err(format!("{} contains control characters. That's not going to work.", name));
+                return Err(format!(
+                    "{} contains control characters. That's not going to work.",
+                    name
+                ));
             }
         }
         if self.hostname.trim().is_empty() {
@@ -379,8 +437,17 @@ impl HostForm {
             port: self.port.parse().unwrap_or(22),
             identity_file: self.identity_file.trim().to_string(),
             proxy_jump: self.proxy_jump.trim().to_string(),
-            tags: self.tags.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect(),
-            askpass: if askpass_trimmed.is_empty() { None } else { Some(askpass_trimmed) },
+            tags: self
+                .tags
+                .split(',')
+                .map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty())
+                .collect(),
+            askpass: if askpass_trimmed.is_empty() {
+                None
+            } else {
+                Some(askpass_trimmed)
+            },
             ..Default::default()
         }
     }
@@ -928,7 +995,8 @@ pub struct SnippetParamFormState {
 
 impl SnippetParamFormState {
     pub fn new(params: &[crate::snippet::SnippetParam]) -> Self {
-        let values: Vec<String> = params.iter()
+        let values: Vec<String> = params
+            .iter()
             .map(|p| p.default.clone().unwrap_or_default())
             .collect();
         let cursor_pos = values.first().map(|v| v.chars().count()).unwrap_or(0);
@@ -1377,7 +1445,9 @@ impl App {
     /// If the last non-blank line in the directives is a comment, return it as
     /// a potential group header for the next host block.
     /// Strips `purple:group ` prefix so headers display as the provider name.
-    fn extract_trailing_comment(directives: &[crate::ssh_config::model::Directive]) -> Option<String> {
+    fn extract_trailing_comment(
+        directives: &[crate::ssh_config::model::Directive],
+    ) -> Option<String> {
         let d = directives.last()?;
         if !d.is_non_directive {
             return None;
@@ -1546,7 +1616,10 @@ impl App {
     /// Partition sorted indices by provider, inserting group headers.
     /// Hosts without provider appear first (no header), then named provider
     /// groups (in first-appearance order) with headers.
-    fn group_indices_by_provider(hosts: &[HostEntry], sorted_indices: &[usize]) -> Vec<HostListItem> {
+    fn group_indices_by_provider(
+        hosts: &[HostEntry],
+        sorted_indices: &[usize],
+    ) -> Vec<HostListItem> {
         let mut none_indices: Vec<usize> = Vec::new();
         let mut provider_groups: Vec<(&str, Vec<usize>)> = Vec::new();
         let mut provider_order: HashMap<&str, usize> = HashMap::new();
@@ -1602,15 +1675,18 @@ impl App {
 
     /// Get the currently selected host entry.
     pub fn selected_host(&self) -> Option<&HostEntry> {
-        self.selected_host_index()
-            .and_then(|i| self.hosts.get(i))
+        self.selected_host_index().and_then(|i| self.hosts.get(i))
     }
 
     /// Move selection up, skipping group headers.
     pub fn select_prev(&mut self) {
         self.ui.detail_scroll = 0;
         if self.search.query.is_some() {
-            cycle_selection(&mut self.ui.list_state, self.search.filtered_indices.len(), false);
+            cycle_selection(
+                &mut self.ui.list_state,
+                self.search.filtered_indices.len(),
+                false,
+            );
         } else {
             self.select_prev_in_display_list();
         }
@@ -1620,7 +1696,11 @@ impl App {
     pub fn select_next(&mut self) {
         self.ui.detail_scroll = 0;
         if self.search.query.is_some() {
-            cycle_selection(&mut self.ui.list_state, self.search.filtered_indices.len(), true);
+            cycle_selection(
+                &mut self.ui.list_state,
+                self.search.filtered_indices.len(),
+                true,
+            );
         } else {
             self.select_next_in_display_list();
         }
@@ -1663,7 +1743,11 @@ impl App {
         self.ui.detail_scroll = 0;
         const PAGE_SIZE: usize = 10;
         if self.search.query.is_some() {
-            page_down(&mut self.ui.list_state, self.search.filtered_indices.len(), PAGE_SIZE);
+            page_down(
+                &mut self.ui.list_state,
+                self.search.filtered_indices.len(),
+                PAGE_SIZE,
+            );
         } else {
             let current = self.ui.list_state.selected().unwrap_or(0);
             // Jump PAGE_SIZE host items forward (skip group headers)
@@ -1690,7 +1774,11 @@ impl App {
         self.ui.detail_scroll = 0;
         const PAGE_SIZE: usize = 10;
         if self.search.query.is_some() {
-            page_up(&mut self.ui.list_state, self.search.filtered_indices.len(), PAGE_SIZE);
+            page_up(
+                &mut self.ui.list_state,
+                self.search.filtered_indices.len(),
+                PAGE_SIZE,
+            );
         } else {
             let current = self.ui.list_state.selected().unwrap_or(0);
             // Jump PAGE_SIZE host items backward (skip group headers)
@@ -1730,7 +1818,8 @@ impl App {
         // Prune ping status for hosts that no longer exist
         let valid_aliases: std::collections::HashSet<&str> =
             self.hosts.iter().map(|h| h.alias.as_str()).collect();
-        self.ping_status.retain(|alias, _| valid_aliases.contains(alias.as_str()));
+        self.ping_status
+            .retain(|alias, _| valid_aliases.contains(alias.as_str()));
 
         // Restore search if it was active, otherwise reset
         if let Some(query) = had_search {
@@ -1749,7 +1838,10 @@ impl App {
             {
                 let current = self.ui.list_state.selected().unwrap_or(0);
                 if current >= self.display_list.len()
-                    || !matches!(self.display_list.get(current), Some(HostListItem::Host { .. }))
+                    || !matches!(
+                        self.display_list.get(current),
+                        Some(HostListItem::Host { .. })
+                    )
                 {
                     self.ui.list_state.select(Some(pos));
                 }
@@ -1821,9 +1913,7 @@ impl App {
                 .iter()
                 .enumerate()
                 .filter(|(_, host)| {
-                    host.tags
-                        .iter()
-                        .any(|t| eq_ci(t, tag_exact))
+                    host.tags.iter().any(|t| eq_ci(t, tag_exact))
                         || host.provider.as_ref().is_some_and(|p| eq_ci(p, tag_exact))
                 })
                 .map(|(i, _)| i)
@@ -1835,10 +1925,11 @@ impl App {
                 .iter()
                 .enumerate()
                 .filter(|(_, host)| {
-                    host.tags
-                        .iter()
-                        .any(|t| contains_ci(t, tag_query))
-                        || host.provider.as_ref().is_some_and(|p| contains_ci(p, tag_query))
+                    host.tags.iter().any(|t| contains_ci(t, tag_query))
+                        || host
+                            .provider
+                            .as_ref()
+                            .is_some_and(|p| contains_ci(p, tag_query))
                 })
                 .map(|(i, _)| i)
                 .collect();
@@ -1852,7 +1943,10 @@ impl App {
                         || contains_ci(&host.hostname, &query)
                         || contains_ci(&host.user, &query)
                         || host.tags.iter().any(|t| contains_ci(t, &query))
-                        || host.provider.as_ref().is_some_and(|p| contains_ci(p, &query))
+                        || host
+                            .provider
+                            .as_ref()
+                            .is_some_and(|p| contains_ci(p, &query))
                 })
                 .map(|(i, _)| i)
                 .collect();
@@ -1870,7 +1964,10 @@ impl App {
     /// Includes any unknown provider names found in the config file (e.g. typos or future providers).
     pub fn sorted_provider_names(&self) -> Vec<String> {
         use crate::providers;
-        let mut names: Vec<String> = providers::PROVIDER_NAMES.iter().map(|s| s.to_string()).collect();
+        let mut names: Vec<String> = providers::PROVIDER_NAMES
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         // Append configured providers not in the known list so they are visible and removable
         for section in &self.provider_config.sections {
             if !names.contains(&section.provider) {
@@ -1883,9 +1980,7 @@ impl App {
             let ts_a = self.sync_history.get(a.as_str()).map_or(0, |r| r.timestamp);
             let ts_b = self.sync_history.get(b.as_str()).map_or(0, |r| r.timestamp);
             // Configured first (by most recent sync), then unconfigured alphabetically
-            conf_b.cmp(&conf_a)
-                .then(ts_b.cmp(&ts_a))
-                .then(a.cmp(b))
+            conf_b.cmp(&conf_a).then(ts_b.cmp(&ts_a)).then(a.cmp(b))
         });
         names
     }
@@ -1894,9 +1989,7 @@ impl App {
     pub fn filtered_snippet_indices(&self) -> Vec<usize> {
         match &self.ui.snippet_search {
             None => (0..self.snippet_store.snippets.len()).collect(),
-            Some(query) if query.is_empty() => {
-                (0..self.snippet_store.snippets.len()).collect()
-            }
+            Some(query) if query.is_empty() => (0..self.snippet_store.snippets.len()).collect(),
             Some(query) => self
                 .snippet_store
                 .snippets
@@ -1942,25 +2035,35 @@ impl App {
     pub fn check_config_changed(&mut self) {
         if matches!(
             self.screen,
-            Screen::AddHost | Screen::EditHost { .. } | Screen::ProviderForm { .. }
-                | Screen::TunnelList { .. } | Screen::TunnelForm { .. }
+            Screen::AddHost
+                | Screen::EditHost { .. }
+                | Screen::ProviderForm { .. }
+                | Screen::TunnelList { .. }
+                | Screen::TunnelForm { .. }
                 | Screen::HostDetail { .. }
-                | Screen::SnippetPicker { .. } | Screen::SnippetForm { .. }
-                | Screen::SnippetOutput { .. } | Screen::SnippetParamForm { .. }
+                | Screen::SnippetPicker { .. }
+                | Screen::SnippetForm { .. }
+                | Screen::SnippetOutput { .. }
+                | Screen::SnippetParamForm { .. }
                 | Screen::FileBrowser { .. }
-                | Screen::ConfirmDelete { .. } | Screen::ConfirmHostKeyReset { .. }
+                | Screen::ConfirmDelete { .. }
+                | Screen::ConfirmHostKeyReset { .. }
         ) || self.tag_input.is_some()
         {
             return;
         }
         let current_mtime = Self::get_mtime(&self.reload.config_path);
         let changed = current_mtime != self.reload.last_modified
-            || self.reload.include_mtimes.iter().any(|(path, old_mtime)| {
-                Self::get_mtime(path) != *old_mtime
-            })
-            || self.reload.include_dir_mtimes.iter().any(|(path, old_mtime)| {
-                Self::get_mtime(path) != *old_mtime
-            });
+            || self
+                .reload
+                .include_mtimes
+                .iter()
+                .any(|(path, old_mtime)| Self::get_mtime(path) != *old_mtime)
+            || self
+                .reload
+                .include_dir_mtimes
+                .iter()
+                .any(|(path, old_mtime)| Self::get_mtime(path) != *old_mtime);
         if changed {
             if let Ok(new_config) = SshConfigFile::parse(&self.reload.config_path) {
                 self.config = new_config;
@@ -2002,8 +2105,7 @@ impl App {
 
     /// Capture ~/.purple/providers mtime when opening a provider form.
     pub fn capture_provider_form_mtime(&mut self) {
-        let path = dirs::home_dir()
-            .map(|h| h.join(".purple/providers"));
+        let path = dirs::home_dir().map(|h| h.join(".purple/providers"));
         self.conflict.provider_form_mtime = path.as_ref().and_then(|p| Self::get_mtime(p));
     }
 
@@ -2014,11 +2116,13 @@ impl App {
                 if Self::get_mtime(&self.reload.config_path) != Some(open_mtime) {
                     return true;
                 }
-                self.conflict.form_include_mtimes
+                self.conflict
+                    .form_include_mtimes
                     .iter()
                     .any(|(path, old_mtime)| Self::get_mtime(path) != *old_mtime)
                     || self
-                        .conflict.form_include_dir_mtimes
+                        .conflict
+                        .form_include_dir_mtimes
                         .iter()
                         .any(|(path, old_mtime)| Self::get_mtime(path) != *old_mtime)
             }
@@ -2028,8 +2132,7 @@ impl App {
 
     /// Check if ~/.purple/providers has changed since the provider form was opened.
     pub fn provider_config_changed_since_form_open(&self) -> bool {
-        let path = dirs::home_dir()
-            .map(|h| h.join(".purple/providers"));
+        let path = dirs::home_dir().map(|h| h.join(".purple/providers"));
         let current_mtime = path.as_ref().and_then(|p| Self::get_mtime(p));
         self.conflict.provider_form_mtime != current_mtime
     }
@@ -2091,12 +2194,20 @@ impl App {
 
     /// Move password picker selection up.
     pub fn select_prev_password_source(&mut self) {
-        cycle_selection(&mut self.ui.password_picker_state, crate::askpass::PASSWORD_SOURCES.len(), false);
+        cycle_selection(
+            &mut self.ui.password_picker_state,
+            crate::askpass::PASSWORD_SOURCES.len(),
+            false,
+        );
     }
 
     /// Move password picker selection down.
     pub fn select_next_password_source(&mut self) {
-        cycle_selection(&mut self.ui.password_picker_state, crate::askpass::PASSWORD_SOURCES.len(), true);
+        cycle_selection(
+            &mut self.ui.password_picker_state,
+            crate::askpass::PASSWORD_SOURCES.len(),
+            true,
+        );
     }
 
     /// Get hosts available as ProxyJump targets (excludes the host being edited).
@@ -2178,7 +2289,11 @@ impl App {
 
     /// Move tunnel list selection up.
     pub fn select_prev_tunnel(&mut self) {
-        cycle_selection(&mut self.ui.tunnel_list_state, self.tunnel_list.len(), false);
+        cycle_selection(
+            &mut self.ui.tunnel_list_state,
+            self.tunnel_list.len(),
+            false,
+        );
     }
 
     /// Move tunnel list selection down.
@@ -2188,12 +2303,20 @@ impl App {
 
     /// Move snippet picker selection up.
     pub fn select_prev_snippet(&mut self) {
-        cycle_selection(&mut self.ui.snippet_picker_state, self.snippet_store.snippets.len(), false);
+        cycle_selection(
+            &mut self.ui.snippet_picker_state,
+            self.snippet_store.snippets.len(),
+            false,
+        );
     }
 
     /// Move snippet picker selection down.
     pub fn select_next_snippet(&mut self) {
-        cycle_selection(&mut self.ui.snippet_picker_state, self.snippet_store.snippets.len(), true);
+        cycle_selection(
+            &mut self.ui.snippet_picker_state,
+            self.snippet_store.snippets.len(),
+            true,
+        );
     }
 
     /// Poll active tunnels for exit status. Returns messages for any that exited.
@@ -2215,7 +2338,11 @@ impl App {
                             Ok(n) if n > 0 => {
                                 let s = String::from_utf8_lossy(&buf[..n]);
                                 let trimmed = s.trim();
-                                if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+                                if trimmed.is_empty() {
+                                    None
+                                } else {
+                                    Some(trimmed.to_string())
+                                }
                             }
                             _ => None,
                         }
@@ -2225,14 +2352,25 @@ impl App {
                     } else if let Some(err) = stderr_msg {
                         (format!("Tunnel for {}: {}", alias, err), true)
                     } else {
-                        (format!("Tunnel for {} exited with code {}.", alias, status.code().unwrap_or(-1)), true)
+                        (
+                            format!(
+                                "Tunnel for {} exited with code {}.",
+                                alias,
+                                status.code().unwrap_or(-1)
+                            ),
+                            true,
+                        )
                     };
                     exited.push((alias.clone(), msg, is_error));
                     to_remove.push(alias.clone());
                 }
                 Ok(None) => {} // Still running
                 Err(e) => {
-                    exited.push((alias.clone(), format!("Tunnel for {} lost: {}", alias, e), true));
+                    exited.push((
+                        alias.clone(),
+                        format!("Tunnel for {} lost: {}", alias, e),
+                        true,
+                    ));
                     to_remove.push(alias.clone());
                 }
             }
@@ -2293,11 +2431,13 @@ impl App {
             .unwrap_or_default();
         self.config.update_host(old_alias, &entry);
         self.config.set_host_tags(&entry.alias, &entry.tags);
-        self.config.set_host_askpass(&entry.alias, entry.askpass.as_deref().unwrap_or(""));
+        self.config
+            .set_host_askpass(&entry.alias, entry.askpass.as_deref().unwrap_or(""));
         if let Err(e) = self.config.write() {
             self.config.update_host(&entry.alias, &old_entry);
             self.config.set_host_tags(&old_entry.alias, &old_entry.tags);
-            self.config.set_host_askpass(&old_entry.alias, old_entry.askpass.as_deref().unwrap_or(""));
+            self.config
+                .set_host_askpass(&old_entry.alias, old_entry.askpass.as_deref().unwrap_or(""));
             return Err(format!("Failed to save: {}", e));
         }
         // Migrate active tunnel handle if alias changed
@@ -2374,10 +2514,14 @@ impl App {
             }
         }
         let name = crate::providers::provider_display_name(provider);
-        (format!(
-            "Synced {}: added {}, updated {}, unchanged {}.",
-            name, result.added, result.updated, result.unchanged
-        ), false, total)
+        (
+            format!(
+                "Synced {}: added {}, updated {}, unchanged {}.",
+                name, result.added, result.updated, result.unchanged
+            ),
+            false,
+            total,
+        )
     }
 }
 
@@ -2485,9 +2629,15 @@ Host staging
         let app = make_app(content);
         assert_eq!(app.display_list.len(), 4);
         assert!(matches!(&app.display_list[0], HostListItem::GroupHeader(s) if s == "Production"));
-        assert!(matches!(&app.display_list[1], HostListItem::Host { index: 0 }));
+        assert!(matches!(
+            &app.display_list[1],
+            HostListItem::Host { index: 0 }
+        ));
         assert!(matches!(&app.display_list[2], HostListItem::GroupHeader(s) if s == "Staging"));
-        assert!(matches!(&app.display_list[3], HostListItem::Host { index: 1 }));
+        assert!(matches!(
+            &app.display_list[3],
+            HostListItem::Host { index: 1 }
+        ));
     }
 
     #[test]
@@ -2501,7 +2651,10 @@ Host nogroup
         let app = make_app(content);
         // Blank line between comment and host means no group header
         assert_eq!(app.display_list.len(), 1);
-        assert!(matches!(&app.display_list[0], HostListItem::Host { index: 0 }));
+        assert!(matches!(
+            &app.display_list[0],
+            HostListItem::Host { index: 0 }
+        ));
     }
 
     #[test]
@@ -2546,7 +2699,9 @@ Host vultr-app
 
         // Should have: DigitalOcean header, 2 hosts, Vultr header, 1 host
         assert_eq!(app.display_list.len(), 5);
-        assert!(matches!(&app.display_list[0], HostListItem::GroupHeader(s) if s == "DigitalOcean"));
+        assert!(
+            matches!(&app.display_list[0], HostListItem::GroupHeader(s) if s == "DigitalOcean")
+        );
         assert!(matches!(&app.display_list[1], HostListItem::Host { .. }));
         assert!(matches!(&app.display_list[2], HostListItem::Host { .. }));
         assert!(matches!(&app.display_list[3], HostListItem::GroupHeader(s) if s == "Vultr"));
@@ -2571,7 +2726,9 @@ Host do-web
         assert_eq!(app.display_list.len(), 3);
         // No header before the manual host
         assert!(matches!(&app.display_list[0], HostListItem::Host { .. }));
-        assert!(matches!(&app.display_list[1], HostListItem::GroupHeader(s) if s == "DigitalOcean"));
+        assert!(
+            matches!(&app.display_list[1], HostListItem::GroupHeader(s) if s == "DigitalOcean")
+        );
         assert!(matches!(&app.display_list[2], HostListItem::Host { .. }));
     }
 
@@ -2593,7 +2750,9 @@ Host do-alpha
 
         // DigitalOcean header + sorted hosts
         assert_eq!(app.display_list.len(), 3);
-        assert!(matches!(&app.display_list[0], HostListItem::GroupHeader(s) if s == "DigitalOcean"));
+        assert!(
+            matches!(&app.display_list[0], HostListItem::GroupHeader(s) if s == "DigitalOcean")
+        );
         // First host should be do-alpha (alphabetical)
         if let HostListItem::Host { index } = &app.display_list[1] {
             assert_eq!(app.hosts[*index].alias, "do-alpha");
@@ -2652,7 +2811,11 @@ Host vultr-app
         app.apply_sort();
         // Should be flat: just hosts, no headers
         assert_eq!(app.display_list.len(), 2);
-        assert!(app.display_list.iter().all(|item| matches!(item, HostListItem::Host { .. })));
+        assert!(
+            app.display_list
+                .iter()
+                .all(|item| matches!(item, HostListItem::Host { .. }))
+        );
     }
 
     // --- New validation tests from review findings ---
@@ -2923,33 +3086,69 @@ Host vultr-app
     #[test]
     fn tunnel_form_field_next_local() {
         use crate::tunnel::TunnelType;
-        assert_eq!(TunnelFormField::Type.next(TunnelType::Local), TunnelFormField::BindPort);
-        assert_eq!(TunnelFormField::BindPort.next(TunnelType::Local), TunnelFormField::RemoteHost);
-        assert_eq!(TunnelFormField::RemoteHost.next(TunnelType::Local), TunnelFormField::RemotePort);
-        assert_eq!(TunnelFormField::RemotePort.next(TunnelType::Local), TunnelFormField::Type);
+        assert_eq!(
+            TunnelFormField::Type.next(TunnelType::Local),
+            TunnelFormField::BindPort
+        );
+        assert_eq!(
+            TunnelFormField::BindPort.next(TunnelType::Local),
+            TunnelFormField::RemoteHost
+        );
+        assert_eq!(
+            TunnelFormField::RemoteHost.next(TunnelType::Local),
+            TunnelFormField::RemotePort
+        );
+        assert_eq!(
+            TunnelFormField::RemotePort.next(TunnelType::Local),
+            TunnelFormField::Type
+        );
     }
 
     #[test]
     fn tunnel_form_field_next_dynamic_skips_remote() {
         use crate::tunnel::TunnelType;
-        assert_eq!(TunnelFormField::Type.next(TunnelType::Dynamic), TunnelFormField::BindPort);
-        assert_eq!(TunnelFormField::BindPort.next(TunnelType::Dynamic), TunnelFormField::Type);
+        assert_eq!(
+            TunnelFormField::Type.next(TunnelType::Dynamic),
+            TunnelFormField::BindPort
+        );
+        assert_eq!(
+            TunnelFormField::BindPort.next(TunnelType::Dynamic),
+            TunnelFormField::Type
+        );
     }
 
     #[test]
     fn tunnel_form_field_prev_local() {
         use crate::tunnel::TunnelType;
-        assert_eq!(TunnelFormField::Type.prev(TunnelType::Local), TunnelFormField::RemotePort);
-        assert_eq!(TunnelFormField::BindPort.prev(TunnelType::Local), TunnelFormField::Type);
-        assert_eq!(TunnelFormField::RemoteHost.prev(TunnelType::Local), TunnelFormField::BindPort);
-        assert_eq!(TunnelFormField::RemotePort.prev(TunnelType::Local), TunnelFormField::RemoteHost);
+        assert_eq!(
+            TunnelFormField::Type.prev(TunnelType::Local),
+            TunnelFormField::RemotePort
+        );
+        assert_eq!(
+            TunnelFormField::BindPort.prev(TunnelType::Local),
+            TunnelFormField::Type
+        );
+        assert_eq!(
+            TunnelFormField::RemoteHost.prev(TunnelType::Local),
+            TunnelFormField::BindPort
+        );
+        assert_eq!(
+            TunnelFormField::RemotePort.prev(TunnelType::Local),
+            TunnelFormField::RemoteHost
+        );
     }
 
     #[test]
     fn tunnel_form_field_prev_dynamic_skips_remote() {
         use crate::tunnel::TunnelType;
-        assert_eq!(TunnelFormField::Type.prev(TunnelType::Dynamic), TunnelFormField::BindPort);
-        assert_eq!(TunnelFormField::BindPort.prev(TunnelType::Dynamic), TunnelFormField::Type);
+        assert_eq!(
+            TunnelFormField::Type.prev(TunnelType::Dynamic),
+            TunnelFormField::BindPort
+        );
+        assert_eq!(
+            TunnelFormField::BindPort.prev(TunnelType::Dynamic),
+            TunnelFormField::Type
+        );
     }
 
     #[test]
@@ -3167,8 +3366,7 @@ Host vultr-app
 
     #[test]
     fn select_host_by_alias_normal_mode() {
-        let mut app =
-            make_app("Host alpha\n  HostName a.com\n\nHost beta\n  HostName b.com\n");
+        let mut app = make_app("Host alpha\n  HostName a.com\n\nHost beta\n  HostName b.com\n");
         app.select_host_by_alias("beta");
         let selected = app.selected_host().unwrap();
         assert_eq!(selected.alias, "beta");
@@ -3195,9 +3393,7 @@ Host vultr-app
 
     #[test]
     fn select_host_by_alias_search_mode_not_in_results() {
-        let mut app = make_app(
-            "Host alpha\n  HostName a.com\n\nHost beta\n  HostName b.com\n",
-        );
+        let mut app = make_app("Host alpha\n  HostName a.com\n\nHost beta\n  HostName b.com\n");
         app.start_search();
         app.search.query = Some("alpha".to_string());
         app.apply_filter();
@@ -3212,19 +3408,20 @@ Host vultr-app
     fn make_provider_app() -> App {
         let mut app = make_app("Host test\n  HostName test.com\n");
         app.provider_config = crate::providers::config::ProviderConfig::default();
-        app.provider_config.set_section(crate::providers::config::ProviderSection {
-            provider: "digitalocean".to_string(),
-            token: "test-token".to_string(),
-            alias_prefix: "do".to_string(),
-            user: "root".to_string(),
-            identity_file: String::new(),
-            url: String::new(),
-            verify_tls: true,
-            auto_sync: true,
-            profile: String::new(),
-            regions: String::new(),
-            project: String::new(),
-        });
+        app.provider_config
+            .set_section(crate::providers::config::ProviderSection {
+                provider: "digitalocean".to_string(),
+                token: "test-token".to_string(),
+                alias_prefix: "do".to_string(),
+                user: "root".to_string(),
+                identity_file: String::new(),
+                url: String::new(),
+                verify_tls: true,
+                auto_sync: true,
+                profile: String::new(),
+                regions: String::new(),
+                project: String::new(),
+            });
         app
     }
 
@@ -3252,8 +3449,18 @@ Host vultr-app
     fn test_apply_sync_result_with_hosts_returns_total() {
         let mut app = make_provider_app();
         let hosts = vec![
-            crate::providers::ProviderHost::new("s1".to_string(), "web".to_string(), "1.2.3.4".to_string(), vec![]),
-            crate::providers::ProviderHost::new("s2".to_string(), "db".to_string(), "5.6.7.8".to_string(), vec![]),
+            crate::providers::ProviderHost::new(
+                "s1".to_string(),
+                "web".to_string(),
+                "1.2.3.4".to_string(),
+                vec![],
+            ),
+            crate::providers::ProviderHost::new(
+                "s2".to_string(),
+                "db".to_string(),
+                "5.6.7.8".to_string(),
+                vec![],
+            ),
         ];
         let (msg, is_err, total) = app.apply_sync_result("digitalocean", hosts);
         assert!(!is_err);
@@ -3268,8 +3475,18 @@ Host vultr-app
         // Point config to a non-writable path so write() fails
         app.config.path = PathBuf::from("/dev/null/impossible");
         let hosts = vec![
-            crate::providers::ProviderHost::new("s1".to_string(), "web".to_string(), "1.2.3.4".to_string(), vec![]),
-            crate::providers::ProviderHost::new("s2".to_string(), "db".to_string(), "5.6.7.8".to_string(), vec![]),
+            crate::providers::ProviderHost::new(
+                "s1".to_string(),
+                "web".to_string(),
+                "1.2.3.4".to_string(),
+                vec![],
+            ),
+            crate::providers::ProviderHost::new(
+                "s2".to_string(),
+                "db".to_string(),
+                "5.6.7.8".to_string(),
+                vec![],
+            ),
         ];
         let (msg, is_err, total) = app.apply_sync_result("digitalocean", hosts);
         assert!(is_err);
@@ -3282,19 +3499,20 @@ Host vultr-app
         let mut app = make_provider_app();
         // Configure a section for the unknown provider name so it passes
         // the config check but fails on get_provider()
-        app.provider_config.set_section(crate::providers::config::ProviderSection {
-            provider: "nonexistent".to_string(),
-            token: "tok".to_string(),
-            alias_prefix: "nope".to_string(),
-            user: "root".to_string(),
-            identity_file: String::new(),
-            url: String::new(),
-            verify_tls: true,
-            auto_sync: true,
-            profile: String::new(),
-            regions: String::new(),
-            project: String::new(),
-        });
+        app.provider_config
+            .set_section(crate::providers::config::ProviderSection {
+                provider: "nonexistent".to_string(),
+                token: "tok".to_string(),
+                alias_prefix: "nope".to_string(),
+                user: "root".to_string(),
+                identity_file: String::new(),
+                url: String::new(),
+                verify_tls: true,
+                auto_sync: true,
+                profile: String::new(),
+                regions: String::new(),
+                project: String::new(),
+            });
         let (msg, is_err, total) = app.apply_sync_result("nonexistent", vec![]);
         assert!(is_err);
         assert_eq!(total, 0);
@@ -3305,11 +3523,14 @@ Host vultr-app
     fn test_sync_history_cleared_on_provider_remove() {
         let mut app = make_provider_app();
         // Simulate a completed sync
-        app.sync_history.insert("digitalocean".to_string(), SyncRecord {
-            timestamp: 100,
-            message: "3 servers".to_string(),
-            is_error: false,
-        });
+        app.sync_history.insert(
+            "digitalocean".to_string(),
+            SyncRecord {
+                timestamp: 100,
+                message: "3 servers".to_string(),
+                is_error: false,
+            },
+        );
         assert!(app.sync_history.contains_key("digitalocean"));
 
         // Simulate provider remove (same as handler.rs 'd' key path)
@@ -3323,17 +3544,23 @@ Host vultr-app
     fn test_sync_history_overwrite_replaces_error_with_success() {
         let mut app = make_app("Host test\n  HostName test.com\n");
         // First sync fails
-        app.sync_history.insert("hetzner".to_string(), SyncRecord {
-            timestamp: 100,
-            message: "auth failed".to_string(),
-            is_error: true,
-        });
+        app.sync_history.insert(
+            "hetzner".to_string(),
+            SyncRecord {
+                timestamp: 100,
+                message: "auth failed".to_string(),
+                is_error: true,
+            },
+        );
         // Second sync succeeds
-        app.sync_history.insert("hetzner".to_string(), SyncRecord {
-            timestamp: 200,
-            message: "5 servers".to_string(),
-            is_error: false,
-        });
+        app.sync_history.insert(
+            "hetzner".to_string(),
+            SyncRecord {
+                timestamp: 200,
+                message: "5 servers".to_string(),
+                is_error: false,
+            },
+        );
         let record = app.sync_history.get("hetzner").unwrap();
         assert_eq!(record.timestamp, 200);
         assert!(!record.is_error);
@@ -3350,28 +3577,42 @@ Host vultr-app
 
         // Build history
         let mut history = HashMap::new();
-        history.insert("digitalocean".to_string(), SyncRecord {
-            timestamp: 1710000000,
-            message: "3 servers".to_string(),
-            is_error: false,
-        });
-        history.insert("aws".to_string(), SyncRecord {
-            timestamp: 1710000100,
-            message: "auth failed".to_string(),
-            is_error: true,
-        });
-        history.insert("hetzner".to_string(), SyncRecord {
-            timestamp: 1710000200,
-            message: "1 server (1 of 3 failed)".to_string(),
-            is_error: true,
-        });
+        history.insert(
+            "digitalocean".to_string(),
+            SyncRecord {
+                timestamp: 1710000000,
+                message: "3 servers".to_string(),
+                is_error: false,
+            },
+        );
+        history.insert(
+            "aws".to_string(),
+            SyncRecord {
+                timestamp: 1710000100,
+                message: "auth failed".to_string(),
+                is_error: true,
+            },
+        );
+        history.insert(
+            "hetzner".to_string(),
+            SyncRecord {
+                timestamp: 1710000200,
+                message: "1 server (1 of 3 failed)".to_string(),
+                is_error: true,
+            },
+        );
 
         // Save
         let path = dir.join(".purple").join("sync_history.tsv");
         let mut lines = Vec::new();
         for (provider, record) in &history {
-            lines.push(format!("{}\t{}\t{}\t{}",
-                provider, record.timestamp, if record.is_error { "1" } else { "0" }, record.message));
+            lines.push(format!(
+                "{}\t{}\t{}\t{}",
+                provider,
+                record.timestamp,
+                if record.is_error { "1" } else { "0" },
+                record.message
+            ));
         }
         std::fs::write(&path, lines.join("\n")).unwrap();
 
@@ -3380,14 +3621,19 @@ Host vultr-app
         let mut loaded = HashMap::new();
         for line in content.lines() {
             let parts: Vec<&str> = line.splitn(4, '\t').collect();
-            if parts.len() < 4 { continue; }
+            if parts.len() < 4 {
+                continue;
+            }
             let ts: u64 = parts[1].parse().unwrap();
             let is_error = parts[2] == "1";
-            loaded.insert(parts[0].to_string(), SyncRecord {
-                timestamp: ts,
-                message: parts[3].to_string(),
-                is_error,
-            });
+            loaded.insert(
+                parts[0].to_string(),
+                SyncRecord {
+                    timestamp: ts,
+                    message: parts[3].to_string(),
+                    is_error,
+                },
+            );
         }
 
         // Verify
@@ -3418,13 +3664,20 @@ Host vultr-app
         let content = "";
         for line in content.lines() {
             let parts: Vec<&str> = line.splitn(4, '\t').collect();
-            if parts.len() < 4 { continue; }
-            let Some(ts) = parts[1].parse::<u64>().ok() else { continue };
-            map.insert(parts[0].to_string(), SyncRecord {
-                timestamp: ts,
-                message: parts[3].to_string(),
-                is_error: parts[2] == "1",
-            });
+            if parts.len() < 4 {
+                continue;
+            }
+            let Some(ts) = parts[1].parse::<u64>().ok() else {
+                continue;
+            };
+            map.insert(
+                parts[0].to_string(),
+                SyncRecord {
+                    timestamp: ts,
+                    message: parts[3].to_string(),
+                    is_error: parts[2] == "1",
+                },
+            );
         }
         assert!(map.is_empty());
     }
@@ -3436,13 +3689,20 @@ Host vultr-app
         let mut map = HashMap::new();
         for line in content.lines() {
             let parts: Vec<&str> = line.splitn(4, '\t').collect();
-            if parts.len() < 4 { continue; }
-            let Some(ts) = parts[1].parse::<u64>().ok() else { continue };
-            map.insert(parts[0].to_string(), SyncRecord {
-                timestamp: ts,
-                message: parts[3].to_string(),
-                is_error: parts[2] == "1",
-            });
+            if parts.len() < 4 {
+                continue;
+            }
+            let Some(ts) = parts[1].parse::<u64>().ok() else {
+                continue;
+            };
+            map.insert(
+                parts[0].to_string(),
+                SyncRecord {
+                    timestamp: ts,
+                    message: parts[3].to_string(),
+                    is_error: parts[2] == "1",
+                },
+            );
         }
         assert_eq!(map.len(), 1);
         assert_eq!(map.get("aws").unwrap().message, "2 servers");
@@ -3457,7 +3717,11 @@ Host vultr-app
             alias_prefix: provider[..2].to_string(),
             user: "root".to_string(),
             identity_file: String::new(),
-            url: if provider == "proxmox" { "https://pve:8006".to_string() } else { String::new() },
+            url: if provider == "proxmox" {
+                "https://pve:8006".to_string()
+            } else {
+                String::new()
+            },
             verify_tls: true,
             auto_sync,
             profile: String::new(),
@@ -3520,7 +3784,8 @@ Host vultr-app
             fields.contains(&ProviderFormField::AutoSync),
             "CLOUD_FIELDS should contain AutoSync"
         );
-        assert!(!fields.contains(&ProviderFormField::VerifyTls),
+        assert!(
+            !fields.contains(&ProviderFormField::VerifyTls),
             "CLOUD_FIELDS should not contain VerifyTls"
         );
     }
@@ -3632,7 +3897,10 @@ Host vultr-app
         form.hostname = "1.2.3.4".to_string();
         form.askpass = "vault:secret/data/myapp#password".to_string();
         let entry = form.to_entry();
-        assert_eq!(entry.askpass, Some("vault:secret/data/myapp#password".to_string()));
+        assert_eq!(
+            entry.askpass,
+            Some("vault:secret/data/myapp#password".to_string())
+        );
     }
 
     #[test]
@@ -3775,8 +4043,13 @@ Host vultr-app
 
     #[test]
     fn test_host_entries_vault_askpass() {
-        let app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass vault:secret/ssh#pass\n");
-        assert_eq!(app.hosts[0].askpass, Some("vault:secret/ssh#pass".to_string()));
+        let app = make_app(
+            "Host myserver\n  HostName 10.0.0.1\n  # purple:askpass vault:secret/ssh#pass\n",
+        );
+        assert_eq!(
+            app.hosts[0].askpass,
+            Some("vault:secret/ssh#pass".to_string())
+        );
     }
 
     #[test]
@@ -3800,13 +4073,25 @@ Host vultr-app
 
     #[test]
     fn test_validate_askpass_normal_values_ok() {
-        let sources = ["", "keychain", "op://V/I/p", "bw:x", "pass:x", "vault:x#y", "cmd %a"];
+        let sources = [
+            "",
+            "keychain",
+            "op://V/I/p",
+            "bw:x",
+            "pass:x",
+            "vault:x#y",
+            "cmd %a",
+        ];
         for src in &sources {
             let mut form = HostForm::new();
             form.alias = "myhost".to_string();
             form.hostname = "1.2.3.4".to_string();
             form.askpass = src.to_string();
-            assert!(form.validate().is_ok(), "Validate should pass for askpass='{}'", src);
+            assert!(
+                form.validate().is_ok(),
+                "Validate should pass for askpass='{}'",
+                src
+            );
         }
     }
 
@@ -3840,7 +4125,8 @@ Host vultr-app
             ..Default::default()
         };
         app.config.add_host(&entry);
-        app.config.set_host_askpass("vaulthost", "vault:secret/ssh#pass");
+        app.config
+            .set_host_askpass("vaulthost", "vault:secret/ssh#pass");
         let serialized = app.config.serialize();
         assert!(serialized.contains("purple:askpass vault:secret/ssh#pass"));
     }
@@ -3856,7 +4142,10 @@ Host vultr-app
         app.config.add_host(&entry);
         // Don't call set_host_askpass when None — mirrors add_host_from_form logic
         let serialized = app.config.serialize();
-        assert!(!serialized.contains("purple:askpass"), "No askpass comment when None");
+        assert!(
+            !serialized.contains("purple:askpass"),
+            "No askpass comment when None"
+        );
     }
 
     #[test]
@@ -3917,7 +4206,8 @@ Host vultr-app
             ..Default::default()
         };
         app.config.update_host("myserver", &entry);
-        app.config.set_host_askpass("myserver", entry.askpass.as_deref().unwrap_or(""));
+        app.config
+            .set_host_askpass("myserver", entry.askpass.as_deref().unwrap_or(""));
         let serialized = app.config.serialize();
         assert!(serialized.contains("purple:askpass vault:secret/ssh#pass"));
     }
@@ -3999,7 +4289,10 @@ Host vultr-app
         form.hostname = "1.2.3.4".to_string();
         form.askpass = "op://My Personal Vault/SSH Production Server/password".to_string();
         let entry = form.to_entry();
-        assert_eq!(entry.askpass, Some("op://My Personal Vault/SSH Production Server/password".to_string()));
+        assert_eq!(
+            entry.askpass,
+            Some("op://My Personal Vault/SSH Production Server/password".to_string())
+        );
     }
 
     // --- edit form askpass rollback logic ---
@@ -4012,12 +4305,20 @@ Host vultr-app
         assert_eq!(old_entry.askpass, Some("keychain".to_string()));
 
         // Apply new askpass
-        app.config.set_host_askpass("myserver", "vault:secret/ssh#pw");
-        assert_eq!(app.config.host_entries()[0].askpass, Some("vault:secret/ssh#pw".to_string()));
+        app.config
+            .set_host_askpass("myserver", "vault:secret/ssh#pw");
+        assert_eq!(
+            app.config.host_entries()[0].askpass,
+            Some("vault:secret/ssh#pw".to_string())
+        );
 
         // Simulate rollback (write failed)
-        app.config.set_host_askpass(&old_entry.alias, old_entry.askpass.as_deref().unwrap_or(""));
-        assert_eq!(app.config.host_entries()[0].askpass, Some("keychain".to_string()));
+        app.config
+            .set_host_askpass(&old_entry.alias, old_entry.askpass.as_deref().unwrap_or(""));
+        assert_eq!(
+            app.config.host_entries()[0].askpass,
+            Some("keychain".to_string())
+        );
     }
 
     #[test]
@@ -4028,10 +4329,14 @@ Host vultr-app
 
         // Apply new askpass
         app.config.set_host_askpass("myserver", "bw:my-item");
-        assert_eq!(app.config.host_entries()[0].askpass, Some("bw:my-item".to_string()));
+        assert_eq!(
+            app.config.host_entries()[0].askpass,
+            Some("bw:my-item".to_string())
+        );
 
         // Simulate rollback (write failed)
-        app.config.set_host_askpass(&old_entry.alias, old_entry.askpass.as_deref().unwrap_or(""));
+        app.config
+            .set_host_askpass(&old_entry.alias, old_entry.askpass.as_deref().unwrap_or(""));
         assert_eq!(app.config.host_entries()[0].askpass, None);
     }
 
@@ -4048,7 +4353,9 @@ Host vultr-app
 
     #[test]
     fn test_pending_connect_askpass_from_host() {
-        let app = make_app("Host s1\n  HostName 1.1.1.1\n  # purple:askpass bw:item1\n\nHost s2\n  HostName 2.2.2.2\n");
+        let app = make_app(
+            "Host s1\n  HostName 1.1.1.1\n  # purple:askpass bw:item1\n\nHost s2\n  HostName 2.2.2.2\n",
+        );
         assert_eq!(app.hosts[0].askpass, Some("bw:item1".to_string()));
         assert_eq!(app.hosts[1].askpass, None);
     }
@@ -4058,7 +4365,10 @@ Host vultr-app
     #[test]
     fn test_form_field_cycle_through_askpass() {
         let fields = FormField::ALL;
-        let askpass_idx = fields.iter().position(|f| matches!(f, FormField::AskPass)).unwrap();
+        let askpass_idx = fields
+            .iter()
+            .position(|f| matches!(f, FormField::AskPass))
+            .unwrap();
         assert_eq!(askpass_idx, 6, "AskPass should be the 7th field (index 6)");
         // Verify it's between ProxyJump and Tags
         assert!(matches!(fields[askpass_idx - 1], FormField::ProxyJump));
@@ -4179,7 +4489,9 @@ Host vultr-app
 
     #[test]
     fn test_bw_session_cached_across_connections() {
-        let mut app = make_app("Host a\n  HostName 1.1.1.1\n  # purple:askpass bw:item\n\nHost b\n  HostName 2.2.2.2\n  # purple:askpass bw:other\n");
+        let mut app = make_app(
+            "Host a\n  HostName 1.1.1.1\n  # purple:askpass bw:item\n\nHost b\n  HostName 2.2.2.2\n  # purple:askpass bw:other\n",
+        );
         // First connection prompts for unlock and caches token
         app.bw_session = Some("cached-token".to_string());
         // Second connection should reuse cached token

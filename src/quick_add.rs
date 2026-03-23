@@ -58,7 +58,10 @@ pub fn parse_target(target: &str) -> Result<ParsedTarget, String> {
                 }
                 (host_part.to_string(), port)
             } else {
-                return Err(format!("'{}' is not a valid port number. Ports are 1-65535.", port_str));
+                return Err(format!(
+                    "'{}' is not a valid port number. Ports are 1-65535.",
+                    port_str
+                ));
             }
         } else {
             // Multiple colons = bare IPv6 address, no port extraction

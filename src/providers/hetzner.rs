@@ -233,7 +233,10 @@ mod tests {
         let resp: HetznerResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.servers.len(), 2);
         assert_eq!(resp.servers[0].name, "my-server");
-        assert_eq!(resp.servers[0].public_net.ipv4.as_ref().unwrap().ip, "1.2.3.4");
+        assert_eq!(
+            resp.servers[0].public_net.ipv4.as_ref().unwrap().ip,
+            "1.2.3.4"
+        );
         assert!(resp.servers[1].public_net.ipv4.is_none());
     }
 
@@ -301,7 +304,10 @@ mod tests {
             "meta": {"pagination": {"page": 1, "last_page": 1}}
         }"#;
         let resp: HetznerResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(select_hetzner_ip(&resp.servers[0]), Some("1.2.3.4".to_string()));
+        assert_eq!(
+            select_hetzner_ip(&resp.servers[0]),
+            Some("1.2.3.4".to_string())
+        );
     }
 
     #[test]
@@ -383,7 +389,10 @@ mod tests {
             "meta": {"pagination": {"page": 1, "last_page": 1}}
         }"#;
         let resp: HetznerResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(select_hetzner_ip(&resp.servers[0]), Some("2a01::1".to_string()));
+        assert_eq!(
+            select_hetzner_ip(&resp.servers[0]),
+            Some("2a01::1".to_string())
+        );
     }
 
     #[test]
@@ -397,7 +406,10 @@ mod tests {
             "meta": {"pagination": {"page": 1, "last_page": 1}}
         }"#;
         let resp: HetznerResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(select_hetzner_ip(&resp.servers[0]), Some("2a01::1".to_string()));
+        assert_eq!(
+            select_hetzner_ip(&resp.servers[0]),
+            Some("2a01::1".to_string())
+        );
     }
 
     #[test]
@@ -441,7 +453,10 @@ mod tests {
         }"#;
         let resp: HetznerResponse = serde_json::from_str(json).unwrap();
         assert!(resp.servers[0].public_net.ipv6.is_none());
-        assert_eq!(select_hetzner_ip(&resp.servers[0]), Some("1.2.3.4".to_string()));
+        assert_eq!(
+            select_hetzner_ip(&resp.servers[0]),
+            Some("1.2.3.4".to_string())
+        );
     }
 
     #[test]
@@ -481,7 +496,10 @@ mod tests {
             "meta": {"pagination": {"page": 1, "last_page": 1}}
         }"#;
         let resp: HetznerResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(select_hetzner_ip(&resp.servers[0]), Some("2a01::1".to_string()));
+        assert_eq!(
+            select_hetzner_ip(&resp.servers[0]),
+            Some("2a01::1".to_string())
+        );
     }
 
     #[test]
@@ -533,7 +551,10 @@ mod tests {
             "meta": {"pagination": {"page": 1, "last_page": 1}}
         }"#;
         let resp: HetznerResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(select_hetzner_ip(&resp.servers[0]), Some("2a01:4f8::1".to_string()));
+        assert_eq!(
+            select_hetzner_ip(&resp.servers[0]),
+            Some("2a01:4f8::1".to_string())
+        );
     }
 
     #[test]
@@ -548,8 +569,14 @@ mod tests {
         }"#;
         let resp: HetznerResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.servers.len(), 3);
-        assert_eq!(select_hetzner_ip(&resp.servers[0]), Some("1.1.1.1".to_string()));
-        assert_eq!(select_hetzner_ip(&resp.servers[1]), Some("2.2.2.2".to_string()));
+        assert_eq!(
+            select_hetzner_ip(&resp.servers[0]),
+            Some("1.1.1.1".to_string())
+        );
+        assert_eq!(
+            select_hetzner_ip(&resp.servers[1]),
+            Some("2.2.2.2".to_string())
+        );
         assert_eq!(select_hetzner_ip(&resp.servers[2]), None);
     }
 
@@ -608,7 +635,11 @@ mod tests {
             .labels
             .iter()
             .map(|(k, v)| {
-                if v.is_empty() { k.clone() } else { format!("{}={}", k, v) }
+                if v.is_empty() {
+                    k.clone()
+                } else {
+                    format!("{}={}", k, v)
+                }
             })
             .collect();
         tags.sort();
@@ -696,7 +727,10 @@ mod tests {
         }"#;
         let resp: HetznerResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.servers[0].name, "full-response");
-        assert_eq!(select_hetzner_ip(&resp.servers[0]), Some("1.2.3.4".to_string()));
+        assert_eq!(
+            select_hetzner_ip(&resp.servers[0]),
+            Some("1.2.3.4".to_string())
+        );
         assert_eq!(resp.servers[0].labels.get("env").unwrap(), "prod");
     }
 
@@ -715,7 +749,10 @@ mod tests {
             "meta": {"pagination": {"page": 1, "last_page": 1}}
         }"#;
         let resp: HetznerResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.servers[0].public_net.ipv4.as_ref().unwrap().ip, "5.6.7.8");
+        assert_eq!(
+            resp.servers[0].public_net.ipv4.as_ref().unwrap().ip,
+            "5.6.7.8"
+        );
     }
 
     #[test]

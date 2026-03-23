@@ -258,7 +258,10 @@ mod tests {
         }"#;
         let resp: LinodeResponse = serde_json::from_str(json).unwrap();
         // When no public IP, falls back to first private IP
-        assert_eq!(select_linode_ip(&resp.data[0]), Some("192.168.1.1".to_string()));
+        assert_eq!(
+            select_linode_ip(&resp.data[0]),
+            Some("192.168.1.1".to_string())
+        );
     }
 
     #[test]
@@ -338,7 +341,10 @@ mod tests {
             "page": 1, "pages": 1
         }"#;
         let resp: LinodeResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(select_linode_ip(&resp.data[0]), Some("2600:3c00::1".to_string()));
+        assert_eq!(
+            select_linode_ip(&resp.data[0]),
+            Some("2600:3c00::1".to_string())
+        );
     }
 
     #[test]
@@ -348,7 +354,10 @@ mod tests {
             "page": 1, "pages": 1
         }"#;
         let resp: LinodeResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(select_linode_ip(&resp.data[0]), Some("2600:3c00::1".to_string()));
+        assert_eq!(
+            select_linode_ip(&resp.data[0]),
+            Some("2600:3c00::1".to_string())
+        );
     }
 
     #[test]
@@ -486,7 +495,10 @@ mod tests {
         }"#;
         let resp: LinodeResponse = serde_json::from_str(json).unwrap();
         // No public IP found, falls back to first in list
-        assert_eq!(select_linode_ip(&resp.data[0]), Some("10.0.0.1".to_string()));
+        assert_eq!(
+            select_linode_ip(&resp.data[0]),
+            Some("10.0.0.1".to_string())
+        );
     }
 
     #[test]
@@ -504,7 +516,10 @@ mod tests {
         }"#;
         let resp: LinodeResponse = serde_json::from_str(json).unwrap();
         // Private v4 wins over public v6 (fallback to first v4)
-        assert_eq!(select_linode_ip(&resp.data[0]), Some("192.168.1.1".to_string()));
+        assert_eq!(
+            select_linode_ip(&resp.data[0]),
+            Some("192.168.1.1".to_string())
+        );
     }
 
     #[test]

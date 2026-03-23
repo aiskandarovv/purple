@@ -14,7 +14,11 @@ pub fn render(frame: &mut Frame, app: &App, index: usize) {
     let linked_count = key.linked_hosts.len();
     let max_visible_hosts = 10;
     let visible_hosts = linked_count.min(max_visible_hosts);
-    let overflow_line = if linked_count > max_visible_hosts { 1 } else { 0 };
+    let overflow_line = if linked_count > max_visible_hosts {
+        1
+    } else {
+        0
+    };
     // 2 (border) + 1 (blank) + 4 (metadata) + 1 (blank) + 2 (header+sep) + hosts + overflow + 1 (blank)
     let height = (11 + visible_hosts.max(1) + overflow_line) as u16;
     let width = frame.area().width.clamp(58, 80);
@@ -33,7 +37,14 @@ pub fn render(frame: &mut Frame, app: &App, index: usize) {
         Line::from(""),
         detail_line("  Type                  ", &type_display),
         detail_line("  Fingerprint           ", &key.fingerprint),
-        detail_line("  Comment               ", if key.comment.is_empty() { "(none)" } else { &key.comment }),
+        detail_line(
+            "  Comment               ",
+            if key.comment.is_empty() {
+                "(none)"
+            } else {
+                &key.comment
+            },
+        ),
         detail_line("  Path                  ", &key.display_path),
         Line::from(""),
         Line::from(Span::styled("  Linked Hosts", theme::section_header())),

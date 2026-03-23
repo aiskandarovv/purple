@@ -108,13 +108,7 @@ impl Provider for DigitalOcean {
                     .v4
                     .iter()
                     .find(|n| n.net_type == "public")
-                    .or_else(|| {
-                        droplet
-                            .networks
-                            .v6
-                            .iter()
-                            .find(|n| n.net_type == "public")
-                    })
+                    .or_else(|| droplet.networks.v6.iter().find(|n| n.net_type == "public"))
                     .map(|n| n.ip_address.clone());
                 if let Some(ip) = ip {
                     let mut metadata = Vec::new();
@@ -282,7 +276,10 @@ mod tests {
             "meta": {"total": 1}
         }"#;
         let resp: DropletResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(select_droplet_ip(&resp.droplets[0]), Some("1.2.3.4".to_string()));
+        assert_eq!(
+            select_droplet_ip(&resp.droplets[0]),
+            Some("1.2.3.4".to_string())
+        );
     }
 
     #[test]
@@ -386,7 +383,10 @@ mod tests {
             "meta": {"total": 1}
         }"#;
         let resp: DropletResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(select_droplet_ip(&resp.droplets[0]), Some("1.2.3.4".to_string()));
+        assert_eq!(
+            select_droplet_ip(&resp.droplets[0]),
+            Some("1.2.3.4".to_string())
+        );
     }
 
     #[test]
@@ -407,7 +407,10 @@ mod tests {
             "meta": {"total": 1}
         }"#;
         let resp: DropletResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(select_droplet_ip(&resp.droplets[0]), Some("2604:a880::1".to_string()));
+        assert_eq!(
+            select_droplet_ip(&resp.droplets[0]),
+            Some("2604:a880::1".to_string())
+        );
     }
 
     #[test]
@@ -508,7 +511,10 @@ mod tests {
         }"#;
         let resp: DropletResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.droplets[0].name, "full-response");
-        assert_eq!(select_droplet_ip(&resp.droplets[0]), Some("1.2.3.4".to_string()));
+        assert_eq!(
+            select_droplet_ip(&resp.droplets[0]),
+            Some("1.2.3.4".to_string())
+        );
     }
 
     #[test]

@@ -14,13 +14,41 @@ pub struct PasswordSourceOption {
 }
 
 pub const PASSWORD_SOURCES: &[PasswordSourceOption] = &[
-    PasswordSourceOption { label: "OS Keychain", value: "keychain", hint: "keychain" },
-    PasswordSourceOption { label: "1Password", value: "op://", hint: "op://Vault/Item/field" },
-    PasswordSourceOption { label: "Bitwarden", value: "bw:", hint: "bw:item-name" },
-    PasswordSourceOption { label: "pass", value: "pass:", hint: "pass:path/to/entry" },
-    PasswordSourceOption { label: "HashiCorp Vault", value: "vault:", hint: "vault:secret/path#field" },
-    PasswordSourceOption { label: "Custom command", value: "cmd:", hint: "cmd %a %h" },
-    PasswordSourceOption { label: "None", value: "", hint: "(remove)" },
+    PasswordSourceOption {
+        label: "OS Keychain",
+        value: "keychain",
+        hint: "keychain",
+    },
+    PasswordSourceOption {
+        label: "1Password",
+        value: "op://",
+        hint: "op://Vault/Item/field",
+    },
+    PasswordSourceOption {
+        label: "Bitwarden",
+        value: "bw:",
+        hint: "bw:item-name",
+    },
+    PasswordSourceOption {
+        label: "pass",
+        value: "pass:",
+        hint: "pass:path/to/entry",
+    },
+    PasswordSourceOption {
+        label: "HashiCorp Vault",
+        value: "vault:",
+        hint: "vault:secret/path#field",
+    },
+    PasswordSourceOption {
+        label: "Custom command",
+        value: "cmd:",
+        hint: "cmd %a %h",
+    },
+    PasswordSourceOption {
+        label: "None",
+        value: "",
+        hint: "(remove)",
+    },
 ];
 
 /// Handle an SSH_ASKPASS invocation. Called when purple is invoked as an askpass program.
@@ -32,7 +60,10 @@ pub fn handle() -> Result<()> {
     // Check the prompt (argv[1]) to skip passphrase and host key verification prompts
     let prompt = std::env::args().nth(1).unwrap_or_default();
     let prompt_lower = prompt.to_ascii_lowercase();
-    if prompt_lower.contains("passphrase") || prompt_lower.contains("yes/no") || prompt_lower.contains("(yes/no/") {
+    if prompt_lower.contains("passphrase")
+        || prompt_lower.contains("yes/no")
+        || prompt_lower.contains("(yes/no/")
+    {
         // Not a password prompt. Exit with error so SSH falls back to interactive.
         std::process::exit(1);
     }
@@ -56,8 +87,8 @@ pub fn handle() -> Result<()> {
     }
 
     // Parse config and find askpass source
-    let config = SshConfigFile::parse(&PathBuf::from(&config_path))
-        .context("Failed to parse SSH config")?;
+    let config =
+        SshConfigFile::parse(&PathBuf::from(&config_path)).context("Failed to parse SSH config")?;
 
     let source = find_askpass_source(&config, &alias);
 
@@ -156,7 +187,14 @@ fn retrieve_from_keychain(alias: &str) -> Result<String> {
     #[cfg(target_os = "macos")]
     {
         let output = Command::new("security")
-            .args(["find-generic-password", "-a", alias, "-s", "purple-ssh", "-w"])
+            .args([
+                "find-generic-password",
+                "-a",
+                alias,
+                "-s",
+                "purple-ssh",
+                "-w",
+            ])
             .output()
             .context("Failed to run security command")?;
         if !output.status.success() {
@@ -195,9 +233,12 @@ pub fn store_in_keychain(alias: &str, password: &str) -> Result<()> {
             .args([
                 "add-generic-password",
                 "-U",
-                "-a", alias,
-                "-s", "purple-ssh",
-                "-w", password,
+                "-a",
+                alias,
+                "-s",
+                "purple-ssh",
+                "-w",
+                password,
             ])
             .status()
             .context("Failed to run security command")?;
@@ -211,9 +252,12 @@ pub fn store_in_keychain(alias: &str, password: &str) -> Result<()> {
         let mut child = Command::new("secret-tool")
             .args([
                 "store",
-                "--label", &format!("purple-ssh: {}", alias),
-                "application", "purple-ssh",
-                "host", alias,
+                "--label",
+                &format!("purple-ssh: {}", alias),
+                "application",
+                "purple-ssh",
+                "host",
+                alias,
             ])
             .stdin(std::process::Stdio::piped())
             .spawn()
@@ -235,11 +279,7 @@ pub fn remove_from_keychain(alias: &str) -> Result<()> {
     #[cfg(target_os = "macos")]
     {
         let status = Command::new("security")
-            .args([
-                "delete-generic-password",
-                "-a", alias,
-                "-s", "purple-ssh",
-            ])
+            .args(["delete-generic-password", "-a", alias, "-s", "purple-ssh"])
             .status()
             .context("Failed to run security command")?;
         if !status.success() {
@@ -454,12 +494,18 @@ mod tests {
 
     #[test]
     fn describe_source_vault() {
-        assert_eq!(describe_source("vault:secret/data/myapp#password"), "HashiCorp Vault");
+        assert_eq!(
+            describe_source("vault:secret/data/myapp#password"),
+            "HashiCorp Vault"
+        );
     }
 
     #[test]
     fn describe_source_vault_no_field() {
-        assert_eq!(describe_source("vault:secret/data/myapp"), "HashiCorp Vault");
+        assert_eq!(
+            describe_source("vault:secret/data/myapp"),
+            "HashiCorp Vault"
+        );
     }
 
     #[test]
@@ -538,7 +584,10 @@ mod tests {
 
     #[test]
     fn retrieve_password_routes_vault() {
-        assert_eq!(describe_source("vault:secret/ssh/prod#password"), "HashiCorp Vault");
+        assert_eq!(
+            describe_source("vault:secret/ssh/prod#password"),
+            "HashiCorp Vault"
+        );
     }
 
     #[test]
@@ -568,7 +617,11 @@ mod tests {
     #[test]
     fn password_sources_hints_non_empty() {
         for src in PASSWORD_SOURCES {
-            assert!(!src.hint.is_empty(), "Hint for '{}' should not be empty", src.label);
+            assert!(
+                !src.hint.is_empty(),
+                "Hint for '{}' should not be empty",
+                src.label
+            );
         }
     }
 
@@ -580,13 +633,19 @@ mod tests {
 
     #[test]
     fn password_sources_1password_value() {
-        let op = PASSWORD_SOURCES.iter().find(|s| s.label == "1Password").unwrap();
+        let op = PASSWORD_SOURCES
+            .iter()
+            .find(|s| s.label == "1Password")
+            .unwrap();
         assert_eq!(op.value, "op://");
     }
 
     #[test]
     fn password_sources_bitwarden_value() {
-        let bw = PASSWORD_SOURCES.iter().find(|s| s.label == "Bitwarden").unwrap();
+        let bw = PASSWORD_SOURCES
+            .iter()
+            .find(|s| s.label == "Bitwarden")
+            .unwrap();
         assert_eq!(bw.value, "bw:");
     }
 
@@ -598,13 +657,19 @@ mod tests {
 
     #[test]
     fn password_sources_vault_value() {
-        let vault = PASSWORD_SOURCES.iter().find(|s| s.label == "HashiCorp Vault").unwrap();
+        let vault = PASSWORD_SOURCES
+            .iter()
+            .find(|s| s.label == "HashiCorp Vault")
+            .unwrap();
         assert_eq!(vault.value, "vault:");
     }
 
     #[test]
     fn password_sources_custom_command_value() {
-        let custom = PASSWORD_SOURCES.iter().find(|s| s.label == "Custom command").unwrap();
+        let custom = PASSWORD_SOURCES
+            .iter()
+            .find(|s| s.label == "Custom command")
+            .unwrap();
         assert_eq!(custom.value, "cmd:");
     }
 
@@ -620,7 +685,8 @@ mod tests {
     fn prefix_sources_end_with_colon_or_slash() {
         // Sources that are prefixes should end with : or //
         // These are: op://, bw:, pass:, vault:
-        let prefix_sources: Vec<&PasswordSourceOption> = PASSWORD_SOURCES.iter()
+        let prefix_sources: Vec<&PasswordSourceOption> = PASSWORD_SOURCES
+            .iter()
             .filter(|s| !s.value.is_empty() && s.value != "keychain")
             .collect();
         assert_eq!(prefix_sources.len(), 5, "Expected 5 prefix sources");
@@ -628,7 +694,8 @@ mod tests {
             assert!(
                 src.value.ends_with(':') || src.value.ends_with("//"),
                 "Prefix source '{}' value '{}' should end with : or //",
-                src.label, src.value
+                src.label,
+                src.value
             );
         }
     }
@@ -721,7 +788,10 @@ mod tests {
 
     #[test]
     fn describe_source_vault_with_complex_path() {
-        assert_eq!(describe_source("vault:secret/data/team/prod/ssh#password"), "HashiCorp Vault");
+        assert_eq!(
+            describe_source("vault:secret/data/team/prod/ssh#password"),
+            "HashiCorp Vault"
+        );
     }
 
     // -- All describe_source values match PASSWORD_SOURCES labels --
@@ -806,8 +876,12 @@ mod tests {
 
     #[test]
     fn find_askpass_source_returns_per_host_source() {
-        let config = parse_config("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
-        assert_eq!(find_askpass_source(&config, "myserver"), Some("keychain".to_string()));
+        let config =
+            parse_config("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
+        assert_eq!(
+            find_askpass_source(&config, "myserver"),
+            Some("keychain".to_string())
+        );
     }
 
     #[test]
@@ -826,25 +900,40 @@ mod tests {
 
     #[test]
     fn find_askpass_source_returns_vault() {
-        let config = parse_config("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass vault:secret/ssh#pass\n");
-        assert_eq!(find_askpass_source(&config, "myserver"), Some("vault:secret/ssh#pass".to_string()));
+        let config = parse_config(
+            "Host myserver\n  HostName 10.0.0.1\n  # purple:askpass vault:secret/ssh#pass\n",
+        );
+        assert_eq!(
+            find_askpass_source(&config, "myserver"),
+            Some("vault:secret/ssh#pass".to_string())
+        );
     }
 
     #[test]
     fn find_askpass_source_op_uri() {
-        let config = parse_config("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass op://Vault/SSH/password\n");
-        assert_eq!(find_askpass_source(&config, "myserver"), Some("op://Vault/SSH/password".to_string()));
+        let config = parse_config(
+            "Host myserver\n  HostName 10.0.0.1\n  # purple:askpass op://Vault/SSH/password\n",
+        );
+        assert_eq!(
+            find_askpass_source(&config, "myserver"),
+            Some("op://Vault/SSH/password".to_string())
+        );
     }
 
     #[test]
     fn find_askpass_source_custom_command() {
-        let config = parse_config("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass get-pass %a %h\n");
-        assert_eq!(find_askpass_source(&config, "myserver"), Some("get-pass %a %h".to_string()));
+        let config =
+            parse_config("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass get-pass %a %h\n");
+        assert_eq!(
+            find_askpass_source(&config, "myserver"),
+            Some("get-pass %a %h".to_string())
+        );
     }
 
     #[test]
     fn find_askpass_source_wrong_alias_returns_nothing() {
-        let config = parse_config("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
+        let config =
+            parse_config("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
         let result = find_askpass_source(&config, "otherhost");
         // otherhost has no per-host source; result depends on global preferences
         if let Some(ref source) = result {
@@ -854,7 +943,8 @@ mod tests {
 
     #[test]
     fn find_askpass_source_multiple_hosts_returns_correct() {
-        let config = parse_config("\
+        let config = parse_config(
+            "\
 Host alpha
   HostName a.com
   # purple:askpass keychain
@@ -862,9 +952,16 @@ Host alpha
 Host beta
   HostName b.com
   # purple:askpass vault:secret/ssh#pass
-");
-        assert_eq!(find_askpass_source(&config, "alpha"), Some("keychain".to_string()));
-        assert_eq!(find_askpass_source(&config, "beta"), Some("vault:secret/ssh#pass".to_string()));
+",
+        );
+        assert_eq!(
+            find_askpass_source(&config, "alpha"),
+            Some("keychain".to_string())
+        );
+        assert_eq!(
+            find_askpass_source(&config, "beta"),
+            Some("vault:secret/ssh#pass".to_string())
+        );
     }
 
     // =========================================================================
@@ -885,13 +982,15 @@ Host beta
 
     #[test]
     fn find_hostname_returns_correct_for_multiple_hosts() {
-        let config = parse_config("\
+        let config = parse_config(
+            "\
 Host alpha
   HostName a.com
 
 Host beta
   HostName b.com
-");
+",
+        );
         assert_eq!(find_hostname(&config, "alpha"), "a.com");
         assert_eq!(find_hostname(&config, "beta"), "b.com");
     }
@@ -1025,7 +1124,10 @@ Host beta
     #[test]
     fn preferences_parser_extracts_askpass() {
         let content = "sort_mode=alpha\naskpass=keychain\n";
-        assert_eq!(parse_preferences_content(content), Some("keychain".to_string()));
+        assert_eq!(
+            parse_preferences_content(content),
+            Some("keychain".to_string())
+        );
     }
 
     #[test]
@@ -1037,19 +1139,28 @@ Host beta
     #[test]
     fn preferences_parser_skips_comments() {
         let content = "# askpass=old\naskpass=vault:secret/ssh\n";
-        assert_eq!(parse_preferences_content(content), Some("vault:secret/ssh".to_string()));
+        assert_eq!(
+            parse_preferences_content(content),
+            Some("vault:secret/ssh".to_string())
+        );
     }
 
     #[test]
     fn preferences_parser_skips_empty_lines() {
         let content = "\n\naskpass=op://V/I/p\n\n";
-        assert_eq!(parse_preferences_content(content), Some("op://V/I/p".to_string()));
+        assert_eq!(
+            parse_preferences_content(content),
+            Some("op://V/I/p".to_string())
+        );
     }
 
     #[test]
     fn preferences_parser_trims_whitespace_around_equals() {
         let content = "askpass = bw:my-item\n";
-        assert_eq!(parse_preferences_content(content), Some("bw:my-item".to_string()));
+        assert_eq!(
+            parse_preferences_content(content),
+            Some("bw:my-item".to_string())
+        );
     }
 
     #[test]
@@ -1067,20 +1178,29 @@ Host beta
     #[test]
     fn preferences_parser_first_askpass_wins() {
         let content = "askpass=keychain\naskpass=op://V/I/p\n";
-        assert_eq!(parse_preferences_content(content), Some("keychain".to_string()));
+        assert_eq!(
+            parse_preferences_content(content),
+            Some("keychain".to_string())
+        );
     }
 
     #[test]
     fn preferences_parser_preserves_special_chars_in_value() {
         let content = "askpass=vault:secret/data/my-app#api_key\n";
-        assert_eq!(parse_preferences_content(content), Some("vault:secret/data/my-app#api_key".to_string()));
+        assert_eq!(
+            parse_preferences_content(content),
+            Some("vault:secret/data/my-app#api_key".to_string())
+        );
     }
 
     #[test]
     fn preferences_parser_handles_value_with_equals_sign() {
         // split_once('=') splits at first '=', rest goes to value
         let content = "askpass=cmd --opt=val\n";
-        assert_eq!(parse_preferences_content(content), Some("cmd --opt=val".to_string()));
+        assert_eq!(
+            parse_preferences_content(content),
+            Some("cmd --opt=val".to_string())
+        );
     }
 
     // =========================================================================
@@ -1104,7 +1224,9 @@ Host beta
     #[test]
     fn command_substitution_special_chars_in_hostname() {
         let cmd = "get-pass %h";
-        let expanded = cmd.replace("%a", "srv").replace("%h", "host-01.example.com");
+        let expanded = cmd
+            .replace("%a", "srv")
+            .replace("%h", "host-01.example.com");
         assert_eq!(expanded, "get-pass host-01.example.com");
     }
 
@@ -1129,21 +1251,30 @@ Host beta
     #[test]
     fn find_askpass_source_per_host_takes_precedence() {
         // When per-host source exists, global default is not consulted
-        let config = parse_config("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass op://V/I/p\n");
+        let config =
+            parse_config("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass op://V/I/p\n");
         let result = find_askpass_source(&config, "myserver");
         assert_eq!(result, Some("op://V/I/p".to_string()));
     }
 
     #[test]
     fn find_askpass_source_bw_source() {
-        let config = parse_config("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass bw:my-item-id\n");
-        assert_eq!(find_askpass_source(&config, "myserver"), Some("bw:my-item-id".to_string()));
+        let config =
+            parse_config("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass bw:my-item-id\n");
+        assert_eq!(
+            find_askpass_source(&config, "myserver"),
+            Some("bw:my-item-id".to_string())
+        );
     }
 
     #[test]
     fn find_askpass_source_pass_source() {
-        let config = parse_config("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass pass:ssh/prod\n");
-        assert_eq!(find_askpass_source(&config, "myserver"), Some("pass:ssh/prod".to_string()));
+        let config =
+            parse_config("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass pass:ssh/prod\n");
+        assert_eq!(
+            find_askpass_source(&config, "myserver"),
+            Some("pass:ssh/prod".to_string())
+        );
     }
 
     // =========================================================================
@@ -1154,9 +1285,9 @@ Host beta
     fn describe_source_with_exact_picker_values() {
         // Test describe_source with the exact values from PASSWORD_SOURCES
         assert_eq!(describe_source("keychain"), "OS Keychain");
-        assert_eq!(describe_source("op://"), "1Password");  // just the prefix
-        assert_eq!(describe_source("bw:"), "Bitwarden");    // just the prefix
-        assert_eq!(describe_source("pass:"), "pass");       // just the prefix
+        assert_eq!(describe_source("op://"), "1Password"); // just the prefix
+        assert_eq!(describe_source("bw:"), "Bitwarden"); // just the prefix
+        assert_eq!(describe_source("pass:"), "pass"); // just the prefix
         assert_eq!(describe_source("vault:"), "HashiCorp Vault"); // just the prefix
     }
 
@@ -1182,7 +1313,8 @@ Host beta
 
     #[test]
     fn find_hostname_with_askpass_host() {
-        let config = parse_config("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
+        let config =
+            parse_config("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
         assert_eq!(find_hostname(&config, "myserver"), "10.0.0.1");
     }
 
@@ -1209,12 +1341,16 @@ Host beta
 
     #[test]
     fn prompt_filter_rsa_passphrase() {
-        assert!(should_filter_prompt("Enter passphrase for key '/home/user/.ssh/id_rsa': "));
+        assert!(should_filter_prompt(
+            "Enter passphrase for key '/home/user/.ssh/id_rsa': "
+        ));
     }
 
     #[test]
     fn prompt_filter_ed25519_passphrase() {
-        assert!(should_filter_prompt("Enter passphrase for key '/home/user/.ssh/id_ed25519': "));
+        assert!(should_filter_prompt(
+            "Enter passphrase for key '/home/user/.ssh/id_ed25519': "
+        ));
     }
 
     #[test]
@@ -1277,7 +1413,10 @@ Host beta
 
     #[test]
     fn pass_first_line_multiline() {
-        assert_eq!(extract_first_line("mysecretpassword\nusername: admin\nurl: https://example.com"), "mysecretpassword");
+        assert_eq!(
+            extract_first_line("mysecretpassword\nusername: admin\nurl: https://example.com"),
+            "mysecretpassword"
+        );
     }
 
     #[test]
@@ -1321,11 +1460,22 @@ Host beta
 
     #[test]
     fn routing_all_password_sources_have_backend() {
-        let expected = ["keychain", "1password", "bitwarden", "pass", "vault", "command", "command"];
+        let expected = [
+            "keychain",
+            "1password",
+            "bitwarden",
+            "pass",
+            "vault",
+            "command",
+            "command",
+        ];
         for (i, src) in PASSWORD_SOURCES.iter().enumerate() {
             let backend = routing_backend(src.value);
-            assert_eq!(backend, expected[i], "Source '{}' (value '{}') routed to '{}', expected '{}'",
-                src.label, src.value, backend, expected[i]);
+            assert_eq!(
+                backend, expected[i],
+                "Source '{}' (value '{}') routed to '{}', expected '{}'",
+                src.label, src.value, backend, expected[i]
+            );
         }
     }
 
@@ -1375,7 +1525,10 @@ Host beta
 
     #[test]
     fn bw_status_parse_unlocked() {
-        assert_eq!(parse_bw_status(r#"{"status":"unlocked"}"#), BwStatus::Unlocked);
+        assert_eq!(
+            parse_bw_status(r#"{"status":"unlocked"}"#),
+            BwStatus::Unlocked
+        );
     }
 
     #[test]
@@ -1385,7 +1538,10 @@ Host beta
 
     #[test]
     fn bw_status_parse_unauthenticated() {
-        assert_eq!(parse_bw_status(r#"{"status":"unauthenticated"}"#), BwStatus::NotAuthenticated);
+        assert_eq!(
+            parse_bw_status(r#"{"status":"unauthenticated"}"#),
+            BwStatus::NotAuthenticated
+        );
     }
 
     #[test]
@@ -1400,12 +1556,18 @@ Host beta
 
     #[test]
     fn bw_status_parse_missing_status_key() {
-        assert_eq!(parse_bw_status(r#"{"version":"2024.1.0"}"#), BwStatus::NotInstalled);
+        assert_eq!(
+            parse_bw_status(r#"{"version":"2024.1.0"}"#),
+            BwStatus::NotInstalled
+        );
     }
 
     #[test]
     fn bw_status_parse_unknown_status_defaults_to_locked() {
-        assert_eq!(parse_bw_status(r#"{"status":"migrating"}"#), BwStatus::Locked);
+        assert_eq!(
+            parse_bw_status(r#"{"status":"migrating"}"#),
+            BwStatus::Locked
+        );
     }
 
     #[test]
@@ -1538,10 +1700,14 @@ Host beta
     fn store_keychain_macos_uses_security_command() {
         // On macOS: security add-generic-password -U -a <alias> -s purple-ssh -w <password>
         let args = [
-            "add-generic-password", "-U",
-            "-a", "myserver",
-            "-s", "purple-ssh",
-            "-w", "secret123",
+            "add-generic-password",
+            "-U",
+            "-a",
+            "myserver",
+            "-s",
+            "purple-ssh",
+            "-w",
+            "secret123",
         ];
         assert_eq!(args[0], "add-generic-password");
         assert_eq!(args[1], "-U"); // -U means update if exists
@@ -1552,7 +1718,13 @@ Host beta
     #[test]
     #[cfg(target_os = "macos")]
     fn remove_keychain_macos_uses_delete_generic() {
-        let args = ["delete-generic-password", "-a", "myserver", "-s", "purple-ssh"];
+        let args = [
+            "delete-generic-password",
+            "-a",
+            "myserver",
+            "-s",
+            "purple-ssh",
+        ];
         assert_eq!(args[0], "delete-generic-password");
         assert_eq!(args[2], "myserver");
         assert_eq!(args[4], "purple-ssh");
@@ -1561,7 +1733,14 @@ Host beta
     #[test]
     #[cfg(target_os = "macos")]
     fn retrieve_keychain_macos_uses_find_generic() {
-        let args = ["find-generic-password", "-a", "myserver", "-s", "purple-ssh", "-w"];
+        let args = [
+            "find-generic-password",
+            "-a",
+            "myserver",
+            "-s",
+            "purple-ssh",
+            "-w",
+        ];
         assert_eq!(args[0], "find-generic-password");
         assert_eq!(args[5], "-w"); // -w returns only the password
     }
@@ -1571,7 +1750,15 @@ Host beta
     fn store_keychain_linux_uses_secret_tool() {
         let label = format!("purple-ssh: {}", "myserver");
         assert_eq!(label, "purple-ssh: myserver");
-        let args = ["store", "--label", &label, "application", "purple-ssh", "host", "myserver"];
+        let args = [
+            "store",
+            "--label",
+            &label,
+            "application",
+            "purple-ssh",
+            "host",
+            "myserver",
+        ];
         assert_eq!(args[0], "store");
         assert_eq!(args[4], "purple-ssh");
     }
@@ -1600,7 +1787,10 @@ Host beta
         let source = "op://Vault/Item/field";
         let uri = source.strip_prefix("op://").unwrap();
         let reconstructed = format!("op://{}", uri);
-        assert_eq!(reconstructed, source, "Reconstructed URI should match original");
+        assert_eq!(
+            reconstructed, source,
+            "Reconstructed URI should match original"
+        );
     }
 
     #[test]
@@ -1694,7 +1884,10 @@ Host beta
     fn password_command_set_rejects_empty_password() {
         // match prompt_hidden_input(...)? => Some(p) if !p.is_empty() => p
         let password = "";
-        assert!(password.is_empty(), "Empty password should be rejected by set command");
+        assert!(
+            password.is_empty(),
+            "Empty password should be rejected by set command"
+        );
     }
 
     #[test]
@@ -1706,7 +1899,10 @@ Host beta
     #[test]
     fn password_command_set_success_message_format() {
         let alias = "webserver";
-        let msg = format!("Password stored for {}. Set 'keychain' as password source to use it.", alias);
+        let msg = format!(
+            "Password stored for {}. Set 'keychain' as password source to use it.",
+            alias
+        );
         assert!(msg.contains("webserver"));
         assert!(msg.contains("keychain"));
     }
@@ -1781,7 +1977,8 @@ Host beta
     #[test]
     fn included_host_askpass_is_readable() {
         // An included host can have askpass set and be read
-        let config = parse_config("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
+        let config =
+            parse_config("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
         let entries = config.host_entries();
         assert_eq!(entries[0].askpass, Some("keychain".to_string()));
     }
@@ -1789,8 +1986,13 @@ Host beta
     #[test]
     fn find_askpass_source_works_for_any_host() {
         // find_askpass_source does not distinguish between main config and included hosts
-        let config = parse_config("Host included-server\n  HostName 10.0.0.1\n  # purple:askpass op://V/I/p\n");
-        assert_eq!(find_askpass_source(&config, "included-server"), Some("op://V/I/p".to_string()));
+        let config = parse_config(
+            "Host included-server\n  HostName 10.0.0.1\n  # purple:askpass op://V/I/p\n",
+        );
+        assert_eq!(
+            find_askpass_source(&config, "included-server"),
+            Some("op://V/I/p".to_string())
+        );
     }
 
     // keychain_has_password delegates to retrieve_from_keychain

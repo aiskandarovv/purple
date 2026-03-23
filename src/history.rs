@@ -168,8 +168,7 @@ impl ConnectionHistory {
             content.push_str(&e.count.to_string());
             if !e.timestamps.is_empty() {
                 content.push('\t');
-                let ts_strs: Vec<String> =
-                    e.timestamps.iter().map(|t| t.to_string()).collect();
+                let ts_strs: Vec<String> = e.timestamps.iter().map(|t| t.to_string()).collect();
                 content.push_str(&ts_strs.join(","));
             }
         }
@@ -205,7 +204,13 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        let tsv = format!("myhost\t{}\t5\t{},{},{}", now, now - 100, now - 200, now - 300);
+        let tsv = format!(
+            "myhost\t{}\t5\t{},{},{}",
+            now,
+            now - 100,
+            now - 200,
+            now - 300
+        );
         let dir = std::env::temp_dir().join(format!(
             "purple_test_history_{:?}",
             std::thread::current().id()
@@ -224,7 +229,10 @@ mod tests {
             if parts.len() >= 3 {
                 if let (Ok(ts), Ok(count)) = (parts[1].parse::<u64>(), parts[2].parse::<u32>()) {
                     let timestamps = if parts.len() == 4 && !parts[3].is_empty() {
-                        parts[3].split(',').filter_map(|s| s.parse::<u64>().ok()).collect()
+                        parts[3]
+                            .split(',')
+                            .filter_map(|s| s.parse::<u64>().ok())
+                            .collect()
                     } else {
                         Vec::new()
                     };
@@ -330,7 +338,10 @@ mod tests {
         let parts: Vec<&str> = line.splitn(4, '\t').collect();
         assert_eq!(parts.len(), 3);
         let timestamps: Vec<u64> = if parts.len() == 4 && !parts[3].is_empty() {
-            parts[3].split(',').filter_map(|s| s.parse::<u64>().ok()).collect()
+            parts[3]
+                .split(',')
+                .filter_map(|s| s.parse::<u64>().ok())
+                .collect()
         } else {
             Vec::new()
         };
@@ -344,17 +355,8 @@ mod tests {
             .unwrap()
             .as_secs();
         assert_eq!(ConnectionHistory::format_time_ago(now), "<1m ago");
-        assert_eq!(
-            ConnectionHistory::format_time_ago(now - 300),
-            "5m ago"
-        );
-        assert_eq!(
-            ConnectionHistory::format_time_ago(now - 7200),
-            "2h ago"
-        );
-        assert_eq!(
-            ConnectionHistory::format_time_ago(now - 172800),
-            "2d ago"
-        );
+        assert_eq!(ConnectionHistory::format_time_ago(now - 300), "5m ago");
+        assert_eq!(ConnectionHistory::format_time_ago(now - 7200), "2h ago");
+        assert_eq!(ConnectionHistory::format_time_ago(now - 172800), "2d ago");
     }
 }

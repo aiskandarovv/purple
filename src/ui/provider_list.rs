@@ -47,7 +47,10 @@ pub fn render_provider_list(frame: &mut Frame, app: &mut App) {
             let mut used = 17;
 
             if configured {
-                let has_error = app.sync_history.get(name.as_str()).is_some_and(|r| r.is_error);
+                let has_error = app
+                    .sync_history
+                    .get(name.as_str())
+                    .is_some_and(|r| r.is_error);
                 if has_error {
                     spans.push(Span::styled("\u{26A0}", theme::error()));
                 } else {
@@ -90,11 +93,7 @@ pub fn render_provider_list(frame: &mut Frame, app: &mut App) {
         })
         .collect();
 
-    let chunks = Layout::vertical([
-        Constraint::Min(1),
-        Constraint::Length(1),
-    ])
-    .split(inner);
+    let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(inner);
 
     let list = List::new(items)
         .highlight_style(theme::selected_row())
@@ -106,28 +105,38 @@ pub fn render_provider_list(frame: &mut Frame, app: &mut App) {
     if app.pending_provider_delete.is_some() {
         let name = app.pending_provider_delete.as_deref().unwrap_or("");
         let display = crate::providers::provider_display_name(name);
-        super::render_footer_with_status(frame, chunks[1], vec![
-            Span::styled(format!(" Remove {}? ", display), theme::bold()),
-            Span::styled("y", theme::accent_bold()),
-            Span::styled(" yes ", theme::muted()),
-            Span::styled("\u{2502} ", theme::muted()),
-            Span::styled("Esc", theme::accent_bold()),
-            Span::styled(" no", theme::muted()),
-        ], app);
+        super::render_footer_with_status(
+            frame,
+            chunks[1],
+            vec![
+                Span::styled(format!(" Remove {}? ", display), theme::bold()),
+                Span::styled("y", theme::accent_bold()),
+                Span::styled(" yes ", theme::muted()),
+                Span::styled("\u{2502} ", theme::muted()),
+                Span::styled("Esc", theme::accent_bold()),
+                Span::styled(" no", theme::muted()),
+            ],
+            app,
+        );
     } else {
-        super::render_footer_with_status(frame, chunks[1], vec![
-            Span::styled(" Enter", theme::primary_action()),
-            Span::styled(" configure ", theme::muted()),
-            Span::styled("\u{2502} ", theme::muted()),
-            Span::styled("s", theme::accent_bold()),
-            Span::styled(" sync ", theme::muted()),
-            Span::styled("\u{2502} ", theme::muted()),
-            Span::styled("d", theme::accent_bold()),
-            Span::styled(" remove ", theme::muted()),
-            Span::styled("\u{2502} ", theme::muted()),
-            Span::styled("Esc", theme::accent_bold()),
-            Span::styled(" back", theme::muted()),
-        ], app);
+        super::render_footer_with_status(
+            frame,
+            chunks[1],
+            vec![
+                Span::styled(" Enter", theme::primary_action()),
+                Span::styled(" configure ", theme::muted()),
+                Span::styled("\u{2502} ", theme::muted()),
+                Span::styled("s", theme::accent_bold()),
+                Span::styled(" sync ", theme::muted()),
+                Span::styled("\u{2502} ", theme::muted()),
+                Span::styled("d", theme::accent_bold()),
+                Span::styled(" remove ", theme::muted()),
+                Span::styled("\u{2502} ", theme::muted()),
+                Span::styled("Esc", theme::accent_bold()),
+                Span::styled(" back", theme::muted()),
+            ],
+            app,
+        );
     }
 }
 
@@ -163,41 +172,67 @@ pub fn render_provider_form(frame: &mut Frame, app: &mut App, provider_name: &st
         let content_y = divider_y + 1;
 
         let is_focused = app.provider_form.focused_field == field;
-        let label_style = if is_focused { theme::accent_bold() } else { theme::muted() };
-        let is_required = matches!(field, ProviderFormField::Url)
-            || (field == ProviderFormField::Token && provider_name != "aws" && provider_name != "tailscale")
-            || (field == ProviderFormField::Project && provider_name == "gcp")
-            || (field == ProviderFormField::Regions && matches!(provider_name, "aws" | "scaleway" | "azure"));
-        let field_label = if field == ProviderFormField::Regions && matches!(provider_name, "scaleway" | "gcp") {
-            "Zones"
-        } else if field == ProviderFormField::Regions && provider_name == "azure" {
-            "Subscriptions"
+        let label_style = if is_focused {
+            theme::accent_bold()
         } else {
-            field.label()
+            theme::muted()
         };
+        let is_required = matches!(field, ProviderFormField::Url)
+            || (field == ProviderFormField::Token
+                && provider_name != "aws"
+                && provider_name != "tailscale")
+            || (field == ProviderFormField::Project && provider_name == "gcp")
+            || (field == ProviderFormField::Regions
+                && matches!(provider_name, "aws" | "scaleway" | "azure"));
+        let field_label =
+            if field == ProviderFormField::Regions && matches!(provider_name, "scaleway" | "gcp") {
+                "Zones"
+            } else if field == ProviderFormField::Regions && provider_name == "azure" {
+                "Subscriptions"
+            } else {
+                field.label()
+            };
         let label = if is_required {
             format!(" {}* ", field_label)
         } else {
             format!(" {} ", field_label)
         };
-        render_divider(frame, block_area, divider_y, &label, label_style, theme::border());
+        render_divider(
+            frame,
+            block_area,
+            divider_y,
+            &label,
+            label_style,
+            theme::border(),
+        );
 
         let content_area = Rect::new(inner.x + 1, content_y, inner.width.saturating_sub(1), 1);
-        render_field_content(frame, content_area, field, &app.provider_form, provider_name);
+        render_field_content(
+            frame,
+            content_area,
+            field,
+            &app.provider_form,
+            provider_name,
+        );
     }
 
     // Footer below the block
     let footer_area = Rect::new(form_area.x, form_area.y + block_height, form_area.width, 1);
-    super::render_footer_with_status(frame, footer_area, vec![
-        Span::styled(" Enter", theme::primary_action()),
-        Span::styled(" save ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
-        Span::styled("Tab", theme::accent_bold()),
-        Span::styled(" next ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
-        Span::styled("Esc", theme::accent_bold()),
-        Span::styled(" cancel", theme::muted()),
-    ], app);
+    super::render_footer_with_status(
+        frame,
+        footer_area,
+        vec![
+            Span::styled(" Enter", theme::primary_action()),
+            Span::styled(" save ", theme::muted()),
+            Span::styled("\u{2502} ", theme::muted()),
+            Span::styled("Tab", theme::accent_bold()),
+            Span::styled(" next ", theme::muted()),
+            Span::styled("\u{2502} ", theme::muted()),
+            Span::styled("Esc", theme::accent_bold()),
+            Span::styled(" cancel", theme::muted()),
+        ],
+        app,
+    );
 
     // Key picker popup overlay
     if app.ui.show_key_picker {
@@ -307,29 +342,36 @@ fn render_field_content(
     };
 
     // Mask token except last 4 chars when not focused
-    let display_value: String = if field == ProviderFormField::Token && !value.is_empty() && !is_focused {
-        let char_count = value.chars().count();
-        if char_count > 4 {
-            let last4: String = value.chars().skip(char_count - 4).collect();
-            format!("{}{}", "*".repeat(char_count - 4), last4)
+    let display_value: String =
+        if field == ProviderFormField::Token && !value.is_empty() && !is_focused {
+            let char_count = value.chars().count();
+            if char_count > 4 {
+                let last4: String = value.chars().skip(char_count - 4).collect();
+                format!("{}{}", "*".repeat(char_count - 4), last4)
+            } else {
+                value.clone()
+            }
         } else {
             value.clone()
-        }
-    } else {
-        value.clone()
-    };
+        };
 
     let is_picker = matches!(field, ProviderFormField::IdentityFile)
         || (field == ProviderFormField::Regions
             && matches!(provider_name, "aws" | "scaleway" | "gcp"));
 
     let content = if value.is_empty() && is_focused && !is_picker {
-        Line::from(Span::styled(placeholder_for(field, provider_name), theme::muted()))
+        Line::from(Span::styled(
+            placeholder_for(field, provider_name),
+            theme::muted(),
+        ))
     } else if is_picker && is_focused {
         let inner_width = area.width as usize;
         let arrow_pos = inner_width.saturating_sub(1);
         let (display, display_style) = if value.is_empty() {
-            (placeholder_for(field, provider_name).to_string(), theme::muted())
+            (
+                placeholder_for(field, provider_name).to_string(),
+                theme::muted(),
+            )
         } else {
             (display_value.clone(), theme::bold())
         };
@@ -360,12 +402,7 @@ fn render_field_content(
     }
 }
 
-fn render_toggle_content(
-    frame: &mut Frame,
-    area: Rect,
-    value_text: &str,
-    is_focused: bool,
-) {
+fn render_toggle_content(frame: &mut Frame, area: Rect, value_text: &str, is_focused: bool) {
     let content = if is_focused {
         let inner_width = area.width as usize;
         let val_width = value_text.width();
@@ -419,9 +456,18 @@ fn render_region_picker_overlay(frame: &mut Frame, app: &mut App) {
     frame.render_widget(Clear, picker_area);
 
     let count = selected.len();
-    let zone_label = if matches!(provider_name, "scaleway" | "gcp") { "Zones" } else { "Regions" };
+    let zone_label = if matches!(provider_name, "scaleway" | "gcp") {
+        "Zones"
+    } else {
+        "Regions"
+    };
     let title = format!(" Select {} ({} selected) ", zone_label, count);
-    let block_area = Rect::new(picker_area.x, picker_area.y, picker_area.width, block_height);
+    let block_area = Rect::new(
+        picker_area.x,
+        picker_area.y,
+        picker_area.width,
+        block_height,
+    );
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .title(Span::styled(title, theme::brand()))
@@ -483,17 +529,27 @@ fn render_region_picker_overlay(frame: &mut Frame, app: &mut App) {
         }
     }
 
-    let footer_area = Rect::new(picker_area.x, picker_area.y + block_height, picker_area.width, 1);
-    super::render_footer_with_status(frame, footer_area, vec![
-        Span::styled(" Space", theme::primary_action()),
-        Span::styled(" toggle ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
-        Span::styled("Enter", theme::accent_bold()),
-        Span::styled(" done ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
-        Span::styled("Esc", theme::accent_bold()),
-        Span::styled(" back", theme::muted()),
-    ], app);
+    let footer_area = Rect::new(
+        picker_area.x,
+        picker_area.y + block_height,
+        picker_area.width,
+        1,
+    );
+    super::render_footer_with_status(
+        frame,
+        footer_area,
+        vec![
+            Span::styled(" Space", theme::primary_action()),
+            Span::styled(" toggle ", theme::muted()),
+            Span::styled("\u{2502} ", theme::muted()),
+            Span::styled("Enter", theme::accent_bold()),
+            Span::styled(" done ", theme::muted()),
+            Span::styled("\u{2502} ", theme::muted()),
+            Span::styled("Esc", theme::accent_bold()),
+            Span::styled(" back", theme::muted()),
+        ],
+        app,
+    );
 }
 
 #[cfg(test)]

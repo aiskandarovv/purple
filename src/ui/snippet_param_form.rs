@@ -83,7 +83,14 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             theme::muted()
         };
         let label = format!(" {} ", param.name);
-        super::render_divider(frame, block_area, divider_y, &label, label_style, theme::border());
+        super::render_divider(
+            frame,
+            block_area,
+            divider_y,
+            &label,
+            label_style,
+            theme::border(),
+        );
 
         let content_area = Rect::new(inner.x + 1, content_y, inner.width.saturating_sub(1), 1);
 
@@ -103,7 +110,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             let cursor_x = content_area
                 .x
                 .saturating_add(prefix.width().min(u16::MAX as usize) as u16);
-            if content_area.width > 0 && cursor_x < content_area.x.saturating_add(content_area.width)
+            if content_area.width > 0
+                && cursor_x < content_area.x.saturating_add(content_area.width)
             {
                 frame.set_cursor_position((cursor_x, content_y));
             }
@@ -128,7 +136,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             let preview_area = Rect::new(inner.x + 1, preview_y, inner.width.saturating_sub(1), 1);
 
             let resolved = crate::snippet::substitute_params(&snippet.command, &form.values_map());
-            let preview_text = super::truncate(&resolved, preview_area.width.saturating_sub(1) as usize);
+            let preview_text =
+                super::truncate(&resolved, preview_area.width.saturating_sub(1) as usize);
             frame.render_widget(
                 Paragraph::new(Line::from(Span::styled(preview_text, theme::muted()))),
                 preview_area,

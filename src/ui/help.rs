@@ -26,10 +26,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         theme::muted(),
     ));
     let version = Line::from(vec![
-        Span::styled(
-            format!(" v{}", env!("CARGO_PKG_VERSION")),
-            theme::version(),
-        ),
+        Span::styled(format!(" v{}", env!("CARGO_PKG_VERSION")), theme::version()),
         Span::styled(
             format!(" (built {}) ", env!("PURPLE_BUILD_DATE")),
             theme::muted(),

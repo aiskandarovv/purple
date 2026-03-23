@@ -11,7 +11,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         Span::styled(" SSH Keys ", theme::brand())
     } else {
         let pos = app.ui.key_list_state.selected().map(|i| i + 1).unwrap_or(0);
-        Span::styled(format!(" SSH Keys {}/{} ", pos, app.keys.len()), theme::brand())
+        Span::styled(
+            format!(" SSH Keys {}/{} ", pos, app.keys.len()),
+            theme::brand(),
+        )
     };
 
     // Overlay: percentage-based width, height fits content
@@ -74,7 +77,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     let inner_chunks = Layout::vertical([
         Constraint::Length(1), // Column header
-        Constraint::Min(1),   // List
+        Constraint::Min(1),    // List
         Constraint::Length(1), // Footer
     ])
     .split(inner);

@@ -7,7 +7,6 @@ use super::theme;
 use crate::app::App;
 
 pub fn render(frame: &mut Frame, _app: &App, alias: &str) {
-
     let area = super::centered_rect_fixed(48, 7, frame.area());
 
     // Clear background
@@ -108,7 +107,13 @@ pub fn render_confirm_import(frame: &mut Frame, _app: &App, count: usize) {
     frame.render_widget(paragraph, area);
 }
 
-pub fn render_welcome(frame: &mut Frame, _app: &App, has_backup: bool, host_count: usize, known_hosts_count: usize) {
+pub fn render_welcome(
+    frame: &mut Frame,
+    _app: &App,
+    has_backup: bool,
+    host_count: usize,
+    known_hosts_count: usize,
+) {
     let has_hosts = host_count > 0;
     // Height: blank + title + blank-before-footer + footer = 4 inner + 2 border = 6 base
     // When info lines are present, add them + 1 extra blank separator
@@ -133,7 +138,8 @@ pub fn render_welcome(frame: &mut Frame, _app: &App, has_backup: bool, host_coun
             Span::styled("Welcome to ", theme::bold()),
             Span::styled("purple", theme::border_search()),
             Span::styled(".", theme::bold()),
-        ]).alignment(Alignment::Center),
+        ])
+        .alignment(Alignment::Center),
     ];
     if has_hosts {
         text.push(Line::from(""));
@@ -145,7 +151,8 @@ pub fn render_welcome(frame: &mut Frame, _app: &App, has_backup: bool, host_coun
                     if host_count == 1 { "" } else { "s" },
                 ),
                 theme::muted(),
-            )).alignment(Alignment::Center),
+            ))
+            .alignment(Alignment::Center),
         );
     } else if known_hosts_count > 0 {
         text.push(Line::from(""));
@@ -157,14 +164,16 @@ pub fn render_welcome(frame: &mut Frame, _app: &App, has_backup: bool, host_coun
                     if known_hosts_count == 1 { "" } else { "s" },
                 ),
                 theme::muted(),
-            )).alignment(Alignment::Center),
+            ))
+            .alignment(Alignment::Center),
         );
         text.push(
             Line::from(vec![
                 Span::styled("Press ", theme::muted()),
                 Span::styled("I", theme::accent_bold()),
                 Span::styled(" to import them.", theme::muted()),
-            ]).alignment(Alignment::Center),
+            ])
+            .alignment(Alignment::Center),
         );
     }
     if has_backup {
@@ -175,13 +184,12 @@ pub fn render_welcome(frame: &mut Frame, _app: &App, has_backup: bool, host_coun
             Line::from(Span::styled(
                 "Your original config has been backed up",
                 theme::muted(),
-            )).alignment(Alignment::Center),
+            ))
+            .alignment(Alignment::Center),
         );
         text.push(
-            Line::from(Span::styled(
-                "to ~/.purple/config.original",
-                theme::muted(),
-            )).alignment(Alignment::Center),
+            Line::from(Span::styled("to ~/.purple/config.original", theme::muted()))
+                .alignment(Alignment::Center),
         );
     }
     text.push(Line::from(""));
@@ -191,7 +199,8 @@ pub fn render_welcome(frame: &mut Frame, _app: &App, has_backup: bool, host_coun
             Span::styled(" cheat sheet   ", theme::muted()),
             Span::styled("Enter", theme::accent_bold()),
             Span::styled(" continue", theme::muted()),
-        ]).alignment(Alignment::Center),
+        ])
+        .alignment(Alignment::Center),
     );
     text.push(Line::from(""));
 
@@ -202,7 +211,11 @@ pub fn render_welcome(frame: &mut Frame, _app: &App, has_backup: bool, host_coun
 /// Compute the welcome dialog height and text line count for testing.
 /// Returns (height, text_line_count).
 #[cfg(test)]
-fn welcome_height_and_lines(has_backup: bool, host_count: usize, known_hosts_count: usize) -> (usize, usize) {
+fn welcome_height_and_lines(
+    has_backup: bool,
+    host_count: usize,
+    known_hosts_count: usize,
+) -> (usize, usize) {
     let has_hosts = host_count > 0;
     let info_lines = if has_hosts {
         1 + if has_backup { 2 } else { 0 }
@@ -243,49 +256,81 @@ mod tests {
     #[test]
     fn welcome_height_hosts_backup_no_known() {
         let (height, lines) = welcome_height_and_lines(true, 5, 0);
-        assert_eq!(lines, height - 2, "has_hosts=true, has_backup=true, known=0");
+        assert_eq!(
+            lines,
+            height - 2,
+            "has_hosts=true, has_backup=true, known=0"
+        );
     }
 
     #[test]
     fn welcome_height_hosts_backup_with_known() {
         let (height, lines) = welcome_height_and_lines(true, 5, 10);
-        assert_eq!(lines, height - 2, "has_hosts=true, has_backup=true, known=10");
+        assert_eq!(
+            lines,
+            height - 2,
+            "has_hosts=true, has_backup=true, known=10"
+        );
     }
 
     #[test]
     fn welcome_height_hosts_no_backup_no_known() {
         let (height, lines) = welcome_height_and_lines(false, 5, 0);
-        assert_eq!(lines, height - 2, "has_hosts=true, has_backup=false, known=0");
+        assert_eq!(
+            lines,
+            height - 2,
+            "has_hosts=true, has_backup=false, known=0"
+        );
     }
 
     #[test]
     fn welcome_height_hosts_no_backup_with_known() {
         let (height, lines) = welcome_height_and_lines(false, 5, 10);
-        assert_eq!(lines, height - 2, "has_hosts=true, has_backup=false, known=10");
+        assert_eq!(
+            lines,
+            height - 2,
+            "has_hosts=true, has_backup=false, known=10"
+        );
     }
 
     #[test]
     fn welcome_height_no_hosts_backup_no_known() {
         let (height, lines) = welcome_height_and_lines(true, 0, 0);
-        assert_eq!(lines, height - 2, "has_hosts=false, has_backup=true, known=0");
+        assert_eq!(
+            lines,
+            height - 2,
+            "has_hosts=false, has_backup=true, known=0"
+        );
     }
 
     #[test]
     fn welcome_height_no_hosts_backup_with_known() {
         let (height, lines) = welcome_height_and_lines(true, 0, 10);
-        assert_eq!(lines, height - 2, "has_hosts=false, has_backup=true, known=10");
+        assert_eq!(
+            lines,
+            height - 2,
+            "has_hosts=false, has_backup=true, known=10"
+        );
     }
 
     #[test]
     fn welcome_height_no_hosts_no_backup_no_known() {
         let (height, lines) = welcome_height_and_lines(false, 0, 0);
-        assert_eq!(lines, height - 2, "has_hosts=false, has_backup=false, known=0");
+        assert_eq!(
+            lines,
+            height - 2,
+            "has_hosts=false, has_backup=false, known=0"
+        );
     }
 
     #[test]
     fn welcome_height_no_hosts_no_backup_with_known() {
         let (height, lines) = welcome_height_and_lines(false, 0, 10);
-        assert_eq!(lines, height - 2, "has_hosts=false, has_backup=false, known=10");
+        assert_eq!(
+            lines,
+            height - 2,
+            "has_hosts=false, has_backup=false, known=10"
+        );
     }
 
     // Edge cases for host_count and known_hosts_count boundary values

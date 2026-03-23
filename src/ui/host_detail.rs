@@ -35,10 +35,7 @@ pub fn render(frame: &mut Frame, app: &App, index: usize) {
     let mut lines = vec![
         Line::from(""),
         Line::from(Span::styled("  Directives", theme::section_header())),
-        Line::from(Span::styled(
-            "  ────────────────────────",
-            theme::muted(),
-        )),
+        Line::from(Span::styled("  ────────────────────────", theme::muted())),
     ];
 
     if directives.is_empty() {

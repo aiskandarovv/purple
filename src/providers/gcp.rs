@@ -367,7 +367,7 @@ fn resolve_service_account_token(path: &str) -> Result<String, ProviderError> {
     let der = rsa::pkcs8::DecodePrivateKey::from_pkcs8_pem(&key.private_key)
         .map_err(|e| ProviderError::Http(format!("Failed to parse private key: {}", e)))?;
     let signing_key = rsa::pkcs1v15::SigningKey::<sha2::Sha256>::new(der);
-    use rsa::signature::{Signer, SignatureEncoding};
+    use rsa::signature::{SignatureEncoding, Signer};
     let signature = signing_key.sign(signing_input.as_bytes());
     let sig_b64 = URL_SAFE_NO_PAD.encode(signature.to_bytes());
 
@@ -446,13 +446,18 @@ impl Provider for Gcp {
     ) -> Result<Vec<ProviderHost>, ProviderError> {
         if self.project.is_empty() {
             return Err(ProviderError::Http(
-                "No GCP project configured. Set the Project ID in the provider settings.".to_string(),
+                "No GCP project configured. Set the Project ID in the provider settings."
+                    .to_string(),
             ));
         }
 
         // Validate project ID format: lowercase letters, digits, hyphens, dots and colons
         // (dots and colons for domain-scoped projects like example.com:my-project)
-        if !self.project.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '.' | ':')) {
+        if !self
+            .project
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '.' | ':'))
+        {
             return Err(ProviderError::Http(format!(
                 "Invalid GCP project ID '{}'. Must contain only lowercase letters, digits, hyphens, dots and colons.",
                 self.project
@@ -489,7 +494,10 @@ impl Provider for Gcp {
                 url.push_str(&format!("&pageToken={}", url_encode(pt)));
             }
 
-            progress(&format!("Fetching instances ({} so far)...", all_hosts.len()));
+            progress(&format!(
+                "Fetching instances ({} so far)...",
+                all_hosts.len()
+            ));
 
             let response = match agent
                 .get(&url)
@@ -518,7 +526,11 @@ impl Provider for Gcp {
                 Err(e) => {
                     if !all_hosts.is_empty() {
                         let fetched = all_hosts.len();
-                        progress(&format!("{} instances, page {} failed to parse", fetched, page + 1));
+                        progress(&format!(
+                            "{} instances, page {} failed to parse",
+                            fetched,
+                            page + 1
+                        ));
                         return Err(ProviderError::PartialResult {
                             hosts: all_hosts,
                             failures: 1,
@@ -572,8 +584,14 @@ mod tests {
 
     #[test]
     fn test_last_url_segment() {
-        assert_eq!(last_url_segment("projects/my-project/zones/us-central1-a"), "us-central1-a");
-        assert_eq!(last_url_segment("projects/p/machineTypes/e2-micro"), "e2-micro");
+        assert_eq!(
+            last_url_segment("projects/my-project/zones/us-central1-a"),
+            "us-central1-a"
+        );
+        assert_eq!(
+            last_url_segment("projects/p/machineTypes/e2-micro"),
+            "e2-micro"
+        );
         assert_eq!(last_url_segment(""), "");
         assert_eq!(last_url_segment("no-slashes"), "no-slashes");
     }
@@ -695,7 +713,9 @@ mod tests {
                 access_configs: if nat_ip.is_empty() {
                     vec![]
                 } else {
-                    vec![AccessConfig { nat_ip: nat_ip.to_string() }]
+                    vec![AccessConfig {
+                        nat_ip: nat_ip.to_string(),
+                    }]
                 },
                 network_ip: network_ip.to_string(),
                 ipv6_access_configs: vec![],
@@ -756,7 +776,9 @@ mod tests {
                     ipv6_access_configs: vec![],
                 },
                 NetworkInterface {
-                    access_configs: vec![AccessConfig { nat_ip: "35.192.0.1".to_string() }],
+                    access_configs: vec![AccessConfig {
+                        nat_ip: "35.192.0.1".to_string(),
+                    }],
                     network_ip: "10.0.1.2".to_string(),
                     ipv6_access_configs: vec![],
                 },
@@ -800,7 +822,9 @@ mod tests {
             status: String::new(),
             machine_type: String::new(),
             network_interfaces: vec![NetworkInterface {
-                access_configs: vec![AccessConfig { nat_ip: "35.192.0.1".to_string() }],
+                access_configs: vec![AccessConfig {
+                    nat_ip: "35.192.0.1".to_string(),
+                }],
                 network_ip: "10.0.0.2".to_string(),
                 ipv6_access_configs: vec![Ipv6AccessConfig {
                     external_ipv6: "2600:1900:4000:318::".to_string(),
@@ -908,12 +932,15 @@ mod tests {
             zone: "projects/p/zones/us-central1-a".to_string(),
         };
         let meta = build_metadata(&inst);
-        assert_eq!(meta, vec![
-            ("zone".to_string(), "us-central1-a".to_string()),
-            ("machine".to_string(), "e2-micro".to_string()),
-            ("os".to_string(), "debian-11".to_string()),
-            ("status".to_string(), "RUNNING".to_string()),
-        ]);
+        assert_eq!(
+            meta,
+            vec![
+                ("zone".to_string(), "us-central1-a".to_string()),
+                ("machine".to_string(), "e2-micro".to_string()),
+                ("os".to_string(), "debian-11".to_string()),
+                ("status".to_string(), "RUNNING".to_string()),
+            ]
+        );
     }
 
     #[test]
@@ -964,7 +991,9 @@ mod tests {
             machine_type: String::new(),
             network_interfaces: vec![],
             disks: vec![],
-            tags: Some(GcpTags { items: vec!["http-server".to_string(), "https-server".to_string()] }),
+            tags: Some(GcpTags {
+                items: vec!["http-server".to_string(), "https-server".to_string()],
+            }),
             labels: None,
             zone: String::new(),
         };
@@ -1109,7 +1138,10 @@ mod tests {
         let result = gcp.fetch_hosts("fake-token");
         match result {
             Err(ProviderError::Http(msg)) => assert!(msg.contains("Invalid GCP project ID")),
-            other => panic!("Expected Http error for uppercase project, got: {:?}", other),
+            other => panic!(
+                "Expected Http error for uppercase project, got: {:?}",
+                other
+            ),
         }
     }
 
@@ -1122,7 +1154,10 @@ mod tests {
         let result = gcp.fetch_hosts("fake-token");
         match result {
             Err(ProviderError::Http(msg)) => assert!(msg.contains("Invalid GCP project ID")),
-            other => panic!("Expected Http error for underscore project, got: {:?}", other),
+            other => panic!(
+                "Expected Http error for underscore project, got: {:?}",
+                other
+            ),
         }
     }
 
@@ -1163,14 +1198,20 @@ mod tests {
 
     #[test]
     fn test_gcp_provider_name() {
-        let gcp = Gcp { zones: vec![], project: String::new() };
+        let gcp = Gcp {
+            zones: vec![],
+            project: String::new(),
+        };
         assert_eq!(gcp.name(), "gcp");
         assert_eq!(gcp.short_label(), "gcp");
     }
 
     #[test]
     fn test_gcp_no_project_error() {
-        let gcp = Gcp { zones: vec![], project: String::new() };
+        let gcp = Gcp {
+            zones: vec![],
+            project: String::new(),
+        };
         let result = gcp.fetch_hosts("fake-token");
         match result {
             Err(ProviderError::Http(msg)) => assert!(msg.contains("No GCP project")),
@@ -1226,7 +1267,10 @@ mod tests {
         let resp: AggregatedListResponse = serde_json::from_str(json).unwrap();
         let inst = &resp.items["zones/us-central1-a"].instances[0];
         assert_eq!(inst.network_interfaces[0].ipv6_access_configs.len(), 1);
-        assert_eq!(inst.network_interfaces[0].ipv6_access_configs[0].external_ipv6, "2600:1900:4000:318::");
+        assert_eq!(
+            inst.network_interfaces[0].ipv6_access_configs[0].external_ipv6,
+            "2600:1900:4000:318::"
+        );
     }
 
     #[test]

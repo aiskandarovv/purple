@@ -13,7 +13,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
 
     let title = match &app.screen {
-        Screen::TunnelForm { editing: Some(_), .. } => " Edit Tunnel ",
+        Screen::TunnelForm {
+            editing: Some(_), ..
+        } => " Edit Tunnel ",
         _ => " Add Tunnel ",
     };
 
@@ -53,9 +55,20 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         let content_y = divider_y + 1;
 
         let is_focused = app.tunnel_form.focused_field == field;
-        let label_style = if is_focused { theme::accent_bold() } else { theme::muted() };
+        let label_style = if is_focused {
+            theme::accent_bold()
+        } else {
+            theme::muted()
+        };
         let label = format!(" {}* ", field.label());
-        render_divider(frame, block_area, divider_y, &label, label_style, theme::border());
+        render_divider(
+            frame,
+            block_area,
+            divider_y,
+            &label,
+            label_style,
+            theme::border(),
+        );
 
         let content_area = Rect::new(inner.x + 1, content_y, inner.width.saturating_sub(1), 1);
         render_field_content(frame, content_area, field, &app.tunnel_form);
@@ -63,18 +76,23 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Footer below the block
     let footer_area = Rect::new(form_area.x, form_area.y + block_height, form_area.width, 1);
-    super::render_footer_with_status(frame, footer_area, vec![
-        Span::styled(" Enter", theme::primary_action()),
-        Span::styled(" save ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
-        Span::styled("Tab", theme::accent_bold()),
-        Span::styled(" next ", theme::muted()),
-        Span::styled("L/R", theme::accent_bold()),
-        Span::styled(" type ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
-        Span::styled("Esc", theme::accent_bold()),
-        Span::styled(" cancel", theme::muted()),
-    ], app);
+    super::render_footer_with_status(
+        frame,
+        footer_area,
+        vec![
+            Span::styled(" Enter", theme::primary_action()),
+            Span::styled(" save ", theme::muted()),
+            Span::styled("\u{2502} ", theme::muted()),
+            Span::styled("Tab", theme::accent_bold()),
+            Span::styled(" next ", theme::muted()),
+            Span::styled("L/R", theme::accent_bold()),
+            Span::styled(" type ", theme::muted()),
+            Span::styled("\u{2502} ", theme::muted()),
+            Span::styled("Esc", theme::accent_bold()),
+            Span::styled(" cancel", theme::muted()),
+        ],
+        app,
+    );
 }
 
 fn render_divider(

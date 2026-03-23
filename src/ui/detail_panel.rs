@@ -152,11 +152,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from(""));
         lines.push(section_header("Tags"));
 
-        let mut all_tags: Vec<String> = host
-            .tags
-            .iter()
-            .map(|t| format!("#{}", t))
-            .collect();
+        let mut all_tags: Vec<String> = host.tags.iter().map(|t| format!("#{}", t)).collect();
         if let Some(ref provider) = host.provider {
             all_tags.push(format!("#{}", provider));
         }
@@ -299,7 +295,10 @@ fn section_header(label: &str) -> Line<'static> {
 // Block sparkline using lower block elements (▁▂▃▄▅▆▇█).
 // 2 rows tall = 16 height levels. Each character = ~2 days over 12 weeks.
 // History retains 90 days of timestamps; chart shows 84 (12 clean weeks).
-const BLOCKS: [char; 9] = [' ', '\u{2581}', '\u{2582}', '\u{2583}', '\u{2584}', '\u{2585}', '\u{2586}', '\u{2587}', '\u{2588}'];
+const BLOCKS: [char; 9] = [
+    ' ', '\u{2581}', '\u{2582}', '\u{2583}', '\u{2584}', '\u{2585}', '\u{2586}', '\u{2587}',
+    '\u{2588}',
+];
 const CHART_DAYS: u64 = 84;
 
 fn activity_sparkline(timestamps: &[u64], chart_width: usize) -> Vec<Line<'static>> {
@@ -322,9 +321,8 @@ fn activity_sparkline(timestamps: &[u64], chart_width: usize) -> Vec<Line<'stati
             continue;
         }
         let age = now.saturating_sub(ts);
-        let idx = chart_width
-            - 1
-            - ((age as f64 / bucket_secs).floor() as usize).min(chart_width - 1);
+        let idx =
+            chart_width - 1 - ((age as f64 / bucket_secs).floor() as usize).min(chart_width - 1);
         buckets[idx] += 1;
     }
 

@@ -232,7 +232,10 @@ mod tests {
             "meta": {"links": {"next": ""}}
         }"#;
         let resp: InstanceResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(select_vultr_ip(&resp.instances[0]), Some("5.6.7.8".to_string()));
+        assert_eq!(
+            select_vultr_ip(&resp.instances[0]),
+            Some("5.6.7.8".to_string())
+        );
     }
 
     #[test]
@@ -317,7 +320,10 @@ mod tests {
             "meta": {"links": {"next": ""}}
         }"#;
         let resp: InstanceResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(select_vultr_ip(&resp.instances[0]), Some("5.6.7.8".to_string()));
+        assert_eq!(
+            select_vultr_ip(&resp.instances[0]),
+            Some("5.6.7.8".to_string())
+        );
     }
 
     #[test]
@@ -333,7 +339,10 @@ mod tests {
             "meta": {"links": {"next": ""}}
         }"#;
         let resp: InstanceResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(select_vultr_ip(&resp.instances[0]), Some("2001:db8::1".to_string()));
+        assert_eq!(
+            select_vultr_ip(&resp.instances[0]),
+            Some("2001:db8::1".to_string())
+        );
     }
 
     #[test]
@@ -425,7 +434,10 @@ mod tests {
         }"#;
         let resp: InstanceResponse = serde_json::from_str(json).unwrap();
         // 0.0.0.0 treated as placeholder, falls back to v6
-        assert_eq!(select_vultr_ip(&resp.instances[0]), Some("2001:db8::1".to_string()));
+        assert_eq!(
+            select_vultr_ip(&resp.instances[0]),
+            Some("2001:db8::1".to_string())
+        );
     }
 
     #[test]
@@ -488,7 +500,10 @@ mod tests {
         }"#;
         let resp: InstanceResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.instances[0].label, "");
-        assert_eq!(select_vultr_ip(&resp.instances[0]), Some("1.2.3.4".to_string()));
+        assert_eq!(
+            select_vultr_ip(&resp.instances[0]),
+            Some("1.2.3.4".to_string())
+        );
     }
 
     // --- Resilience: extra/unknown fields are ignored by serde ---

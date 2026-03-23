@@ -138,8 +138,7 @@ fn read_credentials_file(profile: &str) -> Result<AwsCredentials, ProviderError>
         .ok_or(ProviderError::AuthFailed)?
         .join(".aws")
         .join("credentials");
-    let content = std::fs::read_to_string(&path)
-        .map_err(|_| ProviderError::AuthFailed)?;
+    let content = std::fs::read_to_string(&path).map_err(|_| ProviderError::AuthFailed)?;
     parse_credentials(&content, profile).ok_or(ProviderError::AuthFailed)
 }
 
@@ -201,7 +200,16 @@ fn format_utc(epoch_secs: u64) -> (String, String) {
     let days_per_month: [u64; 12] = [
         31,
         if leap { 29 } else { 28 },
-        31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
     ];
     let mut month = 0usize;
     while month < 12 && remaining_days >= days_per_month[month] {
@@ -543,7 +551,12 @@ impl Provider for Aws {
                 return Err(ProviderError::Cancelled);
             }
 
-            progress(&format!("Fetching {} ({}/{})...", region, i + 1, total_regions));
+            progress(&format!(
+                "Fetching {} ({}/{})...",
+                region,
+                i + 1,
+                total_regions
+            ));
 
             let instances = match describe_instances(&agent, &creds, region, cancel) {
                 Ok(instances) => instances,
@@ -748,7 +761,10 @@ mod tests {
     #[test]
     fn test_hmac_sha256_known() {
         // HMAC-SHA256("key", "message") is a well-known test vector
-        let result = hex_encode(&hmac_sha256(b"key", b"The quick brown fox jumps over the lazy dog"));
+        let result = hex_encode(&hmac_sha256(
+            b"key",
+            b"The quick brown fox jumps over the lazy dog",
+        ));
         assert_eq!(
             result,
             "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"
@@ -786,8 +802,22 @@ mod tests {
             access_key: "AK".to_string(),
             secret_key: "SK".to_string(),
         };
-        let a = sign_request(&creds, "us-east-1", "ec2.us-east-1.amazonaws.com", "Action=DescribeInstances", "20240101T000000Z", "20240101");
-        let b = sign_request(&creds, "us-east-1", "ec2.us-east-1.amazonaws.com", "Action=DescribeInstances", "20240101T000000Z", "20240101");
+        let a = sign_request(
+            &creds,
+            "us-east-1",
+            "ec2.us-east-1.amazonaws.com",
+            "Action=DescribeInstances",
+            "20240101T000000Z",
+            "20240101",
+        );
+        let b = sign_request(
+            &creds,
+            "us-east-1",
+            "ec2.us-east-1.amazonaws.com",
+            "Action=DescribeInstances",
+            "20240101T000000Z",
+            "20240101",
+        );
         assert_eq!(a, b);
     }
 
@@ -797,8 +827,22 @@ mod tests {
             access_key: "AK".to_string(),
             secret_key: "SK".to_string(),
         };
-        let a = sign_request(&creds, "us-east-1", "ec2.us-east-1.amazonaws.com", "Action=DescribeInstances", "20240101T000000Z", "20240101");
-        let b = sign_request(&creds, "eu-west-1", "ec2.eu-west-1.amazonaws.com", "Action=DescribeInstances", "20240101T000000Z", "20240101");
+        let a = sign_request(
+            &creds,
+            "us-east-1",
+            "ec2.us-east-1.amazonaws.com",
+            "Action=DescribeInstances",
+            "20240101T000000Z",
+            "20240101",
+        );
+        let b = sign_request(
+            &creds,
+            "eu-west-1",
+            "ec2.eu-west-1.amazonaws.com",
+            "Action=DescribeInstances",
+            "20240101T000000Z",
+            "20240101",
+        );
         assert_ne!(a, b);
     }
 
@@ -836,7 +880,8 @@ mod tests {
 
     #[test]
     fn test_parse_credentials_whitespace_handling() {
-        let content = "[default]\n  aws_access_key_id  =  AKID  \n  aws_secret_access_key  =  SECRET  \n";
+        let content =
+            "[default]\n  aws_access_key_id  =  AKID  \n  aws_secret_access_key  =  SECRET  \n";
         let creds = parse_credentials(content, "default").unwrap();
         assert_eq!(creds.access_key, "AKID");
         assert_eq!(creds.secret_key, "SECRET");
@@ -967,10 +1012,7 @@ mod tests {
 </DescribeInstancesResponse>"#;
 
         let resp: DescribeInstancesResponse = quick_xml::de::from_str(xml).unwrap();
-        assert_eq!(
-            resp.next_token.as_deref(),
-            Some("eyJ0b2tlbiI6ICJ0ZXN0In0=")
-        );
+        assert_eq!(resp.next_token.as_deref(), Some("eyJ0b2tlbiI6ICJ0ZXN0In0="));
     }
 
     #[test]
@@ -1053,9 +1095,18 @@ mod tests {
     #[test]
     fn test_extract_tags_name_and_values() {
         let tags = vec![
-            Ec2Tag { key: "Name".to_string(), value: "web-01".to_string() },
-            Ec2Tag { key: "Environment".to_string(), value: "prod".to_string() },
-            Ec2Tag { key: "Team".to_string(), value: "backend".to_string() },
+            Ec2Tag {
+                key: "Name".to_string(),
+                value: "web-01".to_string(),
+            },
+            Ec2Tag {
+                key: "Environment".to_string(),
+                value: "prod".to_string(),
+            },
+            Ec2Tag {
+                key: "Team".to_string(),
+                value: "backend".to_string(),
+            },
         ];
         let (name, extracted) = extract_tags(&tags);
         assert_eq!(name, "web-01");
@@ -1065,10 +1116,22 @@ mod tests {
     #[test]
     fn test_extract_tags_filters_aws_prefix() {
         let tags = vec![
-            Ec2Tag { key: "Name".to_string(), value: "srv".to_string() },
-            Ec2Tag { key: "aws:cloudformation:stack-name".to_string(), value: "my-stack".to_string() },
-            Ec2Tag { key: "aws:autoscaling:groupName".to_string(), value: "my-asg".to_string() },
-            Ec2Tag { key: "custom".to_string(), value: "val".to_string() },
+            Ec2Tag {
+                key: "Name".to_string(),
+                value: "srv".to_string(),
+            },
+            Ec2Tag {
+                key: "aws:cloudformation:stack-name".to_string(),
+                value: "my-stack".to_string(),
+            },
+            Ec2Tag {
+                key: "aws:autoscaling:groupName".to_string(),
+                value: "my-asg".to_string(),
+            },
+            Ec2Tag {
+                key: "custom".to_string(),
+                value: "val".to_string(),
+            },
         ];
         let (name, extracted) = extract_tags(&tags);
         assert_eq!(name, "srv");
@@ -1077,9 +1140,10 @@ mod tests {
 
     #[test]
     fn test_extract_tags_no_name() {
-        let tags = vec![
-            Ec2Tag { key: "Environment".to_string(), value: "dev".to_string() },
-        ];
+        let tags = vec![Ec2Tag {
+            key: "Environment".to_string(),
+            value: "dev".to_string(),
+        }];
         let (name, extracted) = extract_tags(&tags);
         assert!(name.is_empty());
         assert_eq!(extracted, vec!["dev"]);
@@ -1087,9 +1151,10 @@ mod tests {
 
     #[test]
     fn test_extract_tags_empty_value_skipped() {
-        let tags = vec![
-            Ec2Tag { key: "flag".to_string(), value: "".to_string() },
-        ];
+        let tags = vec![Ec2Tag {
+            key: "flag".to_string(),
+            value: "".to_string(),
+        }];
         let (_, extracted) = extract_tags(&tags);
         assert!(extracted.is_empty());
     }
@@ -1225,7 +1290,10 @@ mod tests {
 
     #[test]
     fn test_ami_batch_size_is_reasonable() {
-        assert_eq!(AMI_BATCH_SIZE, 100, "AMI batch size should be 100 (AWS limit per DescribeImages call)");
+        assert_eq!(
+            AMI_BATCH_SIZE, 100,
+            "AMI batch size should be 100 (AWS limit per DescribeImages call)"
+        );
     }
 
     // =========================================================================

@@ -247,7 +247,10 @@ impl HostBlock {
             Directive {
                 key: String::new(),
                 value: String::new(),
-                raw_line: format!("{}# purple:provider {}:{}", indent, provider_name, server_id),
+                raw_line: format!(
+                    "{}# purple:provider {}:{}",
+                    indent, provider_name, server_id
+                ),
                 is_non_directive: true,
             },
         );
@@ -273,9 +276,8 @@ impl HostBlock {
     /// Pass an empty string to remove the comment.
     pub fn set_askpass(&mut self, source: &str) {
         let indent = self.detect_indent();
-        self.directives.retain(|d| {
-            !(d.is_non_directive && d.raw_line.trim().starts_with("# purple:askpass"))
-        });
+        self.directives
+            .retain(|d| !(d.is_non_directive && d.raw_line.trim().starts_with("# purple:askpass")));
         if !source.is_empty() {
             let pos = self.content_end();
             self.directives.insert(
@@ -320,9 +322,8 @@ impl HostBlock {
     /// Pass an empty slice to remove the comment.
     pub fn set_meta(&mut self, meta: &[(String, String)]) {
         let indent = self.detect_indent();
-        self.directives.retain(|d| {
-            !(d.is_non_directive && d.raw_line.trim().starts_with("# purple:meta"))
-        });
+        self.directives
+            .retain(|d| !(d.is_non_directive && d.raw_line.trim().starts_with("# purple:meta")));
         if !meta.is_empty() {
             let encoded: Vec<String> = meta
                 .iter()
@@ -348,9 +349,8 @@ impl HostBlock {
     /// Set tags on a host block. Replaces existing purple:tags comment or adds one.
     pub fn set_tags(&mut self, tags: &[String]) {
         let indent = self.detect_indent();
-        self.directives.retain(|d| {
-            !(d.is_non_directive && d.raw_line.trim().starts_with("# purple:tags"))
-        });
+        self.directives
+            .retain(|d| !(d.is_non_directive && d.raw_line.trim().starts_with("# purple:tags")));
         if !tags.is_empty() {
             let pos = self.content_end();
             self.directives.insert(
@@ -497,12 +497,7 @@ impl SshConfigFile {
                 }
                 // Recurse into resolved files
                 for file in &include.resolved_files {
-                    Self::collect_include_glob_dirs(
-                        &file.elements,
-                        file.path.parent(),
-                        seen,
-                        dirs,
-                    );
+                    Self::collect_include_glob_dirs(&file.elements, file.path.parent(), seen, dirs);
                 }
             }
         }
@@ -549,10 +544,10 @@ impl SshConfigFile {
         let mut idx = 0;
         while idx < self.elements.len() {
             let needs_repair = if let ConfigElement::HostBlock(block) = &self.elements[idx] {
-                block.directives.iter().any(|d| {
-                    d.is_non_directive
-                        && d.raw_line.trim().starts_with("# purple:group ")
-                })
+                block
+                    .directives
+                    .iter()
+                    .any(|d| d.is_non_directive && d.raw_line.trim().starts_with("# purple:group "))
             } else {
                 false
             };
@@ -573,8 +568,7 @@ impl SshConfigFile {
                 .directives
                 .iter()
                 .position(|d| {
-                    d.is_non_directive
-                        && d.raw_line.trim().starts_with("# purple:group ")
+                    d.is_non_directive && d.raw_line.trim().starts_with("# purple:group ")
                 })
                 .unwrap();
 
@@ -727,8 +721,7 @@ impl SshConfigFile {
         } else {
             // No trailing patterns: append at end
             if !self.elements.is_empty() && !self.last_element_has_trailing_blank() {
-                self.elements
-                    .push(ConfigElement::GlobalLine(String::new()));
+                self.elements.push(ConfigElement::GlobalLine(String::new()));
             }
             self.elements.push(ConfigElement::HostBlock(block));
         }
@@ -837,8 +830,7 @@ impl SshConfigFile {
                     };
                     // Preserve inline comment from original raw_line (e.g. "# production")
                     let comment_suffix = Self::extract_inline_comment(&d.raw_line, &d.key);
-                    d.raw_line =
-                        format!("{}{}{}{}{}", indent, d.key, sep, value, comment_suffix);
+                    d.raw_line = format!("{}{}{}{}{}", indent, d.key, sep, value, comment_suffix);
                 }
                 return;
             }
@@ -1136,9 +1128,10 @@ impl SshConfigFile {
     /// stays valid for re-insertion via `insert_host_at()`.
     /// Orphaned group headers (if any) are cleaned up at next startup.
     pub fn delete_host_undoable(&mut self, alias: &str) -> Option<(ConfigElement, usize)> {
-        let pos = self.elements.iter().position(|e| {
-            matches!(e, ConfigElement::HostBlock(b) if b.host_pattern == alias)
-        })?;
+        let pos = self
+            .elements
+            .iter()
+            .position(|e| matches!(e, ConfigElement::HostBlock(b) if b.host_pattern == alias))?;
         let element = self.elements.remove(pos);
         Some((element, pos))
     }
@@ -1191,12 +1184,14 @@ impl SshConfigFile {
     /// Swap two host blocks in the config by alias. Returns true if swap was performed.
     #[allow(dead_code)]
     pub fn swap_hosts(&mut self, alias_a: &str, alias_b: &str) -> bool {
-        let pos_a = self.elements.iter().position(|e| {
-            matches!(e, ConfigElement::HostBlock(b) if b.host_pattern == alias_a)
-        });
-        let pos_b = self.elements.iter().position(|e| {
-            matches!(e, ConfigElement::HostBlock(b) if b.host_pattern == alias_b)
-        });
+        let pos_a = self
+            .elements
+            .iter()
+            .position(|e| matches!(e, ConfigElement::HostBlock(b) if b.host_pattern == alias_a));
+        let pos_b = self
+            .elements
+            .iter()
+            .position(|e| matches!(e, ConfigElement::HostBlock(b) if b.host_pattern == alias_b));
         if let (Some(a), Some(b)) = (pos_a, pos_b) {
             if a == b {
                 return false;
@@ -1419,17 +1414,15 @@ mod tests {
 
     #[test]
     fn remove_forward_returns_true_on_match() {
-        let mut config = parse_str(
-            "Host myserver\n  HostName 10.0.0.1\n  LocalForward 8080 localhost:80\n",
-        );
+        let mut config =
+            parse_str("Host myserver\n  HostName 10.0.0.1\n  LocalForward 8080 localhost:80\n");
         assert!(config.remove_forward("myserver", "LocalForward", "8080 localhost:80"));
     }
 
     #[test]
     fn remove_forward_returns_false_on_no_match() {
-        let mut config = parse_str(
-            "Host myserver\n  HostName 10.0.0.1\n  LocalForward 8080 localhost:80\n",
-        );
+        let mut config =
+            parse_str("Host myserver\n  HostName 10.0.0.1\n  LocalForward 8080 localhost:80\n");
         assert!(!config.remove_forward("myserver", "LocalForward", "9999 localhost:99"));
     }
 
@@ -1441,26 +1434,23 @@ mod tests {
 
     #[test]
     fn has_forward_finds_match() {
-        let config = parse_str(
-            "Host myserver\n  HostName 10.0.0.1\n  LocalForward 8080 localhost:80\n",
-        );
+        let config =
+            parse_str("Host myserver\n  HostName 10.0.0.1\n  LocalForward 8080 localhost:80\n");
         assert!(config.has_forward("myserver", "LocalForward", "8080 localhost:80"));
     }
 
     #[test]
     fn has_forward_no_match() {
-        let config = parse_str(
-            "Host myserver\n  HostName 10.0.0.1\n  LocalForward 8080 localhost:80\n",
-        );
+        let config =
+            parse_str("Host myserver\n  HostName 10.0.0.1\n  LocalForward 8080 localhost:80\n");
         assert!(!config.has_forward("myserver", "LocalForward", "9999 localhost:99"));
         assert!(!config.has_forward("nohost", "LocalForward", "8080 localhost:80"));
     }
 
     #[test]
     fn has_forward_case_insensitive_key() {
-        let config = parse_str(
-            "Host myserver\n  HostName 10.0.0.1\n  localforward 8080 localhost:80\n",
-        );
+        let config =
+            parse_str("Host myserver\n  HostName 10.0.0.1\n  localforward 8080 localhost:80\n");
         assert!(config.has_forward("myserver", "LocalForward", "8080 localhost:80"));
     }
 
@@ -1474,9 +1464,8 @@ mod tests {
 
     #[test]
     fn remove_forward_case_insensitive_key_match() {
-        let mut config = parse_str(
-            "Host myserver\n  HostName 10.0.0.1\n  localforward 8080 localhost:80\n",
-        );
+        let mut config =
+            parse_str("Host myserver\n  HostName 10.0.0.1\n  localforward 8080 localhost:80\n");
         assert!(config.remove_forward("myserver", "LocalForward", "8080 localhost:80"));
         assert!(!config.serialize().contains("localforward"));
     }
@@ -1511,9 +1500,7 @@ mod tests {
 
     #[test]
     fn tunnel_directives_skips_malformed() {
-        let config = parse_str(
-            "Host myserver\n  LocalForward not_valid\n  DynamicForward 1080\n",
-        );
+        let config = parse_str("Host myserver\n  LocalForward not_valid\n  DynamicForward 1080\n");
         if let Some(ConfigElement::HostBlock(block)) = config.elements.first() {
             let rules = block.tunnel_directives();
             assert_eq!(rules.len(), 1);
@@ -1525,9 +1512,8 @@ mod tests {
 
     #[test]
     fn find_tunnel_directives_multi_pattern_host() {
-        let config = parse_str(
-            "Host prod staging\n  HostName 10.0.0.1\n  LocalForward 8080 localhost:80\n",
-        );
+        let config =
+            parse_str("Host prod staging\n  HostName 10.0.0.1\n  LocalForward 8080 localhost:80\n");
         let rules = config.find_tunnel_directives("prod");
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].bind_port, 8080);
@@ -1537,18 +1523,14 @@ mod tests {
 
     #[test]
     fn find_tunnel_directives_no_match() {
-        let config = parse_str(
-            "Host myserver\n  LocalForward 8080 localhost:80\n",
-        );
+        let config = parse_str("Host myserver\n  LocalForward 8080 localhost:80\n");
         let rules = config.find_tunnel_directives("nohost");
         assert!(rules.is_empty());
     }
 
     #[test]
     fn has_forward_exact_match() {
-        let config = parse_str(
-            "Host myserver\n  LocalForward 8080 localhost:80\n",
-        );
+        let config = parse_str("Host myserver\n  LocalForward 8080 localhost:80\n");
         assert!(config.has_forward("myserver", "LocalForward", "8080 localhost:80"));
         assert!(!config.has_forward("myserver", "LocalForward", "9090 localhost:80"));
         assert!(!config.has_forward("myserver", "RemoteForward", "8080 localhost:80"));
@@ -1557,27 +1539,21 @@ mod tests {
 
     #[test]
     fn has_forward_whitespace_normalized() {
-        let config = parse_str(
-            "Host myserver\n  LocalForward 8080  localhost:80\n",
-        );
+        let config = parse_str("Host myserver\n  LocalForward 8080  localhost:80\n");
         // Extra space in config value vs single space in query — should still match
         assert!(config.has_forward("myserver", "LocalForward", "8080 localhost:80"));
     }
 
     #[test]
     fn has_forward_multi_pattern_host() {
-        let config = parse_str(
-            "Host prod staging\n  LocalForward 8080 localhost:80\n",
-        );
+        let config = parse_str("Host prod staging\n  LocalForward 8080 localhost:80\n");
         assert!(config.has_forward("prod", "LocalForward", "8080 localhost:80"));
         assert!(config.has_forward("staging", "LocalForward", "8080 localhost:80"));
     }
 
     #[test]
     fn add_forward_multi_pattern_host() {
-        let mut config = parse_str(
-            "Host prod staging\n  HostName 10.0.0.1\n",
-        );
+        let mut config = parse_str("Host prod staging\n  HostName 10.0.0.1\n");
         config.add_forward("prod", "LocalForward", "8080 localhost:80");
         assert!(config.has_forward("prod", "LocalForward", "8080 localhost:80"));
         assert!(config.has_forward("staging", "LocalForward", "8080 localhost:80"));
@@ -1608,18 +1584,14 @@ mod tests {
 
     #[test]
     fn has_forward_tab_whitespace_normalized() {
-        let config = parse_str(
-            "Host myserver\n  LocalForward 8080\tlocalhost:80\n",
-        );
+        let config = parse_str("Host myserver\n  LocalForward 8080\tlocalhost:80\n");
         // Tab in config value vs space in query — should match via values_match
         assert!(config.has_forward("myserver", "LocalForward", "8080 localhost:80"));
     }
 
     #[test]
     fn remove_forward_tab_whitespace_normalized() {
-        let mut config = parse_str(
-            "Host myserver\n  LocalForward 8080\tlocalhost:80\n",
-        );
+        let mut config = parse_str("Host myserver\n  LocalForward 8080\tlocalhost:80\n");
         // Remove with single space should match tab-separated value
         assert!(config.remove_forward("myserver", "LocalForward", "8080 localhost:80"));
         assert!(!config.has_forward("myserver", "LocalForward", "8080 localhost:80"));
@@ -1627,9 +1599,7 @@ mod tests {
 
     #[test]
     fn upsert_preserves_space_separator_when_value_contains_equals() {
-        let mut config = parse_str(
-            "Host myserver\n  IdentityFile ~/.ssh/id=prod\n",
-        );
+        let mut config = parse_str("Host myserver\n  IdentityFile ~/.ssh/id=prod\n");
         let entry = HostEntry {
             alias: "myserver".to_string(),
             hostname: "10.0.0.1".to_string(),
@@ -1640,15 +1610,17 @@ mod tests {
         config.update_host("myserver", &entry);
         let output = config.serialize();
         // Separator should remain a space, not pick up the = from the value
-        assert!(output.contains("  IdentityFile ~/.ssh/id=staging"), "got: {}", output);
+        assert!(
+            output.contains("  IdentityFile ~/.ssh/id=staging"),
+            "got: {}",
+            output
+        );
         assert!(!output.contains("IdentityFile="), "got: {}", output);
     }
 
     #[test]
     fn upsert_preserves_equals_separator() {
-        let mut config = parse_str(
-            "Host myserver\n  IdentityFile=~/.ssh/id_rsa\n",
-        );
+        let mut config = parse_str("Host myserver\n  IdentityFile=~/.ssh/id_rsa\n");
         let entry = HostEntry {
             alias: "myserver".to_string(),
             hostname: "10.0.0.1".to_string(),
@@ -1658,14 +1630,16 @@ mod tests {
         };
         config.update_host("myserver", &entry);
         let output = config.serialize();
-        assert!(output.contains("IdentityFile=~/.ssh/id_ed25519"), "got: {}", output);
+        assert!(
+            output.contains("IdentityFile=~/.ssh/id_ed25519"),
+            "got: {}",
+            output
+        );
     }
 
     #[test]
     fn upsert_preserves_spaced_equals_separator() {
-        let mut config = parse_str(
-            "Host myserver\n  IdentityFile = ~/.ssh/id_rsa\n",
-        );
+        let mut config = parse_str("Host myserver\n  IdentityFile = ~/.ssh/id_rsa\n");
         let entry = HostEntry {
             alias: "myserver".to_string(),
             hostname: "10.0.0.1".to_string(),
@@ -1675,30 +1649,28 @@ mod tests {
         };
         config.update_host("myserver", &entry);
         let output = config.serialize();
-        assert!(output.contains("IdentityFile = ~/.ssh/id_ed25519"), "got: {}", output);
+        assert!(
+            output.contains("IdentityFile = ~/.ssh/id_ed25519"),
+            "got: {}",
+            output
+        );
     }
 
     #[test]
     fn is_included_host_false_for_main_config() {
-        let config = parse_str(
-            "Host myserver\n  HostName 10.0.0.1\n",
-        );
+        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
         assert!(!config.is_included_host("myserver"));
     }
 
     #[test]
     fn is_included_host_false_for_nonexistent() {
-        let config = parse_str(
-            "Host myserver\n  HostName 10.0.0.1\n",
-        );
+        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
         assert!(!config.is_included_host("nohost"));
     }
 
     #[test]
     fn is_included_host_multi_pattern_main_config() {
-        let config = parse_str(
-            "Host prod staging\n  HostName 10.0.0.1\n",
-        );
+        let config = parse_str("Host prod staging\n  HostName 10.0.0.1\n");
         assert!(!config.is_included_host("prod"));
         assert!(!config.is_included_host("staging"));
     }
@@ -1741,32 +1713,54 @@ mod tests {
 
     #[test]
     fn askpass_returns_op_uri() {
-        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass op://Vault/Item/field\n");
-        assert_eq!(first_block(&config).askpass(), Some("op://Vault/Item/field".to_string()));
+        let config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n  # purple:askpass op://Vault/Item/field\n",
+        );
+        assert_eq!(
+            first_block(&config).askpass(),
+            Some("op://Vault/Item/field".to_string())
+        );
     }
 
     #[test]
     fn askpass_returns_vault_with_field() {
-        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass vault:secret/ssh#password\n");
-        assert_eq!(first_block(&config).askpass(), Some("vault:secret/ssh#password".to_string()));
+        let config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n  # purple:askpass vault:secret/ssh#password\n",
+        );
+        assert_eq!(
+            first_block(&config).askpass(),
+            Some("vault:secret/ssh#password".to_string())
+        );
     }
 
     #[test]
     fn askpass_returns_bw_source() {
-        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass bw:my-item\n");
-        assert_eq!(first_block(&config).askpass(), Some("bw:my-item".to_string()));
+        let config =
+            parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass bw:my-item\n");
+        assert_eq!(
+            first_block(&config).askpass(),
+            Some("bw:my-item".to_string())
+        );
     }
 
     #[test]
     fn askpass_returns_pass_source() {
-        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass pass:ssh/prod\n");
-        assert_eq!(first_block(&config).askpass(), Some("pass:ssh/prod".to_string()));
+        let config =
+            parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass pass:ssh/prod\n");
+        assert_eq!(
+            first_block(&config).askpass(),
+            Some("pass:ssh/prod".to_string())
+        );
     }
 
     #[test]
     fn askpass_returns_custom_command() {
-        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass get-pass %a %h\n");
-        assert_eq!(first_block(&config).askpass(), Some("get-pass %a %h".to_string()));
+        let config =
+            parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass get-pass %a %h\n");
+        assert_eq!(
+            first_block(&config).askpass(),
+            Some("get-pass %a %h".to_string())
+        );
     }
 
     #[test]
@@ -1790,23 +1784,32 @@ mod tests {
 
     #[test]
     fn set_askpass_replaces_existing() {
-        let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
+        let mut config =
+            parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
         config.set_host_askpass("myserver", "op://V/I/p");
-        assert_eq!(first_block(&config).askpass(), Some("op://V/I/p".to_string()));
+        assert_eq!(
+            first_block(&config).askpass(),
+            Some("op://V/I/p".to_string())
+        );
     }
 
     #[test]
     fn set_askpass_empty_removes_comment() {
-        let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
+        let mut config =
+            parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
         config.set_host_askpass("myserver", "");
         assert_eq!(first_block(&config).askpass(), None);
     }
 
     #[test]
     fn set_askpass_preserves_other_directives() {
-        let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n  User admin\n  # purple:tags prod\n");
+        let mut config =
+            parse_str("Host myserver\n  HostName 10.0.0.1\n  User admin\n  # purple:tags prod\n");
         config.set_host_askpass("myserver", "vault:secret/ssh");
-        assert_eq!(first_block(&config).askpass(), Some("vault:secret/ssh".to_string()));
+        assert_eq!(
+            first_block(&config).askpass(),
+            Some("vault:secret/ssh".to_string())
+        );
         let entry = first_block(&config).to_host_entry();
         assert_eq!(entry.user, "admin");
         assert!(entry.tags.contains(&"prod".to_string()));
@@ -1816,10 +1819,16 @@ mod tests {
     fn set_askpass_preserves_indent() {
         let mut config = parse_str("Host myserver\n    HostName 10.0.0.1\n");
         config.set_host_askpass("myserver", "keychain");
-        let raw = first_block(&config).directives.iter()
+        let raw = first_block(&config)
+            .directives
+            .iter()
             .find(|d| d.raw_line.contains("purple:askpass"))
             .unwrap();
-        assert!(raw.raw_line.starts_with("    "), "Expected 4-space indent, got: {:?}", raw.raw_line);
+        assert!(
+            raw.raw_line.starts_with("    "),
+            "Expected 4-space indent, got: {:?}",
+            raw.raw_line
+        );
     }
 
     #[test]
@@ -1849,14 +1858,20 @@ mod tests {
     fn set_askpass_vault_with_hash_field() {
         let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
         config.set_host_askpass("myserver", "vault:secret/data/team#api_key");
-        assert_eq!(first_block(&config).askpass(), Some("vault:secret/data/team#api_key".to_string()));
+        assert_eq!(
+            first_block(&config).askpass(),
+            Some("vault:secret/data/team#api_key".to_string())
+        );
     }
 
     #[test]
     fn set_askpass_custom_command_with_percent() {
         let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
         config.set_host_askpass("myserver", "get-pass %a %h");
-        assert_eq!(first_block(&config).askpass(), Some("get-pass %a %h".to_string()));
+        assert_eq!(
+            first_block(&config).askpass(),
+            Some("get-pass %a %h".to_string())
+        );
     }
 
     #[test]
@@ -1864,8 +1879,14 @@ mod tests {
         let mut config = parse_str("Host alpha\n  HostName a.com\n\nHost beta\n  HostName b.com\n");
         config.set_host_askpass("alpha", "keychain");
         config.set_host_askpass("beta", "vault:secret/ssh");
-        assert_eq!(block_by_index(&config, 0).askpass(), Some("keychain".to_string()));
-        assert_eq!(block_by_index(&config, 1).askpass(), Some("vault:secret/ssh".to_string()));
+        assert_eq!(
+            block_by_index(&config, 0).askpass(),
+            Some("keychain".to_string())
+        );
+        assert_eq!(
+            block_by_index(&config, 1).askpass(),
+            Some("vault:secret/ssh".to_string())
+        );
     }
 
     #[test]
@@ -1876,22 +1897,33 @@ mod tests {
         config.set_host_askpass("myserver", "");
         assert_eq!(first_block(&config).askpass(), None);
         config.set_host_askpass("myserver", "op://V/I/p");
-        assert_eq!(first_block(&config).askpass(), Some("op://V/I/p".to_string()));
+        assert_eq!(
+            first_block(&config).askpass(),
+            Some("op://V/I/p".to_string())
+        );
     }
 
     #[test]
     fn askpass_tab_indent_preserved() {
         let mut config = parse_str("Host myserver\n\tHostName 10.0.0.1\n");
         config.set_host_askpass("myserver", "pass:ssh/prod");
-        let raw = first_block(&config).directives.iter()
+        let raw = first_block(&config)
+            .directives
+            .iter()
             .find(|d| d.raw_line.contains("purple:askpass"))
             .unwrap();
-        assert!(raw.raw_line.starts_with("\t"), "Expected tab indent, got: {:?}", raw.raw_line);
+        assert!(
+            raw.raw_line.starts_with("\t"),
+            "Expected tab indent, got: {:?}",
+            raw.raw_line
+        );
     }
 
     #[test]
     fn askpass_coexists_with_provider_comment() {
-        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:provider do:123\n  # purple:askpass keychain\n");
+        let config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n  # purple:provider do:123\n  # purple:askpass keychain\n",
+        );
         let block = first_block(&config);
         assert_eq!(block.askpass(), Some("keychain".to_string()));
         assert!(block.provider().is_some());
@@ -1899,7 +1931,8 @@ mod tests {
 
     #[test]
     fn set_askpass_does_not_remove_tags() {
-        let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:tags prod,staging\n");
+        let mut config =
+            parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:tags prod,staging\n");
         config.set_host_askpass("myserver", "keychain");
         let entry = first_block(&config).to_host_entry();
         assert_eq!(entry.askpass, Some("keychain".to_string()));
@@ -1909,24 +1942,36 @@ mod tests {
 
     #[test]
     fn askpass_idempotent_set_same_value() {
-        let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
+        let mut config =
+            parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
         config.set_host_askpass("myserver", "keychain");
         assert_eq!(first_block(&config).askpass(), Some("keychain".to_string()));
         let serialized = config.serialize();
-        assert_eq!(serialized.matches("purple:askpass").count(), 1, "Should have exactly one askpass comment");
+        assert_eq!(
+            serialized.matches("purple:askpass").count(),
+            1,
+            "Should have exactly one askpass comment"
+        );
     }
 
     #[test]
     fn askpass_with_value_containing_equals() {
         let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
         config.set_host_askpass("myserver", "cmd --opt=val %h");
-        assert_eq!(first_block(&config).askpass(), Some("cmd --opt=val %h".to_string()));
+        assert_eq!(
+            first_block(&config).askpass(),
+            Some("cmd --opt=val %h".to_string())
+        );
     }
 
     #[test]
     fn askpass_with_value_containing_hash() {
-        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass vault:a/b#c\n");
-        assert_eq!(first_block(&config).askpass(), Some("vault:a/b#c".to_string()));
+        let config =
+            parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass vault:a/b#c\n");
+        assert_eq!(
+            first_block(&config).askpass(),
+            Some("vault:a/b#c".to_string())
+        );
     }
 
     #[test]
@@ -1940,7 +1985,9 @@ mod tests {
     #[test]
     fn askpass_does_not_interfere_with_host_matching() {
         // askpass is stored as a non-directive comment; it shouldn't affect SSH matching
-        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n  User root\n  # purple:askpass keychain\n");
+        let config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n  User root\n  # purple:askpass keychain\n",
+        );
         let entry = first_block(&config).to_host_entry();
         assert_eq!(entry.user, "root");
         assert_eq!(entry.hostname, "10.0.0.1");
@@ -1969,14 +2016,17 @@ Host myserver
 
     #[test]
     fn askpass_with_crlf_line_endings() {
-        let config = parse_str("Host myserver\r\n  HostName 10.0.0.1\r\n  # purple:askpass keychain\r\n");
+        let config =
+            parse_str("Host myserver\r\n  HostName 10.0.0.1\r\n  # purple:askpass keychain\r\n");
         assert_eq!(first_block(&config).askpass(), Some("keychain".to_string()));
     }
 
     #[test]
     fn askpass_only_on_first_matching_host() {
         // If two Host blocks have the same alias (unusual), askpass comes from first
-        let config = parse_str("Host dup\n  HostName a.com\n  # purple:askpass keychain\n\nHost dup\n  HostName b.com\n  # purple:askpass vault:x\n");
+        let config = parse_str(
+            "Host dup\n  HostName a.com\n  # purple:askpass keychain\n\nHost dup\n  HostName b.com\n  # purple:askpass vault:x\n",
+        );
         let entries = config.host_entries();
         // First match
         assert_eq!(entries[0].askpass, Some("keychain".to_string()));
@@ -2037,7 +2087,10 @@ Host myserver
         let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
         config.set_host_askpass("myserver", "vault:secret/data#field");
         let entries = config.host_entries();
-        assert_eq!(entries[0].askpass, Some("vault:secret/data#field".to_string()));
+        assert_eq!(
+            entries[0].askpass,
+            Some("vault:secret/data#field".to_string())
+        );
     }
 
     #[test]
@@ -2136,10 +2189,7 @@ Host myhost
   # purple:meta region=old
 ";
         let mut config = parse_str(config_str);
-        config.set_host_meta(
-            "myhost",
-            &[("region".to_string(), "new".to_string())],
-        );
+        config.set_host_meta("myhost", &[("region".to_string(), "new".to_string())]);
         let output = config.serialize();
         assert!(!output.contains("region=old"));
         assert!(output.contains("region=new"));
@@ -2286,9 +2336,8 @@ Host myhost
 
     #[test]
     fn repair_clean_config_returns_zero() {
-        let mut config = parse_str(
-            "# purple:group Production\nHost myserver\n  HostName 10.0.0.1\n",
-        );
+        let mut config =
+            parse_str("# purple:group Production\nHost myserver\n  HostName 10.0.0.1\n");
         let count = config.repair_absorbed_group_comments();
         assert_eq!(count, 0);
     }
@@ -2366,10 +2415,14 @@ Host do-web
 ";
         let mut config = parse_str(config_str);
         config.delete_host("do-web");
-        let has_header = config.elements.iter().any(|e| {
-            matches!(e, ConfigElement::GlobalLine(l) if l.contains("purple:group"))
-        });
-        assert!(!has_header, "Group header should be removed when last provider host is deleted");
+        let has_header = config
+            .elements
+            .iter()
+            .any(|e| matches!(e, ConfigElement::GlobalLine(l) if l.contains("purple:group")));
+        assert!(
+            !has_header,
+            "Group header should be removed when last provider host is deleted"
+        );
     }
 
     #[test]
@@ -2389,7 +2442,10 @@ Host do-db
         let has_header = config.elements.iter().any(|e| {
             matches!(e, ConfigElement::GlobalLine(l) if l.contains("purple:group DigitalOcean"))
         });
-        assert!(has_header, "Group header should be preserved when other provider hosts remain");
+        assert!(
+            has_header,
+            "Group header should be preserved when other provider hosts remain"
+        );
         assert_eq!(config.host_entries().len(), 1);
     }
 
@@ -2409,7 +2465,10 @@ Host do-web
         let has_header = config.elements.iter().any(|e| {
             matches!(e, ConfigElement::GlobalLine(l) if l.contains("purple:group DigitalOcean"))
         });
-        assert!(has_header, "Group header should not be affected by deleting a non-provider host");
+        assert!(
+            has_header,
+            "Group header should not be affected by deleting a non-provider host"
+        );
         assert_eq!(config.host_entries().len(), 1);
     }
 
@@ -2427,9 +2486,10 @@ Host vultr-web
         let mut config = parse_str(config_str);
         let result = config.delete_host_undoable("vultr-web");
         assert!(result.is_some());
-        let has_header = config.elements.iter().any(|e| {
-            matches!(e, ConfigElement::GlobalLine(l) if l.contains("purple:group"))
-        });
+        let has_header = config
+            .elements
+            .iter()
+            .any(|e| matches!(e, ConfigElement::GlobalLine(l) if l.contains("purple:group")));
         assert!(has_header, "Group header should be kept for undo");
     }
 
@@ -2448,10 +2508,13 @@ Host aws-db
         let mut config = parse_str(config_str);
         let result = config.delete_host_undoable("aws-web");
         assert!(result.is_some());
-        let has_header = config.elements.iter().any(|e| {
-            matches!(e, ConfigElement::GlobalLine(l) if l.contains("purple:group AWS EC2"))
-        });
-        assert!(has_header, "Group header preserved when other provider hosts remain (undoable)");
+        let has_header = config.elements.iter().any(
+            |e| matches!(e, ConfigElement::GlobalLine(l) if l.contains("purple:group AWS EC2")),
+        );
+        assert!(
+            has_header,
+            "Group header preserved when other provider hosts remain (undoable)"
+        );
     }
 
     #[test]
@@ -2475,7 +2538,10 @@ Host manual
         config.insert_host_at(element, pos);
         // The host should be back, group header intact, manual host accessible
         let output = config.serialize();
-        assert!(output.contains("# purple:group Vultr"), "Group header should be present");
+        assert!(
+            output.contains("# purple:group Vultr"),
+            "Group header should be present"
+        );
         assert!(output.contains("Host vultr-web"), "Host should be restored");
         assert!(output.contains("Host manual"), "Manual host should survive");
         assert_eq!(config_str, output);
@@ -2621,8 +2687,17 @@ Host *
         // cleanup (remove_orphaned_group_header) will fail to match headers
         // written by the sync engine.
         let providers = [
-            "digitalocean", "vultr", "linode", "hetzner", "upcloud",
-            "proxmox", "aws", "scaleway", "gcp", "azure", "tailscale",
+            "digitalocean",
+            "vultr",
+            "linode",
+            "hetzner",
+            "upcloud",
+            "proxmox",
+            "aws",
+            "scaleway",
+            "gcp",
+            "azure",
+            "tailscale",
         ];
         for name in &providers {
             assert_eq!(
@@ -2635,5 +2710,4 @@ Host *
             );
         }
     }
-
 }

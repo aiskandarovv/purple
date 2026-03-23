@@ -69,7 +69,11 @@ pub struct FileBrowserState {
 
 /// List local directory entries.
 /// Sorts: directories first, then by name or date. Filters dotfiles based on show_hidden.
-pub fn list_local(path: &Path, show_hidden: bool, sort: BrowserSort) -> anyhow::Result<Vec<FileEntry>> {
+pub fn list_local(
+    path: &Path,
+    show_hidden: bool,
+    sort: BrowserSort,
+) -> anyhow::Result<Vec<FileEntry>> {
     let mut entries = Vec::new();
     for entry in std::fs::read_dir(path)? {
         let entry = entry?;
@@ -85,7 +89,12 @@ pub fn list_local(path: &Path, show_hidden: bool, sort: BrowserSort) -> anyhow::
                 .ok()
                 .map(|d| d.as_secs() as i64)
         });
-        entries.push(FileEntry { name, is_dir, size, modified });
+        entries.push(FileEntry {
+            name,
+            is_dir,
+            size,
+            modified,
+        });
     }
     sort_entries(&mut entries, sort);
     Ok(entries)
@@ -97,7 +106,9 @@ pub fn sort_entries(entries: &mut [FileEntry], sort: BrowserSort) {
         BrowserSort::Name => {
             entries.sort_by(|a, b| {
                 b.is_dir.cmp(&a.is_dir).then_with(|| {
-                    a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase())
+                    a.name
+                        .to_ascii_lowercase()
+                        .cmp(&b.name.to_ascii_lowercase())
                 })
             });
         }
@@ -113,7 +124,9 @@ pub fn sort_entries(entries: &mut [FileEntry], sort: BrowserSort) {
             entries.sort_by(|a, b| {
                 b.is_dir.cmp(&a.is_dir).then_with(|| {
                     // Oldest first; unknown dates sort to the end
-                    a.modified.unwrap_or(i64::MAX).cmp(&b.modified.unwrap_or(i64::MAX))
+                    a.modified
+                        .unwrap_or(i64::MAX)
+                        .cmp(&b.modified.unwrap_or(i64::MAX))
                 })
             });
         }
@@ -194,11 +207,7 @@ fn parse_human_size(s: &str) -> u64 {
         b'T' => 1024u64 * 1024 * 1024 * 1024,
         _ => 1,
     };
-    let num_str = if multiplier > 1 {
-        &s[..s.len() - 1]
-    } else {
-        s
-    };
+    let num_str = if multiplier > 1 { &s[..s.len() - 1] } else { s };
     let num: f64 = num_str.parse().unwrap_or(0.0);
     (num * multiplier as f64) as u64
 }
@@ -209,9 +218,18 @@ fn parse_human_size(s: &str) -> u64 {
 /// Returns approximate Unix timestamp or None if unparseable.
 fn parse_ls_date(month_str: &str, day_str: &str, time_or_year: &str) -> Option<i64> {
     let month = match month_str {
-        "Jan" => 0, "Feb" => 1, "Mar" => 2, "Apr" => 3,
-        "May" => 4, "Jun" => 5, "Jul" => 6, "Aug" => 7,
-        "Sep" => 8, "Oct" => 9, "Nov" => 10, "Dec" => 11,
+        "Jan" => 0,
+        "Feb" => 1,
+        "Mar" => 2,
+        "Apr" => 3,
+        "May" => 4,
+        "Jun" => 5,
+        "Jul" => 6,
+        "Aug" => 7,
+        "Sep" => 8,
+        "Oct" => 9,
+        "Nov" => 10,
+        "Dec" => 11,
         _ => return None,
     };
     let day: i64 = day_str.parse().ok()?;
@@ -314,8 +332,9 @@ fn format_short_date(ts: i64) -> String {
     let now_year = epoch_to_year(now);
     let ts_year = epoch_to_year(ts);
 
-    let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    let months = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
 
     // Approximate month and day from day-of-year
     let year_start = approximate_epoch(ts_year, 0, 1, 0, 0);
@@ -403,7 +422,10 @@ pub fn fetch_remote_listing(
         Ok(r) => {
             let msg = filter_ssh_warnings(r.stderr.trim());
             if msg.is_empty() {
-                Err(format!("ls exited with code {}.", r.status.code().unwrap_or(1)))
+                Err(format!(
+                    "ls exited with code {}.",
+                    r.status.code().unwrap_or(1)
+                ))
             } else {
                 Err(msg)
             }
@@ -500,7 +522,10 @@ pub fn run_scp(
 
     let stderr_output = String::from_utf8_lossy(&output.stderr).to_string();
 
-    Ok(ScpResult { status: output.status, stderr_output })
+    Ok(ScpResult {
+        status: output.status,
+        stderr_output,
+    })
 }
 
 /// Filter SSH warning noise from stderr, keeping only actionable error lines.
@@ -726,11 +751,10 @@ total 4
             &["file.txt".to_string()],
             false,
         );
-        assert_eq!(args, vec![
-            "--",
-            "/home/user/docs/file.txt",
-            "myhost:/remote/path/",
-        ]);
+        assert_eq!(
+            args,
+            vec!["--", "/home/user/docs/file.txt", "myhost:/remote/path/",]
+        );
     }
 
     #[test]
@@ -743,11 +767,10 @@ total 4
             &["file.txt".to_string()],
             false,
         );
-        assert_eq!(args, vec![
-            "--",
-            "myhost:/remote/path/file.txt",
-            "/home/user/docs",
-        ]);
+        assert_eq!(
+            args,
+            vec!["--", "myhost:/remote/path/file.txt", "/home/user/docs",]
+        );
     }
 
     #[test]
@@ -761,11 +784,10 @@ total 4
             false,
         );
         // No shell escaping: Command::arg() passes paths literally
-        assert_eq!(args, vec![
-            "--",
-            "myhost:/remote/my path/my file.txt",
-            "/local",
-        ]);
+        assert_eq!(
+            args,
+            vec!["--", "myhost:/remote/my path/my file.txt", "/local",]
+        );
     }
 
     #[test]
@@ -842,7 +864,10 @@ scp: '/root/file.rpm': No such file or directory";
     #[test]
     fn test_filter_ssh_warnings_keeps_plain_error() {
         let stderr = "scp: /etc/shadow: Permission denied\n";
-        assert_eq!(filter_ssh_warnings(stderr), "scp: /etc/shadow: Permission denied");
+        assert_eq!(
+            filter_ssh_warnings(stderr),
+            "scp: /etc/shadow: Permission denied"
+        );
     }
 
     #[test]
@@ -854,7 +879,10 @@ scp: '/root/file.rpm': No such file or directory";
     #[test]
     fn test_filter_ssh_warnings_warning_prefix() {
         let stderr = "Warning: Permanently added '10.0.0.1' to the list of known hosts.\nPermission denied (publickey).";
-        assert_eq!(filter_ssh_warnings(stderr), "Permission denied (publickey).");
+        assert_eq!(
+            filter_ssh_warnings(stderr),
+            "Permission denied (publickey)."
+        );
     }
 
     #[test]
@@ -922,7 +950,9 @@ scp: '/root/file.rpm': No such file or directory";
         let ts = ts.unwrap();
         // Should be within the last year
         let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
         assert!(ts <= now + 86400);
         assert!(ts > now - 366 * 86400);
     }
@@ -959,7 +989,9 @@ scp: '/root/file.rpm': No such file or directory";
     #[test]
     fn test_format_relative_time_ranges() {
         let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
         assert_eq!(format_relative_time(now), "just now");
         assert_eq!(format_relative_time(now - 30), "just now");
         assert_eq!(format_relative_time(now - 120), "2m ago");
@@ -972,13 +1004,19 @@ scp: '/root/file.rpm': No such file or directory";
         // A date far in the past should show short date format
         let old = approximate_epoch(2020, 5, 15, 0, 0);
         let result = format_relative_time(old);
-        assert!(result.contains("2020"), "Expected year in '{}' for old date", result);
+        assert!(
+            result.contains("2020"),
+            "Expected year in '{}' for old date",
+            result
+        );
     }
 
     #[test]
     fn test_format_relative_time_future() {
         let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
         // Future timestamp should not panic and should show date
         let result = format_relative_time(now + 86400 * 30);
         assert!(!result.is_empty());
@@ -1008,8 +1046,16 @@ scp: '/root/file.rpm': No such file or directory";
         let mar01 = approximate_epoch(2024, 2, 1, 12, 0);
         let feb29_date = format_short_date(feb29);
         let mar01_date = format_short_date(mar01);
-        assert!(feb29_date.starts_with("Feb"), "Expected Feb in '{}'", feb29_date);
-        assert!(mar01_date.starts_with("Mar"), "Expected Mar in '{}'", mar01_date);
+        assert!(
+            feb29_date.starts_with("Feb"),
+            "Expected Feb in '{}'",
+            feb29_date
+        );
+        assert!(
+            mar01_date.starts_with("Mar"),
+            "Expected Mar in '{}'",
+            mar01_date
+        );
     }
 
     // =========================================================================
@@ -1019,10 +1065,30 @@ scp: '/root/file.rpm': No such file or directory";
     #[test]
     fn test_sort_entries_date_dirs_first_newest_first() {
         let mut entries = vec![
-            FileEntry { name: "old.txt".into(), is_dir: false, size: Some(100), modified: Some(1000) },
-            FileEntry { name: "new.txt".into(), is_dir: false, size: Some(200), modified: Some(3000) },
-            FileEntry { name: "mid.txt".into(), is_dir: false, size: Some(150), modified: Some(2000) },
-            FileEntry { name: "adir".into(), is_dir: true, size: None, modified: Some(500) },
+            FileEntry {
+                name: "old.txt".into(),
+                is_dir: false,
+                size: Some(100),
+                modified: Some(1000),
+            },
+            FileEntry {
+                name: "new.txt".into(),
+                is_dir: false,
+                size: Some(200),
+                modified: Some(3000),
+            },
+            FileEntry {
+                name: "mid.txt".into(),
+                is_dir: false,
+                size: Some(150),
+                modified: Some(2000),
+            },
+            FileEntry {
+                name: "adir".into(),
+                is_dir: true,
+                size: None,
+                modified: Some(500),
+            },
         ];
         sort_entries(&mut entries, BrowserSort::Date);
         assert!(entries[0].is_dir);
@@ -1035,9 +1101,24 @@ scp: '/root/file.rpm': No such file or directory";
     #[test]
     fn test_sort_entries_name_mode() {
         let mut entries = vec![
-            FileEntry { name: "zebra.txt".into(), is_dir: false, size: Some(100), modified: Some(3000) },
-            FileEntry { name: "alpha.txt".into(), is_dir: false, size: Some(200), modified: Some(1000) },
-            FileEntry { name: "mydir".into(), is_dir: true, size: None, modified: Some(2000) },
+            FileEntry {
+                name: "zebra.txt".into(),
+                is_dir: false,
+                size: Some(100),
+                modified: Some(3000),
+            },
+            FileEntry {
+                name: "alpha.txt".into(),
+                is_dir: false,
+                size: Some(200),
+                modified: Some(1000),
+            },
+            FileEntry {
+                name: "mydir".into(),
+                is_dir: true,
+                size: None,
+                modified: Some(2000),
+            },
         ];
         sort_entries(&mut entries, BrowserSort::Name);
         assert!(entries[0].is_dir);
@@ -1057,7 +1138,10 @@ total 4
 ";
         let entries = parse_ls_output(output, true, BrowserSort::Name);
         assert_eq!(entries.len(), 1);
-        assert!(entries[0].modified.is_some(), "modified should be populated");
+        assert!(
+            entries[0].modified.is_some(),
+            "modified should be populated"
+        );
     }
 
     #[test]
@@ -1090,7 +1174,10 @@ total 12
 
         let entries = list_local(&base, true, BrowserSort::Name).unwrap();
         assert_eq!(entries.len(), 1);
-        assert!(entries[0].modified.is_some(), "modified should be populated for local files");
+        assert!(
+            entries[0].modified.is_some(),
+            "modified should be populated for local files"
+        );
 
         let _ = std::fs::remove_dir_all(&base);
     }
@@ -1118,7 +1205,9 @@ total 12
         assert!(ts.is_some(), "00:00 should parse successfully");
         let ts = ts.unwrap();
         let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
         assert!(ts <= now + 86400);
         assert!(ts > now - 366 * 86400);
     }
@@ -1130,9 +1219,24 @@ total 12
     #[test]
     fn test_sort_entries_date_with_none_modified() {
         let mut entries = vec![
-            FileEntry { name: "known.txt".into(), is_dir: false, size: Some(100), modified: Some(5000) },
-            FileEntry { name: "unknown.txt".into(), is_dir: false, size: Some(200), modified: None },
-            FileEntry { name: "recent.txt".into(), is_dir: false, size: Some(300), modified: Some(9000) },
+            FileEntry {
+                name: "known.txt".into(),
+                is_dir: false,
+                size: Some(100),
+                modified: Some(5000),
+            },
+            FileEntry {
+                name: "unknown.txt".into(),
+                is_dir: false,
+                size: Some(200),
+                modified: None,
+            },
+            FileEntry {
+                name: "recent.txt".into(),
+                is_dir: false,
+                size: Some(300),
+                modified: Some(9000),
+            },
         ];
         sort_entries(&mut entries, BrowserSort::Date);
         assert_eq!(entries[0].name, "recent.txt");
@@ -1143,10 +1247,30 @@ total 12
     #[test]
     fn test_sort_entries_date_asc_oldest_first() {
         let mut entries = vec![
-            FileEntry { name: "old.txt".into(), is_dir: false, size: Some(100), modified: Some(1000) },
-            FileEntry { name: "new.txt".into(), is_dir: false, size: Some(200), modified: Some(3000) },
-            FileEntry { name: "mid.txt".into(), is_dir: false, size: Some(150), modified: Some(2000) },
-            FileEntry { name: "adir".into(), is_dir: true, size: None, modified: Some(500) },
+            FileEntry {
+                name: "old.txt".into(),
+                is_dir: false,
+                size: Some(100),
+                modified: Some(1000),
+            },
+            FileEntry {
+                name: "new.txt".into(),
+                is_dir: false,
+                size: Some(200),
+                modified: Some(3000),
+            },
+            FileEntry {
+                name: "mid.txt".into(),
+                is_dir: false,
+                size: Some(150),
+                modified: Some(2000),
+            },
+            FileEntry {
+                name: "adir".into(),
+                is_dir: true,
+                size: None,
+                modified: Some(500),
+            },
         ];
         sort_entries(&mut entries, BrowserSort::DateAsc);
         assert!(entries[0].is_dir);
@@ -1159,9 +1283,24 @@ total 12
     #[test]
     fn test_sort_entries_date_asc_none_modified_sorts_to_end() {
         let mut entries = vec![
-            FileEntry { name: "known.txt".into(), is_dir: false, size: Some(100), modified: Some(5000) },
-            FileEntry { name: "unknown.txt".into(), is_dir: false, size: Some(200), modified: None },
-            FileEntry { name: "old.txt".into(), is_dir: false, size: Some(300), modified: Some(1000) },
+            FileEntry {
+                name: "known.txt".into(),
+                is_dir: false,
+                size: Some(100),
+                modified: Some(5000),
+            },
+            FileEntry {
+                name: "unknown.txt".into(),
+                is_dir: false,
+                size: Some(200),
+                modified: None,
+            },
+            FileEntry {
+                name: "old.txt".into(),
+                is_dir: false,
+                size: Some(300),
+                modified: Some(1000),
+            },
         ];
         sort_entries(&mut entries, BrowserSort::DateAsc);
         assert_eq!(entries[0].name, "old.txt");
@@ -1188,10 +1327,30 @@ total 12
     #[test]
     fn test_sort_entries_date_multiple_dirs() {
         let mut entries = vec![
-            FileEntry { name: "old_dir".into(), is_dir: true, size: None, modified: Some(1000) },
-            FileEntry { name: "new_dir".into(), is_dir: true, size: None, modified: Some(3000) },
-            FileEntry { name: "mid_dir".into(), is_dir: true, size: None, modified: Some(2000) },
-            FileEntry { name: "file.txt".into(), is_dir: false, size: Some(100), modified: Some(5000) },
+            FileEntry {
+                name: "old_dir".into(),
+                is_dir: true,
+                size: None,
+                modified: Some(1000),
+            },
+            FileEntry {
+                name: "new_dir".into(),
+                is_dir: true,
+                size: None,
+                modified: Some(3000),
+            },
+            FileEntry {
+                name: "mid_dir".into(),
+                is_dir: true,
+                size: None,
+                modified: Some(2000),
+            },
+            FileEntry {
+                name: "file.txt".into(),
+                is_dir: false,
+                size: Some(100),
+                modified: Some(5000),
+            },
         ];
         sort_entries(&mut entries, BrowserSort::Date);
         assert!(entries[0].is_dir);
@@ -1208,7 +1367,9 @@ total 12
     #[test]
     fn test_format_relative_time_exactly_60s() {
         let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
         assert_eq!(format_relative_time(now - 60), "1m ago");
         assert_eq!(format_relative_time(now - 59), "just now");
     }

@@ -18,7 +18,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let searching = app.ui.snippet_search.is_some();
 
     let title = if host_count > 1 {
-        Line::from(Span::styled(format!(" Snippets ({} hosts) ", host_count), theme::brand()))
+        Line::from(Span::styled(
+            format!(" Snippets ({} hosts) ", host_count),
+            theme::brand(),
+        ))
     } else {
         Line::from(Span::styled(" Snippets ", theme::brand()))
     };
@@ -36,7 +39,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     };
     let search_row = if searching { 1u16 } else { 0 };
     let header_row = if has_snippets { 1u16 } else { 0 };
-    let height = (item_count as u16 + 5 + search_row + header_row).min(frame.area().height.saturating_sub(4));
+    let height = (item_count as u16 + 5 + search_row + header_row)
+        .min(frame.area().height.saturating_sub(4));
     let area = {
         let r = super::centered_rect(70, 80, frame.area());
         super::centered_rect_fixed(r.width, height, frame.area())
@@ -71,7 +75,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Resolve chunk indices based on which optional rows are present
     let search_ci = if searching { Some(0) } else { None };
-    let header_ci = if has_snippets { Some(searching as usize) } else { None };
+    let header_ci = if has_snippets {
+        Some(searching as usize)
+    } else {
+        None
+    };
     let list_ci = searching as usize + has_snippets as usize;
     let footer_ci = list_ci + 1;
 
@@ -105,7 +113,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // Column widths: name gets ~28%, command gets the rest (or split with description)
     // desc_w includes the 2-char gap prefix so name_w + cmd_w + desc_w = usable
     let usable = list_area.width.saturating_sub(3) as usize; // 2 highlight + 1 leading space
-    let has_desc = indices.iter().any(|&i| !app.snippet_store.snippets[i].description.is_empty());
+    let has_desc = indices
+        .iter()
+        .any(|&i| !app.snippet_store.snippets[i].description.is_empty());
     let (name_w, cmd_w, desc_w) = if has_desc {
         let nw = (usable * 28 / 100).max(10);
         let dw = ((usable * 28 / 100) + 2).max(10); // includes 2-char gap
@@ -136,23 +146,29 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         } else {
             "  No snippets yet. Press 'a' to add one."
         };
-        frame.render_widget(
-            Paragraph::new(msg).style(theme::muted()),
-            list_area,
-        );
+        frame.render_widget(Paragraph::new(msg).style(theme::muted()), list_area);
     } else {
         let items: Vec<ListItem> = indices
             .iter()
             .map(|&idx| {
                 let snippet = &app.snippet_store.snippets[idx];
                 let mut spans = vec![
-                    Span::styled(format!(" {:<name_w$}", super::truncate(&snippet.name, name_w)), theme::bold()),
-                    Span::styled(format!("{:<cmd_w$}", super::truncate(&snippet.command, cmd_w)), theme::muted()),
+                    Span::styled(
+                        format!(" {:<name_w$}", super::truncate(&snippet.name, name_w)),
+                        theme::bold(),
+                    ),
+                    Span::styled(
+                        format!("{:<cmd_w$}", super::truncate(&snippet.command, cmd_w)),
+                        theme::muted(),
+                    ),
                 ];
                 if has_desc {
                     let text_w = desc_w.saturating_sub(2);
                     spans.push(Span::styled(
-                        format!("  {:<text_w$}", super::truncate(&snippet.description, text_w)),
+                        format!(
+                            "  {:<text_w$}",
+                            super::truncate(&snippet.description, text_w)
+                        ),
                         theme::muted(),
                     ));
                 }
@@ -169,26 +185,40 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Footer
     if searching {
-        super::render_footer_with_status(frame, footer_area, vec![
-            Span::styled(" Enter", theme::primary_action()),
-            Span::styled(" select ", theme::muted()),
-            Span::styled("\u{2502} ", theme::muted()),
-            Span::styled("Esc", theme::accent_bold()),
-            Span::styled(" cancel", theme::muted()),
-        ], app);
+        super::render_footer_with_status(
+            frame,
+            footer_area,
+            vec![
+                Span::styled(" Enter", theme::primary_action()),
+                Span::styled(" select ", theme::muted()),
+                Span::styled("\u{2502} ", theme::muted()),
+                Span::styled("Esc", theme::accent_bold()),
+                Span::styled(" cancel", theme::muted()),
+            ],
+            app,
+        );
     } else if app.pending_snippet_delete.is_some() {
-        let name = app.pending_snippet_delete
+        let name = app
+            .pending_snippet_delete
             .and_then(|i| app.snippet_store.snippets.get(i))
             .map(|s| s.name.as_str())
             .unwrap_or("");
-        super::render_footer_with_status(frame, footer_area, vec![
-            Span::styled(format!(" Remove '{}'? ", super::truncate(name, 20)), theme::bold()),
-            Span::styled("y", theme::accent_bold()),
-            Span::styled(" yes ", theme::muted()),
-            Span::styled("\u{2502} ", theme::muted()),
-            Span::styled("Esc", theme::accent_bold()),
-            Span::styled(" no", theme::muted()),
-        ], app);
+        super::render_footer_with_status(
+            frame,
+            footer_area,
+            vec![
+                Span::styled(
+                    format!(" Remove '{}'? ", super::truncate(name, 20)),
+                    theme::bold(),
+                ),
+                Span::styled("y", theme::accent_bold()),
+                Span::styled(" yes ", theme::muted()),
+                Span::styled("\u{2502} ", theme::muted()),
+                Span::styled("Esc", theme::accent_bold()),
+                Span::styled(" no", theme::muted()),
+            ],
+            app,
+        );
     } else {
         let mut spans: Vec<Span<'_>> = Vec::new();
         if !app.snippet_store.snippets.is_empty() {

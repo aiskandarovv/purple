@@ -1,0 +1,33 @@
+[advisories]
+version = 2
+ignore = [
+    # rsa: timing sidechannel (no fix available). Purple only uses it for GCP
+    # JWT signing, not for private key operations over a network.
+    "RUSTSEC-2023-0071",
+    # time: DoS via stack exhaustion in RFC 2822 parsing. Fix requires Rust
+    # 1.88 but our MSRV is 1.85. Purple does not parse user-provided RFC 2822
+    # input. Revisit when MSRV is raised.
+    "RUSTSEC-2026-0009",
+]
+
+[licenses]
+version = 2
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "CDLA-Permissive-2.0",
+    "Zlib",
+]
+confidence-threshold = 0.8
+
+[bans]
+multiple-versions = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

@@ -15,10 +15,15 @@ pub struct ConnectResult {
 /// Passes `-F <config_path>` so the alias resolves against the correct config file.
 /// When `askpass` is Some, sets SSH_ASKPASS environment variables so SSH retrieves
 /// the password from the configured source via purple's askpass handler.
-pub fn connect(alias: &str, config_path: &Path, askpass: Option<&str>, bw_session: Option<&str>, has_active_tunnel: bool) -> Result<ConnectResult> {
+pub fn connect(
+    alias: &str,
+    config_path: &Path,
+    askpass: Option<&str>,
+    bw_session: Option<&str>,
+    has_active_tunnel: bool,
+) -> Result<ConnectResult> {
     let mut cmd = Command::new("ssh");
-    cmd.arg("-F")
-        .arg(config_path);
+    cmd.arg("-F").arg(config_path);
 
     // When a tunnel is already running for this host, disable forwards in the
     // interactive session to avoid "Address already in use" bind conflicts.
@@ -80,7 +85,10 @@ pub fn connect(alias: &str, config_path: &Path, askpass: Option<&str>, bw_sessio
         .with_context(|| format!("Failed to wait for ssh for '{}'", alias))?;
     let stderr_output = stderr_thread.join().unwrap_or_default();
 
-    Ok(ConnectResult { status, stderr_output })
+    Ok(ConnectResult {
+        status,
+        stderr_output,
+    })
 }
 
 /// Parse host key verification error from SSH stderr output.
@@ -103,7 +111,8 @@ pub fn parse_host_key_error(stderr: &str) -> Option<(String, String)> {
     }
 
     // Parse hostname from "Host key for <hostname> has changed"
-    let hostname = stderr.lines()
+    let hostname = stderr
+        .lines()
         .find(|l| l.contains("Host key for") && l.contains("has changed"))
         .and_then(|l| {
             let start = l.find("Host key for ")? + "Host key for ".len();
@@ -113,7 +122,8 @@ pub fn parse_host_key_error(stderr: &str) -> Option<(String, String)> {
         });
 
     // Parse known_hosts path from "Offending ... key in <path>:<line>"
-    let known_hosts_path = stderr.lines()
+    let known_hosts_path = stderr
+        .lines()
         .find(|l| l.starts_with("Offending") && l.contains(" key in "))
         .and_then(|l| {
             let start = l.find(" key in ")? + " key in ".len();
@@ -153,7 +163,13 @@ mod tests {
     #[test]
     fn askpass_env_var_names() {
         // Document the expected env var names
-        let vars = ["SSH_ASKPASS", "SSH_ASKPASS_REQUIRE", "PURPLE_ASKPASS_MODE", "PURPLE_HOST_ALIAS", "PURPLE_CONFIG_PATH"];
+        let vars = [
+            "SSH_ASKPASS",
+            "SSH_ASKPASS_REQUIRE",
+            "PURPLE_ASKPASS_MODE",
+            "PURPLE_HOST_ALIAS",
+            "PURPLE_CONFIG_PATH",
+        ];
         assert_eq!(vars.len(), 5);
         assert_eq!(vars[0], "SSH_ASKPASS");
         assert_eq!(vars[1], "SSH_ASKPASS_REQUIRE");
@@ -207,7 +223,13 @@ mod tests {
     #[test]
     fn connection_env_vars_include_config_path() {
         // PURPLE_CONFIG_PATH is set so askpass subprocess can find the config
-        let vars = ["SSH_ASKPASS", "SSH_ASKPASS_REQUIRE", "PURPLE_ASKPASS_MODE", "PURPLE_HOST_ALIAS", "PURPLE_CONFIG_PATH"];
+        let vars = [
+            "SSH_ASKPASS",
+            "SSH_ASKPASS_REQUIRE",
+            "PURPLE_ASKPASS_MODE",
+            "PURPLE_HOST_ALIAS",
+            "PURPLE_CONFIG_PATH",
+        ];
         assert!(vars.contains(&"PURPLE_CONFIG_PATH"));
     }
 
@@ -233,10 +255,21 @@ mod tests {
     #[test]
     fn connection_all_askpass_source_types_trigger_env() {
         // Every non-None askpass source should trigger env var setup
-        let sources = ["keychain", "op://V/I/p", "bw:item", "pass:ssh/srv", "vault:kv#pw", "my-cmd"];
+        let sources = [
+            "keychain",
+            "op://V/I/p",
+            "bw:item",
+            "pass:ssh/srv",
+            "vault:kv#pw",
+            "my-cmd",
+        ];
         for source in &sources {
             let askpass: Option<&str> = Some(source);
-            assert!(askpass.is_some(), "Source '{}' should trigger env setup", source);
+            assert!(
+                askpass.is_some(),
+                "Source '{}' should trigger env setup",
+                source
+            );
         }
     }
 

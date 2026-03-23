@@ -1,0 +1,22 @@
+[package]
+name = "purple-ssh-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.purple-ssh]
+path = ".."
+
+[[bin]]
+name = "fuzz_ssh_config"
+path = "fuzz_targets/fuzz_ssh_config.rs"
+doc = false
+
+[workspace]
+members = ["."]

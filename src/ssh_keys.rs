@@ -96,7 +96,10 @@ fn read_key_info(
 
     // Derive the private key name (strip .pub)
     let pub_name = pub_path.file_name()?.to_string_lossy();
-    let name = pub_name.strip_suffix(".pub").unwrap_or(&pub_name).to_string();
+    let name = pub_name
+        .strip_suffix(".pub")
+        .unwrap_or(&pub_name)
+        .to_string();
 
     // Private key path (without .pub extension)
     let private_path = ssh_dir.join(&name);
@@ -138,9 +141,7 @@ fn parse_keygen_output(line: &str) -> Option<(String, String, String, String)> {
     let rest = parts[2];
     let (comment, key_type) = if let Some(paren_start) = rest.rfind('(') {
         let comment = rest[..paren_start].trim().to_string();
-        let key_type = rest[paren_start + 1..]
-            .trim_end_matches(')')
-            .to_string();
+        let key_type = rest[paren_start + 1..].trim_end_matches(')').to_string();
         (comment, key_type)
     } else {
         (rest.to_string(), String::new())
@@ -160,8 +161,7 @@ fn find_linked_hosts(full_path: &Path, display_path: &str, hosts: &[HostEntry]) 
                 return true;
             }
             // Match against both the display path (~/.ssh/...) and the full path
-            h.identity_file == display_path
-                || Path::new(&h.identity_file) == full_path
+            h.identity_file == display_path || Path::new(&h.identity_file) == full_path
         })
         .map(|h| h.alias.clone())
         .collect()
@@ -271,11 +271,8 @@ mod tests {
             identity_file: String::new(),
             ..Default::default()
         }];
-        let linked = find_linked_hosts(
-            Path::new("/home/user/.ssh/id_rsa"),
-            "~/.ssh/id_rsa",
-            &hosts,
-        );
+        let linked =
+            find_linked_hosts(Path::new("/home/user/.ssh/id_rsa"), "~/.ssh/id_rsa", &hosts);
         assert_eq!(linked, vec!["server"]);
     }
 
@@ -286,11 +283,8 @@ mod tests {
             identity_file: "~/.ssh/other_key".to_string(),
             ..Default::default()
         }];
-        let linked = find_linked_hosts(
-            Path::new("/home/user/.ssh/id_rsa"),
-            "~/.ssh/id_rsa",
-            &hosts,
-        );
+        let linked =
+            find_linked_hosts(Path::new("/home/user/.ssh/id_rsa"), "~/.ssh/id_rsa", &hosts);
         assert!(linked.is_empty());
     }
 

@@ -65,7 +65,8 @@ struct ScalewayServer {
     #[serde(default)]
     image: Option<ScalewayImage>,
     #[serde(default)]
-    #[allow(dead_code)] // Deserialized from API but we use the zone parameter from the request URL
+    #[allow(dead_code)]
+    // Deserialized from API but we use the zone parameter from the request URL
     zone: String,
 }
 
@@ -194,12 +195,7 @@ impl Provider for Scaleway {
                 return Err(ProviderError::Cancelled);
             }
 
-            progress(&format!(
-                "Fetching {} ({}/{})...",
-                zone,
-                i + 1,
-                total_zones
-            ));
+            progress(&format!("Fetching {} ({}/{})...", zone, i + 1, total_zones));
 
             match fetch_zone(&agent, token, zone, cancel) {
                 Ok(hosts) => all_hosts.extend(hosts),
@@ -216,10 +212,7 @@ impl Provider for Scaleway {
         // Summary
         let mut parts = vec![format!("{} instances", all_hosts.len())];
         if failed_zones > 0 {
-            parts.push(format!(
-                "{} of {} zones failed",
-                failed_zones, total_zones
-            ));
+            parts.push(format!("{} of {} zones failed", failed_zones, total_zones));
         }
         progress(&parts.join(", "));
 
@@ -536,10 +529,7 @@ mod tests {
             }]
         }"#;
         let resp: ListServersResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(
-            resp.servers[0].tags,
-            vec!["web", "production", "eu"]
-        );
+        assert_eq!(resp.servers[0].tags, vec!["web", "production", "eu"]);
     }
 
     #[test]
@@ -583,7 +573,10 @@ mod tests {
             vec![
                 ("zone".to_string(), "fr-par-1".to_string()),
                 ("type".to_string(), "DEV1-S".to_string()),
-                ("image".to_string(), "Ubuntu 22.04 Jammy Jellyfish".to_string()),
+                (
+                    "image".to_string(),
+                    "Ubuntu 22.04 Jammy Jellyfish".to_string()
+                ),
                 ("status".to_string(), "running".to_string()),
             ]
         );
@@ -738,10 +731,7 @@ mod tests {
             }]
         }"#;
         let resp: ListServersResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(
-            resp.servers[0].id,
-            "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-        );
+        assert_eq!(resp.servers[0].id, "a1b2c3d4-e5f6-7890-abcd-ef1234567890");
     }
 
     // =========================================================================

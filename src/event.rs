@@ -10,7 +10,10 @@ use crossterm::event::{self, Event as CrosstermEvent, KeyEvent, KeyEventKind};
 pub enum AppEvent {
     Key(KeyEvent),
     Tick,
-    PingResult { alias: String, reachable: bool },
+    PingResult {
+        alias: String,
+        reachable: bool,
+    },
     SyncComplete {
         provider: String,
         hosts: Vec<crate::providers::ProviderHost>,
@@ -25,8 +28,14 @@ pub enum AppEvent {
         provider: String,
         message: String,
     },
-    SyncProgress { provider: String, message: String },
-    UpdateAvailable { version: String, headline: Option<String> },
+    SyncProgress {
+        provider: String,
+        message: String,
+    },
+    UpdateAvailable {
+        version: String,
+        headline: Option<String>,
+    },
     FileBrowserListing {
         alias: String,
         path: String,
@@ -91,9 +100,7 @@ impl EventHandler {
                     Ok(true) => {
                         if let Ok(evt) = event::read() {
                             match evt {
-                                CrosstermEvent::Key(key)
-                                    if key.kind == KeyEventKind::Press =>
-                                {
+                                CrosstermEvent::Key(key) if key.kind == KeyEventKind::Press => {
                                     if event_tx.send(AppEvent::Key(key)).is_err() {
                                         return;
                                     }

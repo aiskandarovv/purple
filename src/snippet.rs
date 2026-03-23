@@ -93,9 +93,7 @@ impl SnippetStore {
             }
         }
         if let Some(snippet) = current {
-            if !snippet.command.is_empty()
-                && !snippets.iter().any(|s| s.name == snippet.name)
-            {
+            if !snippet.command.is_empty() && !snippets.iter().any(|s| s.name == snippet.name) {
                 snippets.push(snippet);
             }
         }
@@ -115,7 +113,7 @@ impl SnippetStore {
                     return Err(io::Error::new(
                         io::ErrorKind::NotFound,
                         "Could not determine home directory",
-                    ))
+                    ));
                 }
             },
         };
@@ -218,9 +216,7 @@ pub fn parse_params(command: &str) -> Vec<SnippetParam> {
                 } else {
                     (inner.to_string(), None)
                 };
-                if validate_param_name(&name).is_ok()
-                    && !seen.contains(&name)
-                    && params.len() < 20
+                if validate_param_name(&name).is_ok() && !seen.contains(&name) && params.len() < 20
                 {
                     seen.insert(name.clone());
                     params.push(SnippetParam { name, default });
@@ -413,8 +409,7 @@ impl Drop for ChildGuard {
                 libc::kill(-self.pgid, libc::SIGTERM);
             }
             // Poll for up to 500ms
-            let deadline =
-                std::time::Instant::now() + std::time::Duration::from_millis(500);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
             loop {
                 if let Ok(Some(_)) = child.try_wait() {
                     return;
@@ -534,7 +529,14 @@ fn build_snippet_command(
     bw_session: Option<&str>,
     has_active_tunnel: bool,
 ) -> Command {
-    let mut cmd = base_ssh_command(alias, config_path, command, askpass, bw_session, has_active_tunnel);
+    let mut cmd = base_ssh_command(
+        alias,
+        config_path,
+        command,
+        askpass,
+        bw_session,
+        has_active_tunnel,
+    );
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -565,8 +567,14 @@ fn execute_host(
     has_active_tunnel: bool,
     tx: &std::sync::mpsc::Sender<SnippetEvent>,
 ) -> Option<std::sync::Arc<ChildGuard>> {
-    let mut cmd =
-        build_snippet_command(alias, config_path, command, askpass, bw_session, has_active_tunnel);
+    let mut cmd = build_snippet_command(
+        alias,
+        config_path,
+        command,
+        askpass,
+        bw_session,
+        has_active_tunnel,
+    );
 
     match cmd.spawn() {
         Ok(child) => {
@@ -658,9 +666,8 @@ pub fn spawn_snippet_execution(
     std::thread::Builder::new()
         .name("snippet-coordinator".into())
         .spawn(move || {
-            let guards: std::sync::Arc<
-                std::sync::Mutex<Vec<std::sync::Arc<ChildGuard>>>,
-            > = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let guards: std::sync::Arc<std::sync::Mutex<Vec<std::sync::Arc<ChildGuard>>>> =
+                std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
 
             if parallel && total > 1 {
                 // Slot-based semaphore for concurrency limiting
@@ -669,8 +676,7 @@ pub fn spawn_snippet_execution(
                     let _ = slot_tx.send(());
                 }
 
-                let completed =
-                    std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                let completed = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
                 let mut worker_handles = Vec::new();
 
                 for (alias, askpass) in askpass_map {
@@ -680,8 +686,7 @@ pub fn spawn_snippet_execution(
 
                     // Wait for a slot, checking cancel periodically
                     loop {
-                        match slot_rx.recv_timeout(std::time::Duration::from_millis(100))
-                        {
+                        match slot_rx.recv_timeout(std::time::Duration::from_millis(100)) {
                             Ok(()) => break,
                             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                                 if cancel.load(std::sync::atomic::Ordering::Relaxed) {
@@ -731,16 +736,10 @@ pub fn spawn_snippet_execution(
 
                         // Insert guard BEFORE checking cancel so it can be cleaned up
                         if let Some(g) = guard {
-                            guards
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner())
-                                .push(g);
+                            guards.lock().unwrap_or_else(|e| e.into_inner()).push(g);
                         }
 
-                        let c = completed.fetch_add(
-                            1,
-                            std::sync::atomic::Ordering::Relaxed,
-                        ) + 1;
+                        let c = completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                         let _ = tx.send(SnippetEvent::Progress {
                             run_id,
                             completed: c,
@@ -775,10 +774,7 @@ pub fn spawn_snippet_execution(
                     );
 
                     if let Some(g) = guard {
-                        guards
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .push(g);
+                        guards.lock().unwrap_or_else(|e| e.into_inner()).push(g);
                     }
 
                     let _ = tx.send(SnippetEvent::Progress {
@@ -808,7 +804,14 @@ pub fn run_snippet(
     capture: bool,
     has_active_tunnel: bool,
 ) -> anyhow::Result<SnippetResult> {
-    let mut cmd = base_ssh_command(alias, config_path, command, askpass, bw_session, has_active_tunnel);
+    let mut cmd = base_ssh_command(
+        alias,
+        config_path,
+        command,
+        askpass,
+        bw_session,
+        has_active_tunnel,
+    );
     cmd.stdin(Stdio::inherit());
 
     if capture {
@@ -1266,10 +1269,26 @@ foo=bar
     #[test]
     fn test_set_overwrite_preserves_order() {
         let mut store = SnippetStore::default();
-        store.set(Snippet { name: "a".into(), command: "1".into(), description: String::new() });
-        store.set(Snippet { name: "b".into(), command: "2".into(), description: String::new() });
-        store.set(Snippet { name: "c".into(), command: "3".into(), description: String::new() });
-        store.set(Snippet { name: "b".into(), command: "updated".into(), description: String::new() });
+        store.set(Snippet {
+            name: "a".into(),
+            command: "1".into(),
+            description: String::new(),
+        });
+        store.set(Snippet {
+            name: "b".into(),
+            command: "2".into(),
+            description: String::new(),
+        });
+        store.set(Snippet {
+            name: "c".into(),
+            command: "3".into(),
+            description: String::new(),
+        });
+        store.set(Snippet {
+            name: "b".into(),
+            command: "updated".into(),
+            description: String::new(),
+        });
         assert_eq!(store.snippets.len(), 3);
         assert_eq!(store.snippets[0].name, "a");
         assert_eq!(store.snippets[1].name, "b");
@@ -1702,5 +1721,4 @@ foo=bar
         let input = "\x1b[1mbold\x1b[0m \x1b]0;title\x07normal \x01gone";
         assert_eq!(sanitize_output(input), "bold normal gone");
     }
-
 }

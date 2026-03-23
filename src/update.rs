@@ -101,11 +101,18 @@ struct CachedVersion {
 /// Returns `Some(Some(cached))` if cache is fresh and a newer version exists,
 /// `Some(None)` if cache is fresh and we are up-to-date,
 /// `None` if cache content is corrupt, expired or unparseable.
-fn parse_version_cache(content: &str, now_secs: u64, current: &str) -> Option<Option<CachedVersion>> {
+fn parse_version_cache(
+    content: &str,
+    now_secs: u64,
+    current: &str,
+) -> Option<Option<CachedVersion>> {
     let mut lines = content.lines();
     let timestamp: u64 = lines.next()?.parse().ok()?;
     let version = lines.next()?.to_string();
-    let headline = lines.next().map(|s| s.to_string()).filter(|s| !s.is_empty());
+    let headline = lines
+        .next()
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty());
 
     if version.is_empty() || parse_version(&version).is_none() {
         return None; // Corrupt version string
@@ -552,9 +559,10 @@ pub fn self_update() -> Result<()> {
 
 /// Download a file from a URL.
 fn download_file(agent: &ureq::Agent, url: &str, dest: &Path) -> Result<()> {
-    let resp = agent.get(url).call().with_context(|| {
-        format!("Failed to download {}", url)
-    })?;
+    let resp = agent
+        .get(url)
+        .call()
+        .with_context(|| format!("Failed to download {}", url))?;
 
     let mut bytes = Vec::new();
     resp.into_reader()
@@ -572,8 +580,7 @@ fn download_file(agent: &ureq::Agent, url: &str, dest: &Path) -> Result<()> {
 
 /// Verify SHA256 checksum of a file using the sha2 crate (no external tools).
 fn verify_checksum(file: &Path, sha_file: &Path) -> Result<()> {
-    let expected = std::fs::read_to_string(sha_file)
-        .context("Failed to read checksum file")?;
+    let expected = std::fs::read_to_string(sha_file).context("Failed to read checksum file")?;
     let expected = expected
         .split_whitespace()
         .next()
@@ -917,13 +924,19 @@ mod tests {
     #[test]
     fn test_detect_homebrew_cellar() {
         let path = Path::new("/opt/homebrew/Cellar/purple/1.5.0/bin/purple");
-        assert!(matches!(detect_install_method(path), InstallMethod::Homebrew));
+        assert!(matches!(
+            detect_install_method(path),
+            InstallMethod::Homebrew
+        ));
     }
 
     #[test]
     fn test_detect_homebrew_default_intel() {
         let path = Path::new("/usr/local/Cellar/purple/1.5.0/bin/purple");
-        assert!(matches!(detect_install_method(path), InstallMethod::Homebrew));
+        assert!(matches!(
+            detect_install_method(path),
+            InstallMethod::Homebrew
+        ));
     }
 
     #[test]
@@ -944,19 +957,28 @@ mod tests {
     #[test]
     fn test_detect_curl_usr_local_bin() {
         let path = Path::new("/usr/local/bin/purple");
-        assert!(matches!(detect_install_method(path), InstallMethod::CurlOrManual));
+        assert!(matches!(
+            detect_install_method(path),
+            InstallMethod::CurlOrManual
+        ));
     }
 
     #[test]
     fn test_detect_curl_local_bin() {
         let path = Path::new("/Users/user/.local/bin/purple");
-        assert!(matches!(detect_install_method(path), InstallMethod::CurlOrManual));
+        assert!(matches!(
+            detect_install_method(path),
+            InstallMethod::CurlOrManual
+        ));
     }
 
     #[test]
     fn test_detect_no_false_positive_homebrew_in_name() {
         let path = Path::new("/Users/user/homebrew-tools/bin/purple");
-        assert!(matches!(detect_install_method(path), InstallMethod::CurlOrManual));
+        assert!(matches!(
+            detect_install_method(path),
+            InstallMethod::CurlOrManual
+        ));
     }
 
     // --- fail-open: ambiguous paths default to CurlOrManual ---
@@ -964,13 +986,19 @@ mod tests {
     #[test]
     fn test_detect_unknown_path() {
         let path = Path::new("/some/random/path/purple");
-        assert!(matches!(detect_install_method(path), InstallMethod::CurlOrManual));
+        assert!(matches!(
+            detect_install_method(path),
+            InstallMethod::CurlOrManual
+        ));
     }
 
     #[test]
     fn test_detect_root_path() {
         let path = Path::new("/purple");
-        assert!(matches!(detect_install_method(path), InstallMethod::CurlOrManual));
+        assert!(matches!(
+            detect_install_method(path),
+            InstallMethod::CurlOrManual
+        ));
     }
 
     // --- parse_version_cache tests ---
@@ -997,7 +1025,9 @@ mod tests {
     fn test_cache_fresh_newer_with_headline() {
         let now = now_secs();
         let content = format!("{}\n99.0.0\nNew feature added\n", now);
-        let cached = parse_version_cache(&content, now, "1.5.0").unwrap().unwrap();
+        let cached = parse_version_cache(&content, now, "1.5.0")
+            .unwrap()
+            .unwrap();
         assert_eq!(cached.version, "99.0.0");
         assert_eq!(cached.headline, Some("New feature added".to_string()));
     }
@@ -1032,7 +1062,9 @@ mod tests {
         let at_ttl = now - VERSION_CHECK_TTL.as_secs();
         let content = format!("{}\n99.0.0\n", at_ttl);
         // At exactly TTL boundary: still valid (saturating_sub > TTL, not >=)
-        let cached = parse_version_cache(&content, now, "1.5.0").unwrap().unwrap();
+        let cached = parse_version_cache(&content, now, "1.5.0")
+            .unwrap()
+            .unwrap();
         assert_eq!(cached.version, "99.0.0");
     }
 
@@ -1086,7 +1118,9 @@ mod tests {
         // Old cache format without headline line should still work
         let now = now_secs();
         let content = format!("{}\n99.0.0", now);
-        let cached = parse_version_cache(&content, now, "1.5.0").unwrap().unwrap();
+        let cached = parse_version_cache(&content, now, "1.5.0")
+            .unwrap()
+            .unwrap();
         assert_eq!(cached.version, "99.0.0");
         assert_eq!(cached.headline, None);
     }

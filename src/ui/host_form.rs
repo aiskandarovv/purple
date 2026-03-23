@@ -72,13 +72,24 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         let content_y = divider_y + 1;
 
         let is_focused = app.form.focused_field == field;
-        let label_style = if is_focused { theme::accent_bold() } else { theme::muted() };
+        let label_style = if is_focused {
+            theme::accent_bold()
+        } else {
+            theme::muted()
+        };
         let label = if is_required {
             format!(" {}* ", field.label())
         } else {
             format!(" {} ", field.label())
         };
-        render_divider(frame, block_area, divider_y, &label, label_style, theme::border());
+        render_divider(
+            frame,
+            block_area,
+            divider_y,
+            &label,
+            label_style,
+            theme::border(),
+        );
 
         let content_area = Rect::new(inner.x + 1, content_y, inner.width.saturating_sub(1), 1);
         render_field_content(frame, content_area, field, &app.form);
@@ -219,7 +230,10 @@ fn render_proxyjump_picker_overlay(frame: &mut Frame, app: &mut App) {
         .map(|(alias, hostname)| {
             let host_display = super::truncate(hostname, host_max);
             let line = Line::from(vec![
-                Span::styled(format!(" {:<20}", super::truncate(alias, 20)), theme::bold()),
+                Span::styled(
+                    format!(" {:<20}", super::truncate(alias, 20)),
+                    theme::bold(),
+                ),
                 Span::styled(host_display, theme::muted()),
             ]);
             ListItem::new(line)
@@ -249,9 +263,15 @@ fn render_password_picker_overlay(frame: &mut Frame, app: &mut App) {
         .iter()
         .map(|src| {
             let hint_width = src.hint.len();
-            let label_width = 48_usize.saturating_sub(4).saturating_sub(hint_width).saturating_sub(1);
+            let label_width = 48_usize
+                .saturating_sub(4)
+                .saturating_sub(hint_width)
+                .saturating_sub(1);
             let line = Line::from(vec![
-                Span::styled(format!(" {:<width$}", src.label, width = label_width), theme::bold()),
+                Span::styled(
+                    format!(" {:<width$}", src.label, width = label_width),
+                    theme::bold(),
+                ),
                 Span::styled(src.hint, theme::muted()),
             ]);
             ListItem::new(line)
@@ -330,7 +350,10 @@ fn render_field_content(
         FormField::Tags => &form.tags,
     };
 
-    let is_picker = matches!(field, FormField::IdentityFile | FormField::ProxyJump | FormField::AskPass);
+    let is_picker = matches!(
+        field,
+        FormField::IdentityFile | FormField::ProxyJump | FormField::AskPass
+    );
 
     // Show placeholder only when field is empty and focused
     let content = if value.is_empty() && is_focused && !is_picker {
