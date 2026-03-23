@@ -401,14 +401,14 @@ proptest! {
 }
 
 // ---------------------------------------------------------------------------
-// Property: delete_host removes exactly one host
+// Property: delete_host removes all hosts with matching alias
 // ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(200))]
 
     #[test]
-    fn delete_host_removes_exactly_one(content in ssh_config_strategy()) {
+    fn delete_host_removes_all_with_alias(content in ssh_config_strategy()) {
         let mut config = parse_str(&content);
         let entries = config.host_entries();
         if entries.is_empty() {
@@ -418,15 +418,18 @@ proptest! {
         // Pick the first host
         let alias = entries[0].alias.clone();
         let count_before = entries.len();
+        let alias_count = entries.iter().filter(|e| e.alias == alias).count();
 
         config.delete_host(&alias);
 
         let count_after = config.host_entries().len();
         prop_assert_eq!(
-            count_before - 1,
+            count_before - alias_count,
             count_after,
-            "Expected {} hosts after delete, got {}",
-            count_before - 1,
+            "Expected {} hosts after deleting {} copies of '{}', got {}",
+            count_before - alias_count,
+            alias_count,
+            alias,
             count_after,
         );
 

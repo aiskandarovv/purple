@@ -5,7 +5,7 @@ ignore = [
     # JWT signing, not for private key operations over a network.
     "RUSTSEC-2023-0071",
     # time: DoS via stack exhaustion in RFC 2822 parsing. Fix requires Rust
-    # 1.88 but our MSRV is 1.85. Purple does not parse user-provided RFC 2822
+    # 1.88 but our MSRV is 1.86. Purple does not parse user-provided RFC 2822
     # input. Revisit when MSRV is raised.
     "RUSTSEC-2026-0009",
 ]
