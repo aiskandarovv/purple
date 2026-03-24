@@ -112,7 +112,12 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         if let Some(entry) = history_entry {
             let ago = ConnectionHistory::format_time_ago(entry.last_connected);
             if !ago.is_empty() {
-                push_field(&mut lines, "Last SSH", &format!("{} ago", ago), max_value_width);
+                push_field(
+                    &mut lines,
+                    "Last SSH",
+                    &format!("{} ago", ago),
+                    max_value_width,
+                );
             }
             push_field(
                 &mut lines,

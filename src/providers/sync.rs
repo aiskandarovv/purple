@@ -154,8 +154,7 @@ pub fn sync_provider(
                 };
                 // First migration: host has old-format tags (# purple:tags) but
                 // no # purple:provider_tags comment yet. Tags need splitting.
-                let first_migration =
-                    !entry.has_provider_tags && !entry.tags.is_empty();
+                let first_migration = !entry.has_provider_tags && !entry.tags.is_empty();
 
                 // After first migration: check if user tags overlap with provider tags
                 let user_tags_overlap = !first_migration
@@ -1307,14 +1306,7 @@ Host do-web-1-copy
         assert_eq!(config.host_entries()[0].tags, vec!["nyc1", "prod"]);
 
         // Provider_tags match remote but user tags overlap — migration cleanup runs
-        let result = sync_provider(
-            &mut config,
-            &MockProvider,
-            &remote,
-            &section,
-            false,
-            false,
-        );
+        let result = sync_provider(&mut config, &MockProvider, &remote, &section, false, false);
         assert_eq!(result.updated, 1);
         assert_eq!(config.host_entries()[0].provider_tags, vec!["nyc1"]);
         // "nyc1" removed from user tags (overlap), "prod" preserved
@@ -1342,14 +1334,7 @@ Host do-web-1-copy
             "1.2.3.4".to_string(),
             Vec::new(),
         )];
-        let result = sync_provider(
-            &mut config,
-            &MockProvider,
-            &remote,
-            &section,
-            false,
-            false,
-        );
+        let result = sync_provider(&mut config, &MockProvider, &remote, &section, false, false);
         assert_eq!(result.updated, 1);
         assert!(config.host_entries()[0].tags.is_empty());
     }
@@ -1406,14 +1391,7 @@ Host do-web-1-copy
             "1.2.3.4".to_string(),
             vec!["nyc1".to_string(), "prod".to_string()],
         )];
-        let result = sync_provider(
-            &mut config,
-            &MockProvider,
-            &remote,
-            &section,
-            false,
-            false,
-        );
+        let result = sync_provider(&mut config, &MockProvider, &remote, &section, false, false);
         assert_eq!(result.unchanged, 1);
     }
 
@@ -1465,14 +1443,7 @@ Host do-web-1-copy
             "1.2.3.4".to_string(),
             vec!["Prod".to_string()],
         )];
-        let result = sync_provider(
-            &mut config,
-            &MockProvider,
-            &remote,
-            &section,
-            false,
-            false,
-        );
+        let result = sync_provider(&mut config, &MockProvider, &remote, &section, false, false);
         assert_eq!(result.unchanged, 1);
     }
 
@@ -1948,14 +1919,7 @@ Host do-web-1-copy
             "1.2.3.4".to_string(),
             vec!["prod".to_string(), "new-tag".to_string()],
         )];
-        let result = sync_provider(
-            &mut config,
-            &MockProvider,
-            &remote2,
-            &section,
-            false,
-            false,
-        );
+        let result = sync_provider(&mut config, &MockProvider, &remote2, &section, false, false);
         assert_eq!(result.updated, 1);
 
         let entries = config.host_entries();
@@ -2708,14 +2672,7 @@ Host do-web-1-copy
             "1.2.3.4".to_string(),
             vec!["production".to_string()],
         )];
-        let result = sync_provider(
-            &mut config,
-            &MockProvider,
-            &remote2,
-            &section,
-            false,
-            false,
-        );
+        let result = sync_provider(&mut config, &MockProvider, &remote2, &section, false, false);
         assert_eq!(result.updated, 1);
         assert_eq!(result.renames.len(), 1);
 
@@ -3470,14 +3427,7 @@ Host do-web
             "1.2.3.4".to_string(),
             vec!["Production".to_string()],
         )];
-        sync_provider(
-            &mut config,
-            &MockProvider,
-            &remote,
-            &section,
-            false,
-            false,
-        );
+        sync_provider(&mut config, &MockProvider, &remote, &section, false, false);
 
         // Same tag but different case -> unchanged
         let remote2 = vec![ProviderHost::new(
@@ -3486,14 +3436,7 @@ Host do-web
             "1.2.3.4".to_string(),
             vec!["production".to_string()],
         )];
-        let result = sync_provider(
-            &mut config,
-            &MockProvider,
-            &remote2,
-            &section,
-            false,
-            false,
-        );
+        let result = sync_provider(&mut config, &MockProvider, &remote2, &section, false, false);
         assert_eq!(
             result.unchanged, 1,
             "Case-insensitive tag match = unchanged"
@@ -3810,7 +3753,7 @@ Host do-web-1
         assert_eq!(config.host_entries()[0].tags, vec!["prod", "custom"]);
 
         // Second sync: same provider tags (unchanged)
-        let result = sync_provider(&mut config, &MockProvider, &remote, &section, false, false);
+        sync_provider(&mut config, &MockProvider, &remote, &section, false, false);
 
         // Desired: duplicate "prod" removed from user tags
         let entry = &config.host_entries()[0];

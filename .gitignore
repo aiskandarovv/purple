@@ -33,6 +33,7 @@ demo.tape
 # Fuzz
 fuzz/artifacts/
 fuzz/corpus/
+fuzz/target/
 
 # Proptest
 proptest-regressions/

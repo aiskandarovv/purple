@@ -1913,7 +1913,10 @@ impl App {
                 .iter()
                 .enumerate()
                 .filter(|(_, host)| {
-                    host.provider_tags.iter().chain(host.tags.iter()).any(|t| eq_ci(t, tag_exact))
+                    host.provider_tags
+                        .iter()
+                        .chain(host.tags.iter())
+                        .any(|t| eq_ci(t, tag_exact))
                         || host.provider.as_ref().is_some_and(|p| eq_ci(p, tag_exact))
                 })
                 .map(|(i, _)| i)
@@ -1925,7 +1928,10 @@ impl App {
                 .iter()
                 .enumerate()
                 .filter(|(_, host)| {
-                    host.provider_tags.iter().chain(host.tags.iter()).any(|t| contains_ci(t, tag_query))
+                    host.provider_tags
+                        .iter()
+                        .chain(host.tags.iter())
+                        .any(|t| contains_ci(t, tag_query))
                         || host
                             .provider
                             .as_ref()
@@ -1942,7 +1948,11 @@ impl App {
                     contains_ci(&host.alias, &query)
                         || contains_ci(&host.hostname, &query)
                         || contains_ci(&host.user, &query)
-                        || host.provider_tags.iter().chain(host.tags.iter()).any(|t| contains_ci(t, &query))
+                        || host
+                            .provider_tags
+                            .iter()
+                            .chain(host.tags.iter())
+                            .any(|t| contains_ci(t, &query))
                         || host
                             .provider
                             .as_ref()
@@ -4533,9 +4543,8 @@ Host vultr-app
 
     #[test]
     fn test_search_tag_exact_matches_provider_tags() {
-        let mut app = make_app(
-            "Host myserver\n  HostName 10.0.0.1\n  # purple:provider_tags prod\n",
-        );
+        let mut app =
+            make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:provider_tags prod\n");
         app.start_search();
         app.search.query = Some("tag=prod".to_string());
         app.apply_filter();
@@ -4544,9 +4553,8 @@ Host vultr-app
 
     #[test]
     fn test_search_tag_fuzzy_matches_provider_tags() {
-        let mut app = make_app(
-            "Host myserver\n  HostName 10.0.0.1\n  # purple:provider_tags production\n",
-        );
+        let mut app =
+            make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:provider_tags production\n");
         app.start_search();
         app.search.query = Some("tag:prod".to_string());
         app.apply_filter();
@@ -4555,9 +4563,8 @@ Host vultr-app
 
     #[test]
     fn test_search_general_matches_provider_tags() {
-        let mut app = make_app(
-            "Host myserver\n  HostName 10.0.0.1\n  # purple:provider_tags staging\n",
-        );
+        let mut app =
+            make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:provider_tags staging\n");
         app.start_search();
         app.search.query = Some("staging".to_string());
         app.apply_filter();

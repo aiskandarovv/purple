@@ -4038,14 +4038,7 @@ Host do-web-1
         "1.2.3.4".to_string(),
         vec!["staging".to_string()],
     )];
-    let result = sync_provider(
-        &mut config,
-        &provider,
-        &remote,
-        &section,
-        false,
-        false,
-    );
+    let result = sync_provider(&mut config, &provider, &remote, &section, false, false);
     assert_eq!(result.updated, 1);
 
     let output = config.serialize();

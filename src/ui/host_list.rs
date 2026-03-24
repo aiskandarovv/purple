@@ -81,47 +81,59 @@ impl Columns {
         // Columns are capped — they never grow beyond content needs.
         let alias = Self::padded(alias_w).clamp(8, 32);
         let mut host = Self::padded(host_w).max(HOST_MIN);
-        let mut tags = if tags_w > 0 { Self::padded(tags_w).max(4) } else { 0 };
-        let mut tunnel = if tunnel_w > 0 { Self::padded(tunnel_w).max(6) } else { 0 };
-        let mut auth = if auth_w > 0 { Self::padded(auth_w).max(4) } else { 0 };
+        let mut tags = if tags_w > 0 {
+            Self::padded(tags_w).max(4)
+        } else {
+            0
+        };
+        let mut tunnel = if tunnel_w > 0 {
+            Self::padded(tunnel_w).max(6)
+        } else {
+            0
+        };
+        let mut auth = if auth_w > 0 {
+            Self::padded(auth_w).max(4)
+        } else {
+            0
+        };
         let show_ping = has_ping; // fixed 4 chars, never hidden
-        let mut history = if history_w > 0 { Self::padded(history_w).max(4) } else { 0 };
+        let mut history = if history_w > 0 {
+            Self::padded(history_w).max(4)
+        } else {
+            0
+        };
 
         // Fixed gap between columns within a cluster
         let gap: usize = if content >= 120 { 3 } else { 2 };
 
         // Total width of the right cluster (AUTH, TUNNEL, PING, TAGS, LAST + gaps)
-        let right_cluster = |tags: usize,
-                             tunnel: usize,
-                             auth: usize,
-                             ping: bool,
-                             history: usize|
-         -> usize {
-            let mut w = 0usize;
-            let mut n = 0usize;
-            if auth > 0 {
-                w += auth;
-                n += 1;
-            }
-            if tunnel > 0 {
-                w += tunnel;
-                n += 1;
-            }
-            if ping {
-                w += 4;
-                n += 1;
-            }
-            if tags > 0 {
-                w += tags;
-                n += 1;
-            }
-            if history > 0 {
-                w += history;
-                n += 1;
-            }
-            let gaps = if n > 1 { (n - 1) * gap } else { 0 };
-            w + gaps
-        };
+        let right_cluster =
+            |tags: usize, tunnel: usize, auth: usize, ping: bool, history: usize| -> usize {
+                let mut w = 0usize;
+                let mut n = 0usize;
+                if auth > 0 {
+                    w += auth;
+                    n += 1;
+                }
+                if tunnel > 0 {
+                    w += tunnel;
+                    n += 1;
+                }
+                if ping {
+                    w += 4;
+                    n += 1;
+                }
+                if tags > 0 {
+                    w += tags;
+                    n += 1;
+                }
+                if history > 0 {
+                    w += history;
+                    n += 1;
+                }
+                let gaps = if n > 1 { (n - 1) * gap } else { 0 };
+                w + gaps
+            };
 
         // Left cluster: highlight_symbol(1) + marker + NAME + gap + HOST
         let left = MARKER_WIDTH + 1 + alias + gap + host;
@@ -458,9 +470,12 @@ fn render_display_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::
     );
 
     // Column header + underline + list body
-    let [header_area, underline_area, list_area] =
-        Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Min(1)])
-            .areas(inner);
+    let [header_area, underline_area, list_area] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(1),
+    ])
+    .areas(inner);
 
     render_header(frame, header_area, &cols, app.sort_mode);
     frame.render_widget(
@@ -633,9 +648,12 @@ fn render_search_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::R
         content_width,
     );
 
-    let [header_area, underline_area, list_area] =
-        Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Min(1)])
-            .areas(inner);
+    let [header_area, underline_area, list_area] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(1),
+    ])
+    .areas(inner);
 
     render_header(frame, header_area, &cols, app.sort_mode);
     frame.render_widget(
@@ -1259,56 +1277,73 @@ mod tests {
         // Set up widths that are too wide for content area.
         // Tags should be hidden first, while auth and tunnel remain.
         let cols = Columns::compute(
-            10,  // alias_w
-            20,  // host_w
-            10,  // tags_w — should be hidden first
-            8,   // tunnel_w
-            8,   // auth_w
+            10,    // alias_w
+            20,    // host_w
+            10,    // tags_w — should be hidden first
+            8,     // tunnel_w
+            8,     // auth_w
             false, // no ping
-            6,   // history_w
-            60,  // narrow content
+            6,     // history_w
+            60,    // narrow content
         );
         assert_eq!(cols.tags, 0, "Tags should be hidden first when too narrow");
-        assert!(cols.auth > 0 || cols.tunnel > 0, "Auth or tunnel should still be present");
+        assert!(
+            cols.auth > 0 || cols.tunnel > 0,
+            "Auth or tunnel should still be present"
+        );
     }
 
     #[test]
     fn test_columns_compute_flex_gap() {
         let cols = Columns::compute(
-            10,  // alias_w
-            15,  // host_w
-            8,   // tags_w
-            6,   // tunnel_w
-            6,   // auth_w
+            10,    // alias_w
+            15,    // host_w
+            8,     // tags_w
+            6,     // tunnel_w
+            6,     // auth_w
             false, // no ping
-            5,   // history_w
-            200, // wide content
+            5,     // history_w
+            200,   // wide content
         );
-        assert!(cols.flex_gap > 0, "flex_gap should be positive with wide content");
+        assert!(
+            cols.flex_gap > 0,
+            "flex_gap should be positive with wide content"
+        );
         // Total consumed should not exceed content width
         let gap = if 200 >= 120 { 3 } else { 2 };
         let left = MARKER_WIDTH + 1 + cols.alias + gap + cols.host;
         let mut right = 0;
-        if cols.auth > 0 { right += cols.auth; }
-        if cols.tunnel > 0 { right += cols.tunnel; }
-        if cols.tags > 0 { right += cols.tags; }
-        if cols.history > 0 { right += cols.history; }
+        if cols.auth > 0 {
+            right += cols.auth;
+        }
+        if cols.tunnel > 0 {
+            right += cols.tunnel;
+        }
+        if cols.tags > 0 {
+            right += cols.tags;
+        }
+        if cols.history > 0 {
+            right += cols.history;
+        }
         // flex_gap fills the remaining space
-        assert_eq!(cols.flex_gap, 200usize.saturating_sub(left + right + (3 * 3))); // approximate
+        assert_eq!(
+            cols.flex_gap,
+            200usize.saturating_sub(left + right + (3 * 3))
+        ); // approximate
     }
 
     #[test]
     fn test_columns_compute_host_shrinks() {
         // Very narrow content: host shrinks but stays >= HOST_MIN
         let cols = Columns::compute(
-            8,   // alias_w
-            30,  // host_w — should shrink
-            0,   // no tags
-            0,   // no tunnel
-            0,   // no auth
+            8,     // alias_w
+            30,    // host_w — should shrink
+            0,     // no tags
+            0,     // no tunnel
+            0,     // no auth
             false, // no ping
-            0,   // no history
-            30,  // very narrow
+            0,     // no history
+            30,    // very narrow
         );
         assert!(
             cols.host >= HOST_MIN,

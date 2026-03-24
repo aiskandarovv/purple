@@ -310,13 +310,12 @@ impl HostBlock {
     /// Pass an empty string to remove the comment.
     pub fn set_askpass(&mut self, source: &str) {
         let indent = self.detect_indent();
-        self.directives
-            .retain(|d| {
-                !(d.is_non_directive && {
-                    let t = d.raw_line.trim();
-                    t == "# purple:askpass" || t.starts_with("# purple:askpass ")
-                })
-            });
+        self.directives.retain(|d| {
+            !(d.is_non_directive && {
+                let t = d.raw_line.trim();
+                t == "# purple:askpass" || t.starts_with("# purple:askpass ")
+            })
+        });
         if !source.is_empty() {
             let pos = self.content_end();
             self.directives.insert(
@@ -361,13 +360,12 @@ impl HostBlock {
     /// Pass an empty slice to remove the comment.
     pub fn set_meta(&mut self, meta: &[(String, String)]) {
         let indent = self.detect_indent();
-        self.directives
-            .retain(|d| {
-                !(d.is_non_directive && {
-                    let t = d.raw_line.trim();
-                    t == "# purple:meta" || t.starts_with("# purple:meta ")
-                })
-            });
+        self.directives.retain(|d| {
+            !(d.is_non_directive && {
+                let t = d.raw_line.trim();
+                t == "# purple:meta" || t.starts_with("# purple:meta ")
+            })
+        });
         if !meta.is_empty() {
             let encoded: Vec<String> = meta
                 .iter()
@@ -2864,9 +2862,8 @@ Host *
 
     #[test]
     fn test_provider_tags_parsing() {
-        let config = parse_str(
-            "Host myserver\n  HostName 10.0.0.1\n  # purple:provider_tags a,b,c\n",
-        );
+        let config =
+            parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:provider_tags a,b,c\n");
         let entry = first_block(&config).to_host_entry();
         assert_eq!(entry.provider_tags, vec!["a", "b", "c"]);
     }
@@ -2880,9 +2877,8 @@ Host *
 
     #[test]
     fn test_has_provider_tags_comment_present() {
-        let config = parse_str(
-            "Host myserver\n  HostName 10.0.0.1\n  # purple:provider_tags prod\n",
-        );
+        let config =
+            parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:provider_tags prod\n");
         assert!(first_block(&config).has_provider_tags_comment());
         assert!(first_block(&config).to_host_entry().has_provider_tags);
     }
@@ -2890,12 +2886,15 @@ Host *
     #[test]
     fn test_has_provider_tags_comment_sentinel() {
         // Bare sentinel (no tags) still counts as "has provider_tags"
-        let config = parse_str(
-            "Host myserver\n  HostName 10.0.0.1\n  # purple:provider_tags\n",
-        );
+        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:provider_tags\n");
         assert!(first_block(&config).has_provider_tags_comment());
         assert!(first_block(&config).to_host_entry().has_provider_tags);
-        assert!(first_block(&config).to_host_entry().provider_tags.is_empty());
+        assert!(
+            first_block(&config)
+                .to_host_entry()
+                .provider_tags
+                .is_empty()
+        );
     }
 
     #[test]

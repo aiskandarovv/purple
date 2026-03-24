@@ -104,7 +104,6 @@ enum Commands {
         /// Remove hosts that no longer exist on the provider
         #[arg(long)]
         remove: bool,
-
     },
     /// Manage cloud provider configurations
     Provider {
