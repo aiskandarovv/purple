@@ -84,10 +84,6 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         push_field(&mut lines, "Port", &host.port.to_string(), max_value_width);
     }
 
-    if !host.proxy_jump.is_empty() {
-        push_field(&mut lines, "ProxyJump", &host.proxy_jump, max_value_width);
-    }
-
     if !host.identity_file.is_empty() {
         let key_display = host
             .identity_file
@@ -127,10 +123,44 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             );
 
             if !entry.timestamps.is_empty() && inner_width >= 10 {
-                let chart_lines = activity_sparkline(&entry.timestamps, inner_width);
-                if !chart_lines.is_empty() {
-                    lines.push(Line::from(""));
-                    lines.extend(chart_lines);
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                // Fewer than 3 connections: show a compact text list instead of sparkline
+                let recent: Vec<u64> = entry
+                    .timestamps
+                    .iter()
+                    .copied()
+                    .filter(|&t| t <= now)
+                    .collect();
+                if recent.len() < SPARKLINE_MIN_CONNECTIONS {
+                    let labels: Vec<String> = recent
+                        .iter()
+                        .rev()
+                        .take(4)
+                        .map(|&t| {
+                            let ago = ConnectionHistory::format_time_ago(t);
+                            if ago.is_empty() {
+                                "now".to_string()
+                            } else {
+                                format!("{} ago", ago)
+                            }
+                        })
+                        .collect();
+                    if !labels.is_empty() {
+                        let text = labels.join(", ");
+                        lines.push(Line::from(Span::styled(
+                            super::truncate(&text, inner_width),
+                            theme::muted(),
+                        )));
+                    }
+                } else {
+                    let chart_lines = activity_sparkline(&entry.timestamps, inner_width);
+                    if !chart_lines.is_empty() {
+                        lines.push(Line::from(""));
+                        lines.extend(chart_lines);
+                    }
                 }
             }
         }
@@ -148,6 +178,66 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                     theme::muted(),
                 ),
                 Span::styled(text, style),
+            ]));
+        }
+    }
+
+    // Route visualisation (only when ProxyJump resolves to known hosts)
+    if !host.proxy_jump.is_empty() {
+        let chain = resolve_proxy_chain(host, &app.hosts);
+        if !chain.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(section_header("Route"));
+            let indent = "  ";
+            let hop_width = inner_width.saturating_sub(4); // minus "  ● "
+            lines.push(Line::from(vec![
+                Span::styled(format!("{}\u{25CB} ", indent), theme::muted()),
+                Span::styled("you", theme::muted()),
+            ]));
+            for (name, hostname, in_config) in chain.iter().rev() {
+                lines.push(Line::from(Span::styled(
+                    format!("{}  \u{2502}", indent),
+                    theme::muted(),
+                )));
+                let name_style = if *in_config {
+                    theme::bold()
+                } else {
+                    theme::error()
+                };
+                let name_trunc = super::truncate(name, hop_width);
+                let remaining = hop_width.saturating_sub(name_trunc.len());
+                let ip = if *in_config && name != hostname && remaining > 4 {
+                    format!(
+                        "  {}",
+                        super::truncate(hostname, remaining.saturating_sub(2))
+                    )
+                } else {
+                    String::new()
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(format!("{}\u{25CF} ", indent), theme::muted()),
+                    Span::styled(name_trunc, name_style),
+                    Span::styled(ip, theme::muted()),
+                ]));
+            }
+            lines.push(Line::from(Span::styled(
+                format!("{}  \u{2502}", indent),
+                theme::muted(),
+            )));
+            let alias_trunc = super::truncate(&host.alias, hop_width);
+            let remaining = hop_width.saturating_sub(alias_trunc.len());
+            let target_ip = if remaining > 4 {
+                format!(
+                    "  {}",
+                    super::truncate(&host.hostname, remaining.saturating_sub(2))
+                )
+            } else {
+                String::new()
+            };
+            lines.push(Line::from(vec![
+                Span::styled(format!("{}\u{25CF} ", indent), theme::accent()),
+                Span::styled(alias_trunc, theme::bold()),
+                Span::styled(target_ip, theme::muted()),
             ]));
         }
     }
@@ -254,6 +344,55 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(paragraph, area);
 }
 
+/// Resolve the ProxyJump chain for a host. Returns the list of hops from
+/// the user's machine to the target: [(alias_or_name, hostname, in_config)].
+/// Follows ProxyJump directives through the config (max 10 hops to prevent loops).
+fn resolve_proxy_chain(
+    host: &crate::ssh_config::model::HostEntry,
+    hosts: &[crate::ssh_config::model::HostEntry],
+) -> Vec<(String, String, bool)> {
+    let mut chain = Vec::new();
+    let mut current_jump = host.proxy_jump.clone();
+    let mut seen = std::collections::HashSet::new();
+    seen.insert(host.alias.clone()); // Prevent loops back to the target host
+    for _ in 0..10 {
+        if current_jump.is_empty() || current_jump.eq_ignore_ascii_case("none") {
+            break;
+        }
+        // ProxyJump can be comma-separated for multi-hop: host1,host2
+        // SSH processes them left to right (first hop first)
+        let hops: Vec<&str> = current_jump.split(',').map(|s| s.trim()).collect();
+        for hop_name in &hops {
+            if hop_name.is_empty() {
+                continue;
+            }
+            let name = hop_name.to_string();
+            if !seen.insert(name.clone()) {
+                // Loop detected
+                return chain;
+            }
+            if let Some(jump_host) = hosts.iter().find(|h| h.alias == name) {
+                chain.push((name, jump_host.hostname.clone(), true));
+            } else {
+                // Host not in config (external or typo)
+                chain.push((name.clone(), name, false));
+            }
+        }
+        // Follow the chain: check the last hop's ProxyJump
+        let last_hop = hops.last().unwrap_or(&"");
+        if let Some(next) = hosts.iter().find(|h| h.alias == *last_hop) {
+            current_jump = next.proxy_jump.clone();
+        } else {
+            break;
+        }
+    }
+    chain
+}
+
+/// Minimum number of connections before showing a sparkline chart.
+/// Below this threshold, a compact text list is shown instead.
+const SPARKLINE_MIN_CONNECTIONS: usize = 3;
+
 fn push_field(lines: &mut Vec<Line<'static>>, label: &str, value: &str, max_value_width: usize) {
     let display = if max_value_width > 0 {
         super::truncate(value, max_value_width)
@@ -309,7 +448,21 @@ const BLOCKS: [char; 9] = [
     ' ', '\u{2581}', '\u{2582}', '\u{2583}', '\u{2584}', '\u{2585}', '\u{2586}', '\u{2587}',
     '\u{2588}',
 ];
-const CHART_DAYS: u64 = 84;
+/// Predefined time ranges for auto-scaling the sparkline.
+/// The smallest range that contains the oldest timestamp is used.
+/// Predefined time ranges for auto-scaling the sparkline.
+/// (days, left_label, midpoint_label)
+const CHART_RANGES: &[(u64, &str, &str)] = &[
+    (5, "5d", "~2d"),
+    (10, "10d", "~5d"),
+    (14, "2w", "~1w"),
+    (21, "3w", "~10d"),
+    (30, "30d", "~2w"),
+    (60, "2mo", "~1mo"),
+    (84, "12w", "~6w"),
+    (180, "6mo", "~3mo"),
+    (365, "1y", "~6mo"),
+];
 
 fn activity_sparkline(timestamps: &[u64], chart_width: usize) -> Vec<Line<'static>> {
     if chart_width == 0 {
@@ -321,7 +474,21 @@ fn activity_sparkline(timestamps: &[u64], chart_width: usize) -> Vec<Line<'stati
         .unwrap_or_default()
         .as_secs();
 
-    let range_secs = CHART_DAYS * 86400;
+    // Auto-scale: pick the smallest range that contains the oldest timestamp
+    let oldest = timestamps
+        .iter()
+        .copied()
+        .filter(|&t| t <= now)
+        .min()
+        .unwrap_or(now);
+    let data_age_days = now.saturating_sub(oldest) / 86400 + 1;
+    let chart_days = CHART_RANGES
+        .iter()
+        .find(|(days, _, _)| *days >= data_age_days)
+        .map(|(days, _, _)| *days)
+        .unwrap_or(CHART_RANGES.last().unwrap().0);
+
+    let range_secs = chart_days * 86400;
     let bucket_secs = range_secs as f64 / chart_width as f64;
     let cutoff = now.saturating_sub(range_secs);
 
@@ -369,28 +536,69 @@ fn activity_sparkline(timestamps: &[u64], chart_width: usize) -> Vec<Line<'stati
         chart_lines.push(Line::from(Span::styled(top, theme::bold())));
     }
 
-    // Bottom row
-    let mut bottom = String::with_capacity(chart_width * 3);
+    // Bottom row with dotted baseline for empty buckets
+    let mut bottom_spans: Vec<Span<'static>> = Vec::new();
+    let mut run_empty = String::new();
+    let mut run_filled = String::new();
+
     for &h in &heights {
         if h == 0 {
-            bottom.push(' ');
-        } else if h >= 8 {
-            bottom.push(BLOCKS[8]);
+            if !run_filled.is_empty() {
+                bottom_spans.push(Span::styled(std::mem::take(&mut run_filled), theme::bold()));
+            }
+            run_empty.push('\u{00B7}'); // · (middle dot)
         } else {
-            bottom.push(BLOCKS[h]);
+            if !run_empty.is_empty() {
+                bottom_spans.push(Span::styled(std::mem::take(&mut run_empty), theme::muted()));
+            }
+            if h >= 8 {
+                run_filled.push(BLOCKS[8]);
+            } else {
+                run_filled.push(BLOCKS[h]);
+            }
         }
     }
-    chart_lines.push(Line::from(Span::styled(bottom, theme::bold())));
+    // Flush remaining runs
+    if !run_filled.is_empty() {
+        bottom_spans.push(Span::styled(run_filled, theme::bold()));
+    }
+    if !run_empty.is_empty() {
+        bottom_spans.push(Span::styled(run_empty, theme::muted()));
+    }
+    chart_lines.push(Line::from(bottom_spans));
 
-    // Axis labels
-    let left_label = format!("{}w", CHART_DAYS / 7);
+    // Axis labels: left ... midpoint ... now
+    let range_entry = CHART_RANGES.iter().find(|(days, _, _)| *days == chart_days);
+    let left_label = range_entry
+        .map(|(_, label, _)| label.to_string())
+        .unwrap_or_else(|| format!("{}d", chart_days));
+    let mid_label = range_entry
+        .map(|(_, _, mid)| mid.to_string())
+        .unwrap_or_default();
     let right_label = "now";
-    let gap = chart_width.saturating_sub(left_label.len() + right_label.len());
-    chart_lines.push(Line::from(vec![
-        Span::styled(left_label, theme::muted()),
-        Span::raw(" ".repeat(gap)),
-        Span::styled(right_label.to_string(), theme::muted()),
-    ]));
+
+    let labels_width = left_label.len() + mid_label.len() + right_label.len();
+    if !mid_label.is_empty() && chart_width > labels_width + 4 {
+        // Three-point axis: left ... mid ... now
+        let total_gap = chart_width.saturating_sub(labels_width);
+        let gap_left = total_gap / 2;
+        let gap_right = total_gap - gap_left;
+        chart_lines.push(Line::from(vec![
+            Span::styled(left_label, theme::muted()),
+            Span::raw(" ".repeat(gap_left)),
+            Span::styled(mid_label, theme::muted()),
+            Span::raw(" ".repeat(gap_right)),
+            Span::styled(right_label.to_string(), theme::muted()),
+        ]));
+    } else {
+        // Two-point axis (narrow panel): left ... now
+        let gap = chart_width.saturating_sub(left_label.len() + right_label.len());
+        chart_lines.push(Line::from(vec![
+            Span::styled(left_label, theme::muted()),
+            Span::raw(" ".repeat(gap)),
+            Span::styled(right_label.to_string(), theme::muted()),
+        ]));
+    }
 
     chart_lines
 }
@@ -447,7 +655,7 @@ mod tests {
 
     #[test]
     fn sparkline_all_outside_range() {
-        let old = now() - 100 * 86400;
+        let old = now() - 400 * 86400; // older than max range (365d)
         let result = activity_sparkline(&[old], 40);
         assert!(result.is_empty());
     }
@@ -479,12 +687,134 @@ mod tests {
 
     #[test]
     fn sparkline_axis_labels() {
-        let ts = now() - 86400;
+        let ts = now() - 86400; // 1 day ago → auto-scales to 5d range
         let lines = activity_sparkline(&[ts], 30);
         let axis = lines.last().unwrap();
         let text: String = axis.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert!(text.contains("12w"));
+        assert!(text.contains("5d"));
         assert!(text.contains("now"));
+    }
+
+    #[test]
+    fn sparkline_auto_scales_to_data_range() {
+        // 3 days of data → 5d range
+        let lines_3d = activity_sparkline(&[now() - 3 * 86400], 30);
+        let axis_3d: String = lines_3d
+            .last()
+            .unwrap()
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(axis_3d.contains("5d"));
+
+        // 8 days of data → 10d range
+        let lines_8d = activity_sparkline(&[now() - 8 * 86400], 30);
+        let axis_8d: String = lines_8d
+            .last()
+            .unwrap()
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(axis_8d.contains("10d"));
+
+        // 50 days of data → 2mo range
+        let lines_50d = activity_sparkline(&[now() - 50 * 86400], 30);
+        let axis_50d: String = lines_50d
+            .last()
+            .unwrap()
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(axis_50d.contains("2mo"));
+
+        // 100 days of data → 6mo range
+        let lines_100d = activity_sparkline(&[now() - 100 * 86400], 30);
+        let axis_100d: String = lines_100d
+            .last()
+            .unwrap()
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(axis_100d.contains("6mo"));
+    }
+
+    #[test]
+    fn sparkline_shown_at_threshold() {
+        // 3 connections (= SPARKLINE_MIN_CONNECTIONS) → sparkline should render
+        let n = now();
+        let ts = vec![n - 86400, n - 2 * 86400, n - 3 * 86400];
+        let lines = activity_sparkline(&ts, 30);
+        assert!(
+            !lines.is_empty(),
+            "sparkline must render at {} connections",
+            SPARKLINE_MIN_CONNECTIONS
+        );
+    }
+
+    #[test]
+    fn sparkline_shown_above_threshold() {
+        // 4 connections (above threshold) → sparkline should render
+        let n = now();
+        let ts = vec![n - 3600, n - 86400, n - 2 * 86400, n - 3 * 86400];
+        let lines = activity_sparkline(&ts, 30);
+        assert!(!lines.is_empty(), "sparkline must render at 4 connections");
+    }
+
+    #[test]
+    fn sparkline_rendered_with_dotted_baseline() {
+        // Verify that empty buckets use · (middle dot) not spaces
+        let n = now();
+        // One connection at start of range → most buckets empty → dots visible
+        let lines = activity_sparkline(&[n - 4 * 86400], 20);
+        assert!(!lines.is_empty());
+        // Bottom row (before axis) should contain · for empty buckets
+        let bottom = &lines[lines.len() - 2]; // second to last = bottom row
+        let text: String = bottom.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(
+            text.contains('\u{00B7}'),
+            "empty buckets should show · (middle dot), got: {:?}",
+            text
+        );
+    }
+
+    #[test]
+    fn sparkline_midpoint_label_shown_at_normal_width() {
+        // At 30 cols, midpoint label should appear
+        let lines = activity_sparkline(&[now() - 86400], 30);
+        let axis: String = lines
+            .last()
+            .unwrap()
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(
+            axis.contains("~2d"),
+            "midpoint label missing at 30 cols, got: {:?}",
+            axis
+        );
+    }
+
+    #[test]
+    fn sparkline_midpoint_label_hidden_at_narrow_width() {
+        // At 10 cols, midpoint label should NOT appear (too narrow)
+        let lines = activity_sparkline(&[now() - 86400], 10);
+        let axis: String = lines
+            .last()
+            .unwrap()
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(
+            !axis.contains("~"),
+            "midpoint label should be hidden at 10 cols, got: {:?}",
+            axis
+        );
     }
 
     #[test]
@@ -560,5 +890,133 @@ mod tests {
         // "#ab #cd" = 7 cols, max 6 → wraps
         let rows = wrap_tags(&t, 6);
         assert_eq!(rows.len(), 2);
+    }
+
+    // --- resolve_proxy_chain tests ---
+
+    fn host(alias: &str, hostname: &str, proxy: &str) -> crate::ssh_config::model::HostEntry {
+        crate::ssh_config::model::HostEntry {
+            alias: alias.to_string(),
+            hostname: hostname.to_string(),
+            proxy_jump: proxy.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn proxy_chain_single_hop() {
+        let target = host("server", "10.0.0.1", "bastion");
+        let bastion = host("bastion", "1.2.3.4", "");
+        let hosts = vec![target.clone(), bastion];
+        let chain = resolve_proxy_chain(&target, &hosts);
+        assert_eq!(chain.len(), 1);
+        assert_eq!(chain[0].0, "bastion");
+        assert_eq!(chain[0].1, "1.2.3.4");
+        assert!(chain[0].2); // in_config
+    }
+
+    #[test]
+    fn proxy_chain_multi_hop() {
+        let target = host("server", "10.0.0.1", "jump1");
+        let jump1 = host("jump1", "1.1.1.1", "jump2");
+        let jump2 = host("jump2", "2.2.2.2", "");
+        let hosts = vec![target.clone(), jump1, jump2];
+        let chain = resolve_proxy_chain(&target, &hosts);
+        assert_eq!(chain.len(), 2);
+        assert_eq!(chain[0].0, "jump1");
+        assert_eq!(chain[1].0, "jump2");
+    }
+
+    #[test]
+    fn proxy_chain_loop_detection() {
+        let a = host("a", "1.1.1.1", "b");
+        let b = host("b", "2.2.2.2", "a");
+        let hosts = vec![a.clone(), b];
+        let chain = resolve_proxy_chain(&a, &hosts);
+        // Should stop after "b" because "a" was already seen
+        assert_eq!(chain.len(), 1);
+        assert_eq!(chain[0].0, "b");
+    }
+
+    #[test]
+    fn proxy_chain_comma_separated() {
+        let target = host("server", "10.0.0.1", "hop1, hop2");
+        let hop1 = host("hop1", "1.1.1.1", "");
+        let hop2 = host("hop2", "2.2.2.2", "");
+        let hosts = vec![target.clone(), hop1, hop2];
+        let chain = resolve_proxy_chain(&target, &hosts);
+        assert_eq!(chain.len(), 2);
+        assert_eq!(chain[0].0, "hop1");
+        assert_eq!(chain[1].0, "hop2");
+    }
+
+    #[test]
+    fn proxy_chain_host_not_in_config() {
+        let target = host("server", "10.0.0.1", "unknown");
+        let hosts = vec![target.clone()];
+        let chain = resolve_proxy_chain(&target, &hosts);
+        assert_eq!(chain.len(), 1);
+        assert_eq!(chain[0].0, "unknown");
+        assert_eq!(chain[0].1, "unknown"); // hostname == alias for unknown hosts
+        assert!(!chain[0].2); // NOT in_config
+    }
+
+    #[test]
+    fn proxy_chain_empty_hops_in_comma_list() {
+        let target = host("server", "10.0.0.1", "hop1,,hop2");
+        let hop1 = host("hop1", "1.1.1.1", "");
+        let hop2 = host("hop2", "2.2.2.2", "");
+        let hosts = vec![target.clone(), hop1, hop2];
+        let chain = resolve_proxy_chain(&target, &hosts);
+        assert_eq!(chain.len(), 2);
+        assert_eq!(chain[0].0, "hop1");
+        assert_eq!(chain[1].0, "hop2");
+    }
+
+    #[test]
+    fn proxy_chain_mixed_known_unknown() {
+        let target = host("server", "10.0.0.1", "known, mystery, also_known");
+        let known = host("known", "1.1.1.1", "");
+        let also_known = host("also_known", "3.3.3.3", "");
+        let hosts = vec![target.clone(), known, also_known];
+        let chain = resolve_proxy_chain(&target, &hosts);
+        assert_eq!(chain.len(), 3);
+        assert!(chain[0].2); // known: in_config
+        assert!(!chain[1].2); // mystery: NOT in_config
+        assert!(chain[2].2); // also_known: in_config
+    }
+
+    #[test]
+    fn proxy_chain_none_stops() {
+        let target = host("server", "10.0.0.1", "none");
+        let hosts = vec![target.clone()];
+        let chain = resolve_proxy_chain(&target, &hosts);
+        assert!(chain.is_empty());
+    }
+
+    #[test]
+    fn proxy_chain_empty_proxyjump() {
+        let target = host("server", "10.0.0.1", "");
+        let hosts = vec![target.clone()];
+        let chain = resolve_proxy_chain(&target, &hosts);
+        assert!(chain.is_empty());
+    }
+
+    #[test]
+    fn proxy_chain_max_depth() {
+        // Create a chain of 12 hops (exceeds max 10)
+        let mut hosts = Vec::new();
+        for i in 0..12 {
+            let proxy = if i < 11 {
+                format!("h{}", i + 1)
+            } else {
+                String::new()
+            };
+            hosts.push(host(&format!("h{}", i), &format!("10.0.0.{}", i), &proxy));
+        }
+        let target = host("target", "10.0.0.99", "h0");
+        hosts.push(target.clone());
+        let chain = resolve_proxy_chain(&target, &hosts);
+        assert!(chain.len() <= 10);
     }
 }

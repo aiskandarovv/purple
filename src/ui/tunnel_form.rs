@@ -76,23 +76,30 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Footer below the block
     let footer_area = Rect::new(form_area.x, form_area.y + block_height, form_area.width, 1);
-    super::render_footer_with_status(
-        frame,
-        footer_area,
+    let footer_spans = if app.pending_discard_confirm {
+        vec![
+            Span::styled(" Discard changes? ", theme::error()),
+            Span::styled("y", theme::accent_bold()),
+            Span::styled(" yes ", theme::muted()),
+            Span::styled("\u{2502} ", theme::muted()),
+            Span::styled("Esc", theme::accent_bold()),
+            Span::styled(" no", theme::muted()),
+        ]
+    } else {
         vec![
             Span::styled(" Enter", theme::primary_action()),
             Span::styled(" save ", theme::muted()),
             Span::styled("\u{2502} ", theme::muted()),
             Span::styled("Tab", theme::accent_bold()),
             Span::styled(" next ", theme::muted()),
-            Span::styled("L/R", theme::accent_bold()),
+            Span::styled("Space", theme::accent_bold()),
             Span::styled(" type ", theme::muted()),
             Span::styled("\u{2502} ", theme::muted()),
             Span::styled("Esc", theme::accent_bold()),
             Span::styled(" cancel", theme::muted()),
-        ],
-        app,
-    );
+        ]
+    };
+    super::render_footer_with_status(frame, footer_area, footer_spans, app);
 }
 
 fn render_divider(
@@ -123,7 +130,7 @@ fn render_field_content(
             Line::from(vec![
                 Span::styled(type_label, theme::bold()),
                 Span::raw(" ".repeat(gap)),
-                Span::styled("\u{25C2} \u{25B8}", theme::muted()),
+                Span::styled("\u{2423}", theme::muted()),
             ])
         } else {
             Line::from(Span::styled(type_label, theme::bold()))

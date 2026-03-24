@@ -17,7 +17,7 @@ fn placeholder_for(field: FormField) -> String {
                 "Enter to pick a source".to_string()
             }
         }
-        FormField::Alias => "my-server".to_string(),
+        FormField::Alias => "user@host:port or alias".to_string(),
         FormField::Hostname => "192.168.1.1 or example.com".to_string(),
         FormField::User => "root".to_string(),
         FormField::Port => "22".to_string(),
@@ -42,17 +42,21 @@ const FIELDS: &[(FormField, bool)] = &[
 pub fn render(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
 
-    let title = match &app.screen {
-        Screen::AddHost => " Add New Host ",
-        Screen::EditHost { .. } => " Edit Host ",
-        _ => " Host ",
-    };
-
     // Block: top(1) + fields * 2 (divider + content) + bottom(1)
     let block_height = 2 + FIELDS.len() as u16 * 2;
     let total_height = block_height + 1; // + footer
 
     let base = super::centered_rect(70, 80, area);
+
+    let title = match &app.screen {
+        Screen::AddHost => " Add New Host ".to_string(),
+        Screen::EditHost { alias } => {
+            let max_alias = (base.width as usize).saturating_sub(12); // " Edit: " + " " + borders
+            let truncated = super::truncate(alias, max_alias);
+            format!(" Edit: {} ", truncated)
+        }
+        _ => " Host ".to_string(),
+    };
     let form_area = super::centered_rect_fixed(base.width, total_height, area);
     frame.render_widget(Clear, form_area);
 
@@ -97,16 +101,27 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Footer below the block
     let footer_area = Rect::new(form_area.x, form_area.y + block_height, form_area.width, 1);
-    let mut footer_spans = vec![
-        Span::styled(" Enter", theme::primary_action()),
-        Span::styled(" save ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
-        Span::styled("Tab", theme::accent_bold()),
-        Span::styled(" next ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
-        Span::styled("Esc", theme::accent_bold()),
-        Span::styled(" cancel", theme::muted()),
-    ];
+    let mut footer_spans = if app.pending_discard_confirm {
+        vec![
+            Span::styled(" Discard changes? ", theme::error()),
+            Span::styled("y", theme::accent_bold()),
+            Span::styled(" yes ", theme::muted()),
+            Span::styled("\u{2502} ", theme::muted()),
+            Span::styled("Esc", theme::accent_bold()),
+            Span::styled(" no", theme::muted()),
+        ]
+    } else {
+        vec![
+            Span::styled(" Enter", theme::primary_action()),
+            Span::styled(" save ", theme::muted()),
+            Span::styled("\u{2502} ", theme::muted()),
+            Span::styled("Tab", theme::accent_bold()),
+            Span::styled(" next ", theme::muted()),
+            Span::styled("\u{2502} ", theme::muted()),
+            Span::styled("Esc", theme::accent_bold()),
+            Span::styled(" cancel", theme::muted()),
+        ]
+    };
     if let Some(ref hint) = app.form.form_hint {
         let hint_width: usize = hint.width() + 4; // " ⚠ {hint} "
         let shortcuts_width: usize = footer_spans.iter().map(|s| s.width()).sum();
@@ -223,7 +238,9 @@ fn render_proxyjump_picker_overlay(frame: &mut Frame, app: &mut App) {
     let area = super::centered_rect_fixed(width, height, frame.area());
     frame.render_widget(Clear, area);
 
-    let host_max = (width as usize).saturating_sub(2 + 2 + 1 + 20);
+    let alias_col = 20;
+    let gap = 2;
+    let host_max = (width as usize).saturating_sub(2 + 2 + 1 + alias_col + gap);
 
     let items: Vec<ListItem> = candidates
         .iter()
@@ -231,9 +248,14 @@ fn render_proxyjump_picker_overlay(frame: &mut Frame, app: &mut App) {
             let host_display = super::truncate(hostname, host_max);
             let line = Line::from(vec![
                 Span::styled(
-                    format!(" {:<20}", super::truncate(alias, 20)),
+                    format!(
+                        " {:<width$}",
+                        super::truncate(alias, alias_col),
+                        width = alias_col
+                    ),
                     theme::bold(),
                 ),
+                Span::raw(" ".repeat(gap)),
                 Span::styled(host_display, theme::muted()),
             ]);
             ListItem::new(line)

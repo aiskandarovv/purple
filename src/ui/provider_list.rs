@@ -219,9 +219,16 @@ pub fn render_provider_form(frame: &mut Frame, app: &mut App, provider_name: &st
 
     // Footer below the block
     let footer_area = Rect::new(form_area.x, form_area.y + block_height, form_area.width, 1);
-    super::render_footer_with_status(
-        frame,
-        footer_area,
+    let footer_spans = if app.pending_discard_confirm {
+        vec![
+            Span::styled(" Discard changes? ", theme::error()),
+            Span::styled("y", theme::accent_bold()),
+            Span::styled(" yes ", theme::muted()),
+            Span::styled("\u{2502} ", theme::muted()),
+            Span::styled("Esc", theme::accent_bold()),
+            Span::styled(" no", theme::muted()),
+        ]
+    } else {
         vec![
             Span::styled(" Enter", theme::primary_action()),
             Span::styled(" save ", theme::muted()),
@@ -231,9 +238,9 @@ pub fn render_provider_form(frame: &mut Frame, app: &mut App, provider_name: &st
             Span::styled("\u{2502} ", theme::muted()),
             Span::styled("Esc", theme::accent_bold()),
             Span::styled(" cancel", theme::muted()),
-        ],
-        app,
-    );
+        ]
+    };
+    super::render_footer_with_status(frame, footer_area, footer_spans, app);
 
     // Key picker popup overlay
     if app.ui.show_key_picker {
@@ -411,7 +418,7 @@ fn render_toggle_content(frame: &mut Frame, area: Rect, value_text: &str, is_foc
         Line::from(vec![
             Span::styled(value_text, theme::bold()),
             Span::raw(" ".repeat(gap)),
-            Span::styled("\u{25C2} \u{25B8}", theme::muted()),
+            Span::styled("\u{2423}", theme::muted()),
         ])
     } else {
         Line::from(Span::styled(value_text, theme::bold()))

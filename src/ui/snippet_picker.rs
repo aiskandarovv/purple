@@ -111,31 +111,35 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     };
 
     // Column widths: name gets ~28%, command gets the rest (or split with description)
-    // desc_w includes the 2-char gap prefix so name_w + cmd_w + desc_w = usable
+    // Each column pair separated by a 2-char gap for readability.
+    let col_gap = 2;
     let usable = list_area.width.saturating_sub(3) as usize; // 2 highlight + 1 leading space
     let has_desc = indices
         .iter()
         .any(|&i| !app.snippet_store.snippets[i].description.is_empty());
     let (name_w, cmd_w, desc_w) = if has_desc {
         let nw = (usable * 28 / 100).max(10);
-        let dw = ((usable * 28 / 100) + 2).max(10); // includes 2-char gap
-        let cw = usable.saturating_sub(nw + dw);
+        let dw = (usable * 28 / 100).max(10);
+        let cw = usable.saturating_sub(nw + col_gap + dw + col_gap);
         (nw, cw, dw)
     } else {
         let nw = (usable * 30 / 100).max(10);
-        let cw = usable.saturating_sub(nw);
+        let cw = usable.saturating_sub(nw + col_gap);
         (nw, cw, 0)
     };
 
     // Column header (3-space prefix = 2 highlight_symbol + 1 leading space in items)
+    let gap_str = " ".repeat(col_gap);
     if let Some(hi) = header_ci {
         let style = theme::bold();
         let mut hdr = vec![
             Span::styled(format!("   {:<name_w$}", "NAME"), style),
+            Span::raw(gap_str.clone()),
             Span::styled(format!("{:<cmd_w$}", "COMMAND"), style),
         ];
         if has_desc {
-            hdr.push(Span::styled(format!("{:<desc_w$}", "  DESCRIPTION"), style));
+            hdr.push(Span::raw(gap_str.clone()));
+            hdr.push(Span::styled(format!("{:<desc_w$}", "DESCRIPTION"), style));
         }
         frame.render_widget(Paragraph::new(Line::from(hdr)), chunks[hi]);
     }
@@ -157,18 +161,16 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                         format!(" {:<name_w$}", super::truncate(&snippet.name, name_w)),
                         theme::bold(),
                     ),
+                    Span::raw(gap_str.clone()),
                     Span::styled(
                         format!("{:<cmd_w$}", super::truncate(&snippet.command, cmd_w)),
                         theme::muted(),
                     ),
                 ];
                 if has_desc {
-                    let text_w = desc_w.saturating_sub(2);
+                    spans.push(Span::raw(gap_str.clone()));
                     spans.push(Span::styled(
-                        format!(
-                            "  {:<text_w$}",
-                            super::truncate(&snippet.description, text_w)
-                        ),
+                        format!("{:<desc_w$}", super::truncate(&snippet.description, desc_w)),
                         theme::muted(),
                     ));
                 }
@@ -222,26 +224,25 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     } else {
         let mut spans: Vec<Span<'_>> = Vec::new();
         if !app.snippet_store.snippets.is_empty() {
-            spans.push(Span::styled(" Enter", theme::primary_action()));
-            spans.push(Span::styled(" run ", theme::muted()));
-            spans.push(Span::styled("!", theme::accent_bold()));
-            spans.push(Span::styled(" terminal ", theme::muted()));
-            spans.push(Span::styled("\u{2502} ", theme::muted()));
+            let [k, l] = super::footer_primary(" Enter", " run ");
+            spans.extend([k, l, super::footer_sep()]);
+            let [k, l] = super::footer_action("!", " terminal ");
+            spans.extend([k, l, super::footer_sep()]);
         }
-        spans.push(Span::styled("a", theme::accent_bold()));
-        spans.push(Span::styled(" add ", theme::muted()));
+        let [k, l] = super::footer_action("a", " add ");
+        spans.extend([k, l]);
         if !app.snippet_store.snippets.is_empty() {
-            spans.push(Span::styled("e", theme::accent_bold()));
-            spans.push(Span::styled(" edit ", theme::muted()));
-            spans.push(Span::styled("d", theme::accent_bold()));
-            spans.push(Span::styled(" delete ", theme::muted()));
-            spans.push(Span::styled("\u{2502} ", theme::muted()));
-            spans.push(Span::styled("/", theme::accent_bold()));
-            spans.push(Span::styled(" search ", theme::muted()));
+            spans.push(super::footer_sep());
+            let [k, l] = super::footer_action("e", " edit ");
+            spans.extend([k, l, super::footer_sep()]);
+            let [k, l] = super::footer_action("d", " del ");
+            spans.extend([k, l, super::footer_sep()]);
+            let [k, l] = super::footer_action("/", " search ");
+            spans.extend([k, l]);
         }
-        spans.push(Span::styled("\u{2502} ", theme::muted()));
-        spans.push(Span::styled("Esc", theme::accent_bold()));
-        spans.push(Span::styled(" back", theme::muted()));
+        spans.push(super::footer_sep());
+        let [k, l] = super::footer_action("Esc", " back");
+        spans.extend([k, l]);
         super::render_footer_with_status(frame, footer_area, spans, app);
     }
 }

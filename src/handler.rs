@@ -111,10 +111,13 @@ pub fn handle_key_event(
         Screen::SnippetParamForm { .. } => handle_snippet_param_form(app, key, events_tx),
         Screen::ConfirmHostKeyReset { .. } => handle_confirm_host_key_reset(app, key),
         Screen::ConfirmImport { .. } => {
-            if key.code == KeyCode::Char('y') {
+            if key.code == KeyCode::Char('y') || key.code == KeyCode::Char('Y') {
                 app.screen = Screen::HostList;
                 execute_known_hosts_import(app);
-            } else if key.code == KeyCode::Esc || key.code == KeyCode::Char('n') {
+            } else if key.code == KeyCode::Esc
+                || key.code == KeyCode::Char('n')
+                || key.code == KeyCode::Char('N')
+            {
                 app.screen = Screen::HostList;
             }
         }
@@ -210,6 +213,7 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
             app.form = HostForm::new();
             app.screen = Screen::AddHost;
             app.capture_form_mtime();
+            app.capture_form_baseline();
         }
         KeyCode::Char('e') => {
             if let Some(host) = app.selected_host() {
@@ -223,6 +227,7 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
                 app.form = HostForm::from_entry(host);
                 app.screen = Screen::EditHost { alias };
                 app.capture_form_mtime();
+                app.capture_form_baseline();
             }
         }
         KeyCode::Char('d') => {
@@ -254,6 +259,7 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
                 app.form = form;
                 app.screen = Screen::AddHost;
                 app.capture_form_mtime();
+                app.capture_form_baseline();
             }
         }
         KeyCode::Char('y') => {
@@ -664,10 +670,32 @@ fn handle_form(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Handle discard confirmation dialog
+    if app.pending_discard_confirm {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                app.pending_discard_confirm = false;
+                app.clear_form_mtime();
+                app.form_baseline = None;
+                app.screen = Screen::HostList;
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                app.pending_discard_confirm = false;
+            }
+            _ => {}
+        }
+        return;
+    }
+
     match key.code {
         KeyCode::Esc => {
-            app.clear_form_mtime();
-            app.screen = Screen::HostList;
+            if app.host_form_is_dirty() {
+                app.pending_discard_confirm = true;
+            } else {
+                app.clear_form_mtime();
+                app.form_baseline = None;
+                app.screen = Screen::HostList;
+            }
         }
         KeyCode::Tab | KeyCode::Down => {
             // Smart paste detection: when leaving Alias field, check for user@host:port
@@ -771,6 +799,13 @@ fn maybe_smart_paste(app: &mut App) {
     }
 }
 
+/// After a picker selection, try to auto-submit the host form if all required fields are filled.
+fn try_auto_submit_after_picker(app: &mut App) {
+    if !app.form.alias.is_empty() && !app.form.hostname.is_empty() {
+        submit_form(app);
+    }
+}
+
 fn submit_form(app: &mut App) {
     // Check for external config changes since form was opened
     if app.config_changed_since_form_open() {
@@ -839,6 +874,7 @@ fn submit_form(app: &mut App) {
 
     let target_alias = app.form.alias.trim().to_string();
     app.clear_form_mtime();
+    app.form_baseline = None;
     app.screen = Screen::HostList;
     app.select_host_by_alias(&target_alias);
 }
@@ -1103,9 +1139,52 @@ fn handle_tag_input(app: &mut App, key: KeyEvent) {
 }
 
 fn handle_host_detail(app: &mut App, key: KeyEvent) {
+    let index = match app.screen {
+        Screen::HostDetail { index } => index,
+        _ => return,
+    };
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('i') => {
             app.screen = Screen::HostList;
+        }
+        KeyCode::Char('e') => {
+            if let Some(host) = app.hosts.get(index) {
+                if let Some(ref source) = host.source_file {
+                    let alias = host.alias.clone();
+                    let path = source.display();
+                    app.set_status(format!("{} lives in {}. Edit it there.", alias, path), true);
+                    return;
+                }
+                let alias = host.alias.clone();
+                app.form = HostForm::from_entry(host);
+                app.screen = Screen::EditHost { alias };
+                app.capture_form_mtime();
+                app.capture_form_baseline();
+            }
+        }
+        KeyCode::Char('T') => {
+            if let Some(host) = app.hosts.get(index) {
+                let alias = host.alias.clone();
+                app.refresh_tunnel_list(&alias);
+                app.ui.tunnel_list_state = ratatui::widgets::ListState::default();
+                if !app.tunnel_list.is_empty() {
+                    app.ui.tunnel_list_state.select(Some(0));
+                }
+                app.screen = Screen::TunnelList { alias };
+            }
+        }
+        KeyCode::Char('r') => {
+            if let Some(host) = app.hosts.get(index) {
+                let alias = host.alias.clone();
+                app.screen = Screen::SnippetPicker {
+                    target_aliases: vec![alias],
+                };
+                app.ui.snippet_picker_state = ratatui::widgets::ListState::default();
+                let indices = app.filtered_snippet_indices();
+                if !indices.is_empty() {
+                    app.ui.snippet_picker_state.select(Some(0));
+                }
+            }
         }
         _ => {}
     }
@@ -1251,6 +1330,7 @@ fn handle_provider_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<A
                         provider: name.clone(),
                     };
                     app.capture_provider_form_mtime();
+                    app.capture_provider_form_baseline();
                 }
             }
         }
@@ -1344,10 +1424,32 @@ fn handle_provider_form(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<A
                 && matches!(provider_name.as_str(), "aws" | "scaleway" | "gcp"))
     };
 
+    // Handle discard confirmation dialog
+    if app.pending_discard_confirm {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                app.pending_discard_confirm = false;
+                app.clear_form_mtime();
+                app.provider_form_baseline = None;
+                app.screen = Screen::Providers;
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                app.pending_discard_confirm = false;
+            }
+            _ => {}
+        }
+        return;
+    }
+
     match key.code {
         KeyCode::Esc => {
-            app.clear_form_mtime();
-            app.screen = Screen::Providers;
+            if app.provider_form_is_dirty() {
+                app.pending_discard_confirm = true;
+            } else {
+                app.clear_form_mtime();
+                app.provider_form_baseline = None;
+                app.screen = Screen::Providers;
+            }
         }
         KeyCode::Tab | KeyCode::Down => {
             warn_aws_token_format(app, &provider_name);
@@ -1359,21 +1461,15 @@ fn handle_provider_form(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<A
             app.provider_form.focused_field = app.provider_form.focused_field.prev(fields);
             app.provider_form.sync_cursor_to_end();
         }
-        KeyCode::Left | KeyCode::Right => {
-            let f = app.provider_form.focused_field;
-            if f == crate::app::ProviderFormField::VerifyTls {
-                app.provider_form.verify_tls = !app.provider_form.verify_tls;
-            } else if f == crate::app::ProviderFormField::AutoSync {
-                app.provider_form.auto_sync = !app.provider_form.auto_sync;
-            } else if key.code == KeyCode::Left {
-                if app.provider_form.cursor_pos > 0 {
-                    app.provider_form.cursor_pos -= 1;
-                }
-            } else {
-                let len = app.provider_form.focused_value().chars().count();
-                if app.provider_form.cursor_pos < len {
-                    app.provider_form.cursor_pos += 1;
-                }
+        KeyCode::Left => {
+            if app.provider_form.cursor_pos > 0 {
+                app.provider_form.cursor_pos -= 1;
+            }
+        }
+        KeyCode::Right => {
+            let len = app.provider_form.focused_value().chars().count();
+            if app.provider_form.cursor_pos < len {
+                app.provider_form.cursor_pos += 1;
             }
         }
         KeyCode::Home => {
@@ -1724,6 +1820,7 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
         app.set_status(format!("Saved {} configuration.", display_name), false);
     }
     app.clear_form_mtime();
+    app.provider_form_baseline = None;
     app.screen = Screen::Providers;
 }
 
@@ -1767,6 +1864,7 @@ fn handle_password_picker(app: &mut App, key: KeyEvent) {
             app.select_prev_password_source();
         }
         KeyCode::Enter => {
+            let mut needs_more_input = false;
             if let Some(index) = app.ui.password_picker_state.selected() {
                 if let Some(source) = crate::askpass::PASSWORD_SOURCES.get(index) {
                     let is_none = source.label == "None";
@@ -1784,11 +1882,13 @@ fn handle_password_picker(app: &mut App, key: KeyEvent) {
                             "Type your command. Use %a (alias) and %h (hostname) as placeholders.",
                             false,
                         );
+                        needs_more_input = true;
                     } else if is_prefix {
                         app.form.askpass = source.value.to_string();
                         app.form.focused_field = FormField::AskPass;
                         app.form.sync_cursor_to_end();
                         app.set_status(format!("Complete the {} path.", source.label), false);
+                        needs_more_input = true;
                     } else {
                         app.form.askpass = source.value.to_string();
                         app.form.sync_cursor_to_end();
@@ -1797,6 +1897,9 @@ fn handle_password_picker(app: &mut App, key: KeyEvent) {
                 }
             }
             app.ui.show_password_picker = false;
+            if !needs_more_input {
+                try_auto_submit_after_picker(app);
+            }
         }
         _ => {}
     }
@@ -1828,6 +1931,9 @@ fn handle_key_picker_shared(app: &mut App, key: KeyEvent, for_provider: bool) {
                 }
             }
             app.ui.show_key_picker = false;
+            if !for_provider {
+                try_auto_submit_after_picker(app);
+            }
         }
         _ => {}
     }
@@ -1855,6 +1961,7 @@ fn handle_proxyjump_picker(app: &mut App, key: KeyEvent) {
                 }
             }
             app.ui.show_proxyjump_picker = false;
+            try_auto_submit_after_picker(app);
         }
         _ => {}
     }
@@ -1910,7 +2017,6 @@ fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
                         app.config = config_backup;
                         app.set_status(format!("Failed to save: {}", e), true);
                     } else {
-                        app.undo_stack.clear();
                         app.update_last_modified();
                         app.refresh_tunnel_list(&alias);
                         app.reload_hosts();
@@ -1963,6 +2069,7 @@ fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
                 editing: None,
             };
             app.capture_form_mtime();
+            app.capture_tunnel_form_baseline();
         }
         KeyCode::Char('e') => {
             // Check if host is from an included file (read-only)
@@ -1980,6 +2087,7 @@ fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
                         editing: Some(sel),
                     };
                     app.capture_form_mtime();
+                    app.capture_tunnel_form_baseline();
                 }
             }
         }
@@ -2040,10 +2148,32 @@ fn handle_tunnel_form(app: &mut App, key: KeyEvent) {
         _ => return,
     };
 
+    // Handle discard confirmation dialog
+    if app.pending_discard_confirm {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                app.pending_discard_confirm = false;
+                app.clear_form_mtime();
+                app.tunnel_form_baseline = None;
+                app.screen = Screen::TunnelList { alias };
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                app.pending_discard_confirm = false;
+            }
+            _ => {}
+        }
+        return;
+    }
+
     match key.code {
         KeyCode::Esc => {
-            app.clear_form_mtime();
-            app.screen = Screen::TunnelList { alias };
+            if app.tunnel_form_is_dirty() {
+                app.pending_discard_confirm = true;
+            } else {
+                app.clear_form_mtime();
+                app.tunnel_form_baseline = None;
+                app.screen = Screen::TunnelList { alias };
+            }
         }
         KeyCode::Tab | KeyCode::Down => {
             app.tunnel_form.focused_field = app
@@ -2060,24 +2190,18 @@ fn handle_tunnel_form(app: &mut App, key: KeyEvent) {
             app.tunnel_form.sync_cursor_to_end();
         }
         KeyCode::Left => {
-            if app.tunnel_form.focused_field == crate::app::TunnelFormField::Type {
-                app.tunnel_form.tunnel_type = app.tunnel_form.tunnel_type.prev();
-            } else if app.tunnel_form.cursor_pos > 0 {
+            if app.tunnel_form.cursor_pos > 0 {
                 app.tunnel_form.cursor_pos -= 1;
             }
         }
         KeyCode::Right => {
-            if app.tunnel_form.focused_field == crate::app::TunnelFormField::Type {
-                app.tunnel_form.tunnel_type = app.tunnel_form.tunnel_type.next();
-            } else {
-                let len = app
-                    .tunnel_form
-                    .focused_value()
-                    .map(|v| v.chars().count())
-                    .unwrap_or(0);
-                if app.tunnel_form.cursor_pos < len {
-                    app.tunnel_form.cursor_pos += 1;
-                }
+            let len = app
+                .tunnel_form
+                .focused_value()
+                .map(|v| v.chars().count())
+                .unwrap_or(0);
+            if app.tunnel_form.cursor_pos < len {
+                app.tunnel_form.cursor_pos += 1;
             }
         }
         KeyCode::Home => {
@@ -2088,6 +2212,11 @@ fn handle_tunnel_form(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Enter => {
             submit_tunnel_form(app, &alias, editing);
+        }
+        KeyCode::Char(' ')
+            if app.tunnel_form.focused_field == crate::app::TunnelFormField::Type =>
+        {
+            app.tunnel_form.tunnel_type = app.tunnel_form.tunnel_type.next();
         }
         KeyCode::Char(c) => {
             app.tunnel_form.insert_char(c);
@@ -2173,6 +2302,7 @@ fn submit_tunnel_form(app: &mut App, alias: &str, editing: Option<usize>) {
         app.ui.tunnel_list_state.select(Some(0));
     }
     app.clear_form_mtime();
+    app.tunnel_form_baseline = None;
     app.set_status("Tunnel saved.", false);
     app.screen = Screen::TunnelList {
         alias: alias.to_string(),
@@ -2202,7 +2332,7 @@ fn handle_snippet_picker(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<
         return;
     }
 
-    // Handle pending snippet delete confirmation first
+    // Handle pending snippet delete confirmation
     if app.pending_snippet_delete.is_some() {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
@@ -2267,6 +2397,7 @@ fn handle_snippet_picker(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<
                 target_aliases: target_aliases.clone(),
                 editing: None,
             };
+            app.capture_snippet_form_baseline();
         }
         KeyCode::Char('e') => {
             if let Some(sel) = app.ui.snippet_picker_state.selected() {
@@ -2276,6 +2407,7 @@ fn handle_snippet_picker(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<
                         target_aliases: target_aliases.clone(),
                         editing: Some(sel),
                     };
+                    app.capture_snippet_form_baseline();
                 }
             }
         }
@@ -2689,11 +2821,34 @@ fn handle_snippet_form(app: &mut App, key: KeyEvent) {
         _ => return,
     };
 
+    // Handle discard confirmation dialog
+    if app.pending_discard_confirm {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                app.pending_discard_confirm = false;
+                app.snippet_form_baseline = None;
+                app.screen = Screen::SnippetPicker {
+                    target_aliases: target_aliases.clone(),
+                };
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                app.pending_discard_confirm = false;
+            }
+            _ => {}
+        }
+        return;
+    }
+
     match key.code {
         KeyCode::Esc => {
-            app.screen = Screen::SnippetPicker {
-                target_aliases: target_aliases.clone(),
-            };
+            if app.snippet_form_is_dirty() {
+                app.pending_discard_confirm = true;
+            } else {
+                app.snippet_form_baseline = None;
+                app.screen = Screen::SnippetPicker {
+                    target_aliases: target_aliases.clone(),
+                };
+            }
         }
         KeyCode::Tab | KeyCode::Down => {
             app.snippet_form.focused_field = app.snippet_form.focused_field.next();
@@ -2790,6 +2945,7 @@ fn submit_snippet_form(app: &mut App, target_aliases: &[String], editing: Option
         .position(|s| s.name == name);
     app.ui.snippet_picker_state.select(new_idx);
 
+    app.snippet_form_baseline = None;
     if is_new {
         app.set_status(format!("Added snippet '{}'.", name), false);
     } else {
@@ -5167,8 +5323,8 @@ mod tests {
     #[test]
     fn test_full_flow_picker_keychain_then_tab_away() {
         let mut app = make_form_app();
+        // Only set alias (not hostname) so auto-submit doesn't trigger after picker
         app.form.alias = "myhost".to_string();
-        app.form.hostname = "10.0.0.1".to_string();
         app.form.focused_field = FormField::AskPass;
         let (tx, _rx) = mpsc::channel();
 
@@ -6308,5 +6464,614 @@ Host gamma
             }
             _ => panic!("Expected SnippetPicker screen"),
         }
+    }
+
+    // --- Tunnel form Space/arrow tests ---
+
+    fn make_tunnel_form_app(field: crate::app::TunnelFormField) -> App {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.screen = Screen::TunnelForm {
+            alias: "test".to_string(),
+            editing: None,
+        };
+        app.tunnel_form = crate::app::TunnelForm::new();
+        app.tunnel_form.focused_field = field;
+        app
+    }
+
+    #[test]
+    fn test_tunnel_form_space_cycles_type_local_to_remote() {
+        let mut app = make_tunnel_form_app(crate::app::TunnelFormField::Type);
+        assert_eq!(
+            app.tunnel_form.tunnel_type,
+            crate::tunnel::TunnelType::Local
+        );
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
+        assert_eq!(
+            app.tunnel_form.tunnel_type,
+            crate::tunnel::TunnelType::Remote
+        );
+    }
+
+    #[test]
+    fn test_tunnel_form_space_cycles_type_remote_to_dynamic() {
+        let mut app = make_tunnel_form_app(crate::app::TunnelFormField::Type);
+        app.tunnel_form.tunnel_type = crate::tunnel::TunnelType::Remote;
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
+        assert_eq!(
+            app.tunnel_form.tunnel_type,
+            crate::tunnel::TunnelType::Dynamic
+        );
+    }
+
+    #[test]
+    fn test_tunnel_form_space_cycles_type_dynamic_to_local() {
+        let mut app = make_tunnel_form_app(crate::app::TunnelFormField::Type);
+        app.tunnel_form.tunnel_type = crate::tunnel::TunnelType::Dynamic;
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
+        assert_eq!(
+            app.tunnel_form.tunnel_type,
+            crate::tunnel::TunnelType::Local
+        );
+    }
+
+    #[test]
+    fn test_tunnel_form_left_on_type_does_not_cycle() {
+        let mut app = make_tunnel_form_app(crate::app::TunnelFormField::Type);
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Left), &tx);
+        assert_eq!(
+            app.tunnel_form.tunnel_type,
+            crate::tunnel::TunnelType::Local
+        );
+    }
+
+    #[test]
+    fn test_tunnel_form_right_on_type_does_not_cycle() {
+        let mut app = make_tunnel_form_app(crate::app::TunnelFormField::Type);
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Right), &tx);
+        assert_eq!(
+            app.tunnel_form.tunnel_type,
+            crate::tunnel::TunnelType::Local
+        );
+    }
+
+    #[test]
+    fn test_tunnel_form_space_on_bind_port_inserts_space() {
+        let mut app = make_tunnel_form_app(crate::app::TunnelFormField::BindPort);
+        app.tunnel_form.bind_port = "80".to_string();
+        app.tunnel_form.cursor_pos = 2;
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
+        assert_eq!(app.tunnel_form.bind_port, "80 ");
+    }
+
+    #[test]
+    fn test_tunnel_form_left_on_text_moves_cursor() {
+        let mut app = make_tunnel_form_app(crate::app::TunnelFormField::BindPort);
+        app.tunnel_form.bind_port = "8080".to_string();
+        app.tunnel_form.cursor_pos = 2;
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Left), &tx);
+        assert_eq!(app.tunnel_form.cursor_pos, 1);
+    }
+
+    // --- Dirty-check tests ---
+
+    #[test]
+    fn test_host_form_clean_esc_closes_immediately() {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.form = crate::app::HostForm::new();
+        app.screen = Screen::AddHost;
+        app.capture_form_baseline();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        assert!(matches!(app.screen, Screen::HostList));
+        assert!(!app.pending_discard_confirm);
+    }
+
+    #[test]
+    fn test_host_form_dirty_esc_shows_confirmation() {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.form = crate::app::HostForm::new();
+        app.screen = Screen::AddHost;
+        app.capture_form_baseline();
+        app.form.alias = "dirty".to_string();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        assert!(matches!(app.screen, Screen::AddHost));
+        assert!(app.pending_discard_confirm);
+    }
+
+    #[test]
+    fn test_host_form_dirty_esc_y_closes() {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.form = crate::app::HostForm::new();
+        app.screen = Screen::AddHost;
+        app.capture_form_baseline();
+        app.form.alias = "dirty".to_string();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('y')), &tx);
+        assert!(matches!(app.screen, Screen::HostList));
+        assert!(app.form_baseline.is_none());
+    }
+
+    #[test]
+    fn test_host_form_dirty_esc_n_stays() {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.form = crate::app::HostForm::new();
+        app.screen = Screen::AddHost;
+        app.capture_form_baseline();
+        app.form.hostname = "changed.com".to_string();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('n')), &tx);
+        assert!(matches!(app.screen, Screen::AddHost));
+        assert!(!app.pending_discard_confirm);
+    }
+
+    #[test]
+    fn test_host_form_dirty_esc_other_key_ignored() {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.form = crate::app::HostForm::new();
+        app.screen = Screen::AddHost;
+        app.capture_form_baseline();
+        app.form.alias = "dirty".to_string();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('x')), &tx);
+        assert!(app.pending_discard_confirm); // still pending
+    }
+
+    #[test]
+    fn test_tunnel_form_dirty_esc_shows_confirmation() {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.screen = Screen::TunnelForm {
+            alias: "test".to_string(),
+            editing: None,
+        };
+        app.tunnel_form = crate::app::TunnelForm::new();
+        app.capture_tunnel_form_baseline();
+        app.tunnel_form.bind_port = "9000".to_string();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        assert!(matches!(app.screen, Screen::TunnelForm { .. }));
+        assert!(app.pending_discard_confirm);
+    }
+
+    #[test]
+    fn test_tunnel_form_clean_esc_closes() {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.screen = Screen::TunnelForm {
+            alias: "test".to_string(),
+            editing: None,
+        };
+        app.tunnel_form = crate::app::TunnelForm::new();
+        app.capture_tunnel_form_baseline();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        assert!(matches!(app.screen, Screen::TunnelList { .. }));
+    }
+
+    // --- Delete confirmation tests ---
+
+    #[test]
+    fn test_snippet_picker_d_esc_cancels_delete() {
+        let mut app = make_snippet_app();
+        let _ = app.snippet_store.save();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('d')), &tx);
+        assert_eq!(app.pending_snippet_delete, Some(0));
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        assert_eq!(app.pending_snippet_delete, None);
+        assert_eq!(app.snippet_store.snippets.len(), 2);
+    }
+
+    #[test]
+    fn test_snippet_picker_d_n_cancels_delete() {
+        let mut app = make_snippet_app();
+        let _ = app.snippet_store.save();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('d')), &tx);
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('n')), &tx);
+        assert_eq!(app.pending_snippet_delete, None);
+        assert_eq!(app.snippet_store.snippets.len(), 2);
+    }
+
+    #[test]
+    fn test_snippet_picker_d_other_key_ignored() {
+        let mut app = make_snippet_app();
+        let _ = app.snippet_store.save();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('d')), &tx);
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
+        assert_eq!(app.pending_snippet_delete, Some(0));
+        assert_eq!(app.snippet_store.snippets.len(), 2);
+    }
+
+    #[test]
+    fn test_confirm_import_uppercase_y_works() {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.screen = Screen::ConfirmImport { count: 0 };
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('Y')), &tx);
+        assert!(matches!(app.screen, Screen::HostList));
+    }
+
+    #[test]
+    fn test_confirm_import_n_cancels() {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.screen = Screen::ConfirmImport { count: 0 };
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('n')), &tx);
+        assert!(matches!(app.screen, Screen::HostList));
+    }
+
+    #[test]
+    fn test_confirm_import_uppercase_n_cancels() {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.screen = Screen::ConfirmImport { count: 0 };
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('N')), &tx);
+        assert!(matches!(app.screen, Screen::HostList));
+    }
+
+    // --- HostDetail navigation tests ---
+
+    #[test]
+    fn test_host_detail_esc_returns_to_host_list() {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.screen = Screen::HostDetail { index: 0 };
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        assert!(matches!(app.screen, Screen::HostList));
+    }
+
+    #[test]
+    fn test_host_detail_e_opens_edit() {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.screen = Screen::HostDetail { index: 0 };
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('e')), &tx);
+        assert!(matches!(app.screen, Screen::EditHost { .. }));
+        assert!(app.form_baseline.is_some());
+    }
+
+    #[test]
+    fn test_host_detail_t_opens_tunnel_list() {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.screen = Screen::HostDetail { index: 0 };
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('T')), &tx);
+        assert!(matches!(app.screen, Screen::TunnelList { .. }));
+    }
+
+    #[test]
+    fn test_host_detail_r_opens_snippet_picker() {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.screen = Screen::HostDetail { index: 0 };
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('r')), &tx);
+        assert!(matches!(app.screen, Screen::SnippetPicker { .. }));
+    }
+
+    #[test]
+    fn test_host_detail_e_on_included_host_stays() {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.hosts[0].source_file = Some(PathBuf::from("/etc/ssh/config.d/test"));
+        app.screen = Screen::HostDetail { index: 0 };
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('e')), &tx);
+        assert!(matches!(app.screen, Screen::HostDetail { .. }));
+        assert!(app.status.as_ref().unwrap().is_error);
+    }
+
+    // --- Provider form: Left/Right on toggle fields does NOT toggle ---
+
+    #[test]
+    fn test_provider_form_left_on_verify_tls_stays_same() {
+        let mut app = make_form_app_focused_on("proxmox", ProviderFormField::VerifyTls);
+        assert!(app.provider_form.verify_tls);
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Left), &tx);
+        assert!(app.provider_form.verify_tls);
+    }
+
+    #[test]
+    fn test_provider_form_right_on_verify_tls_stays_same() {
+        let mut app = make_form_app_focused_on("proxmox", ProviderFormField::VerifyTls);
+        assert!(app.provider_form.verify_tls);
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Right), &tx);
+        assert!(app.provider_form.verify_tls);
+    }
+
+    #[test]
+    fn test_provider_form_left_on_auto_sync_stays_same() {
+        let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::AutoSync);
+        assert!(app.provider_form.auto_sync);
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Left), &tx);
+        assert!(app.provider_form.auto_sync);
+    }
+
+    #[test]
+    fn test_provider_form_right_on_auto_sync_stays_same() {
+        let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::AutoSync);
+        assert!(app.provider_form.auto_sync);
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Right), &tx);
+        assert!(app.provider_form.auto_sync);
+    }
+
+    // --- Provider form: dirty-check on Esc ---
+
+    #[test]
+    fn test_provider_form_clean_esc_with_baseline_closes() {
+        let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::Token);
+        app.capture_provider_form_baseline();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        assert!(matches!(app.screen, Screen::Providers));
+        assert!(!app.pending_discard_confirm);
+    }
+
+    #[test]
+    fn test_provider_form_dirty_esc_shows_confirmation() {
+        let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::Token);
+        app.capture_provider_form_baseline();
+        app.provider_form.token = "newtoken".to_string();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        assert!(matches!(app.screen, Screen::ProviderForm { .. }));
+        assert!(app.pending_discard_confirm);
+    }
+
+    #[test]
+    fn test_provider_form_dirty_esc_y_closes() {
+        let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::Token);
+        app.capture_provider_form_baseline();
+        app.provider_form.token = "newtoken".to_string();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('y')), &tx);
+        assert!(matches!(app.screen, Screen::Providers));
+        assert!(app.provider_form_baseline.is_none());
+    }
+
+    #[test]
+    fn test_provider_form_dirty_esc_n_stays() {
+        let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::Token);
+        app.capture_provider_form_baseline();
+        app.provider_form.token = "newtoken".to_string();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('n')), &tx);
+        assert!(matches!(app.screen, Screen::ProviderForm { .. }));
+        assert!(!app.pending_discard_confirm);
+    }
+
+    // --- Snippet form: dirty-check on Esc ---
+
+    #[test]
+    fn test_snippet_form_clean_esc_with_baseline_closes() {
+        let mut app = make_snippet_app();
+        app.snippet_form = crate::app::SnippetForm::new();
+        app.screen = Screen::SnippetForm {
+            target_aliases: vec!["myserver".to_string()],
+            editing: None,
+        };
+        app.capture_snippet_form_baseline();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        assert!(matches!(app.screen, Screen::SnippetPicker { .. }));
+        assert!(!app.pending_discard_confirm);
+    }
+
+    #[test]
+    fn test_snippet_form_dirty_esc_shows_confirmation() {
+        let mut app = make_snippet_app();
+        app.snippet_form = crate::app::SnippetForm::new();
+        app.screen = Screen::SnippetForm {
+            target_aliases: vec!["myserver".to_string()],
+            editing: None,
+        };
+        app.capture_snippet_form_baseline();
+        app.snippet_form.name = "dirty".to_string();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        assert!(matches!(app.screen, Screen::SnippetForm { .. }));
+        assert!(app.pending_discard_confirm);
+    }
+
+    #[test]
+    fn test_snippet_form_dirty_esc_y_closes() {
+        let mut app = make_snippet_app();
+        app.snippet_form = crate::app::SnippetForm::new();
+        app.screen = Screen::SnippetForm {
+            target_aliases: vec!["myserver".to_string()],
+            editing: None,
+        };
+        app.capture_snippet_form_baseline();
+        app.snippet_form.name = "dirty".to_string();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('y')), &tx);
+        assert!(matches!(app.screen, Screen::SnippetPicker { .. }));
+        assert!(app.snippet_form_baseline.is_none());
+    }
+
+    // --- Tunnel delete: d/y/Esc/n ---
+
+    #[test]
+    fn test_tunnel_list_d_y_deletes_tunnel() {
+        let mut app =
+            make_app("Host test\n  HostName test.com\n  LocalForward 8080 localhost:80\n");
+        app.screen = Screen::TunnelList {
+            alias: "test".to_string(),
+        };
+        app.refresh_tunnel_list("test");
+        app.ui.tunnel_list_state.select(Some(0));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('d')), &tx);
+        assert_eq!(app.pending_tunnel_delete, Some(0));
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('y')), &tx);
+        assert!(app.pending_tunnel_delete.is_none());
+    }
+
+    #[test]
+    fn test_tunnel_list_d_esc_cancels_delete() {
+        let mut app =
+            make_app("Host test\n  HostName test.com\n  LocalForward 8080 localhost:80\n");
+        app.screen = Screen::TunnelList {
+            alias: "test".to_string(),
+        };
+        app.refresh_tunnel_list("test");
+        app.ui.tunnel_list_state.select(Some(0));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('d')), &tx);
+        assert_eq!(app.pending_tunnel_delete, Some(0));
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        assert!(app.pending_tunnel_delete.is_none());
+        assert_eq!(app.tunnel_list.len(), 1);
+    }
+
+    #[test]
+    fn test_tunnel_list_d_n_cancels_delete() {
+        let mut app =
+            make_app("Host test\n  HostName test.com\n  LocalForward 8080 localhost:80\n");
+        app.screen = Screen::TunnelList {
+            alias: "test".to_string(),
+        };
+        app.refresh_tunnel_list("test");
+        app.ui.tunnel_list_state.select(Some(0));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('d')), &tx);
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('n')), &tx);
+        assert!(app.pending_tunnel_delete.is_none());
+        assert_eq!(app.tunnel_list.len(), 1);
+    }
+
+    // --- Host form: baseline cleared after submit ---
+
+    #[test]
+    fn test_host_form_baseline_cleared_after_submit() {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.form = crate::app::HostForm::new();
+        app.form.alias = "newhost".to_string();
+        app.form.hostname = "new.example.com".to_string();
+        app.screen = Screen::AddHost;
+        app.capture_form_mtime();
+        app.capture_form_baseline();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert!(app.form_baseline.is_none());
+    }
+
+    // --- Edge case: uppercase Y in discard confirms ---
+
+    #[test]
+    fn test_host_form_dirty_esc_uppercase_y_closes() {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.form = crate::app::HostForm::new();
+        app.screen = Screen::AddHost;
+        app.capture_form_baseline();
+        app.form.user = "ubuntu".to_string();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('Y')), &tx);
+        assert!(matches!(app.screen, Screen::HostList));
+        assert!(app.form_baseline.is_none());
+    }
+
+    // --- Snippet form: dirty + n stays ---
+
+    #[test]
+    fn test_snippet_form_dirty_esc_n_stays() {
+        let mut app = make_snippet_app();
+        app.snippet_form = crate::app::SnippetForm::new();
+        app.screen = Screen::SnippetForm {
+            target_aliases: vec!["myserver".to_string()],
+            editing: None,
+        };
+        app.capture_snippet_form_baseline();
+        app.snippet_form.command = "changed".to_string();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('n')), &tx);
+        assert!(matches!(app.screen, Screen::SnippetForm { .. }));
+        assert!(!app.pending_discard_confirm);
+    }
+
+    // --- Tunnel form: dirty + y closes, dirty + n stays ---
+
+    #[test]
+    fn test_tunnel_form_dirty_esc_y_closes() {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.screen = Screen::TunnelForm {
+            alias: "test".to_string(),
+            editing: None,
+        };
+        app.tunnel_form = crate::app::TunnelForm::new();
+        app.capture_tunnel_form_baseline();
+        app.tunnel_form.remote_host = "db.local".to_string();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('y')), &tx);
+        assert!(matches!(app.screen, Screen::TunnelList { .. }));
+        assert!(app.tunnel_form_baseline.is_none());
+    }
+
+    #[test]
+    fn test_tunnel_form_dirty_esc_n_stays() {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.screen = Screen::TunnelForm {
+            alias: "test".to_string(),
+            editing: None,
+        };
+        app.tunnel_form = crate::app::TunnelForm::new();
+        app.capture_tunnel_form_baseline();
+        app.tunnel_form.bind_port = "9001".to_string();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('n')), &tx);
+        assert!(matches!(app.screen, Screen::TunnelForm { .. }));
+        assert!(!app.pending_discard_confirm);
+    }
+
+    // --- Tunnel delete: other key ignored ---
+
+    #[test]
+    fn test_tunnel_delete_other_key_ignored() {
+        let mut app =
+            make_app("Host test\n  HostName test.com\n  LocalForward 8080 localhost:80\n");
+        app.screen = Screen::TunnelList {
+            alias: "test".to_string(),
+        };
+        app.refresh_tunnel_list("test");
+        app.ui.tunnel_list_state.select(Some(0));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('d')), &tx);
+        assert_eq!(app.pending_tunnel_delete, Some(0));
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('z')), &tx);
+        assert_eq!(app.pending_tunnel_delete, Some(0));
+    }
+
+    // --- Provider form: dirty + other key ignored ---
+
+    #[test]
+    fn test_provider_form_dirty_esc_other_key_ignored() {
+        let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::Token);
+        app.capture_provider_form_baseline();
+        app.provider_form.token = "newtoken".to_string();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('x')), &tx);
+        assert!(app.pending_discard_confirm);
     }
 }

@@ -1187,6 +1187,52 @@ impl Drop for App {
     }
 }
 
+/// Baseline snapshot of host form content for dirty-check on Esc.
+#[derive(Clone)]
+pub struct FormBaseline {
+    pub alias: String,
+    pub hostname: String,
+    pub user: String,
+    pub port: String,
+    pub identity_file: String,
+    pub proxy_jump: String,
+    pub askpass: String,
+    pub tags: String,
+}
+
+/// Baseline snapshot of tunnel form content for dirty-check on Esc.
+#[derive(Clone)]
+pub struct TunnelFormBaseline {
+    pub tunnel_type: crate::tunnel::TunnelType,
+    pub bind_port: String,
+    pub remote_host: String,
+    pub remote_port: String,
+    pub bind_address: String,
+}
+
+/// Baseline snapshot of snippet form content for dirty-check on Esc.
+#[derive(Clone)]
+pub struct SnippetFormBaseline {
+    pub name: String,
+    pub command: String,
+    pub description: String,
+}
+
+/// Baseline snapshot of provider form content for dirty-check on Esc.
+#[derive(Clone)]
+pub struct ProviderFormBaseline {
+    pub url: String,
+    pub token: String,
+    pub profile: String,
+    pub project: String,
+    pub regions: String,
+    pub alias_prefix: String,
+    pub user: String,
+    pub identity_file: String,
+    pub verify_tls: bool,
+    pub auto_sync: bool,
+}
+
 /// Main application state.
 pub struct App {
     // Core
@@ -1274,6 +1320,14 @@ pub struct App {
 
     // First-run hints
     pub known_hosts_count: usize,
+
+    // Form dirty-check baselines
+    pub form_baseline: Option<FormBaseline>,
+    pub tunnel_form_baseline: Option<TunnelFormBaseline>,
+    pub snippet_form_baseline: Option<SnippetFormBaseline>,
+    pub provider_form_baseline: Option<ProviderFormBaseline>,
+    /// When true, the Esc key shows a "Discard changes?" dialog instead of closing.
+    pub pending_discard_confirm: bool,
 }
 
 impl App {
@@ -1377,6 +1431,11 @@ impl App {
             file_browser: None,
             file_browser_paths: HashMap::new(),
             known_hosts_count: 0,
+            form_baseline: None,
+            tunnel_form_baseline: None,
+            snippet_form_baseline: None,
+            provider_form_baseline: None,
+            pending_discard_confirm: false,
         }
     }
 
@@ -2117,6 +2176,118 @@ impl App {
     pub fn capture_provider_form_mtime(&mut self) {
         let path = dirs::home_dir().map(|h| h.join(".purple/providers"));
         self.conflict.provider_form_mtime = path.as_ref().and_then(|p| Self::get_mtime(p));
+    }
+
+    /// Capture a baseline snapshot of the host form for dirty-check on Esc.
+    pub fn capture_form_baseline(&mut self) {
+        self.form_baseline = Some(FormBaseline {
+            alias: self.form.alias.clone(),
+            hostname: self.form.hostname.clone(),
+            user: self.form.user.clone(),
+            port: self.form.port.clone(),
+            identity_file: self.form.identity_file.clone(),
+            proxy_jump: self.form.proxy_jump.clone(),
+            askpass: self.form.askpass.clone(),
+            tags: self.form.tags.clone(),
+        });
+    }
+
+    /// Check if the host form has been modified since baseline was captured.
+    pub fn host_form_is_dirty(&self) -> bool {
+        match &self.form_baseline {
+            Some(b) => {
+                self.form.alias != b.alias
+                    || self.form.hostname != b.hostname
+                    || self.form.user != b.user
+                    || self.form.port != b.port
+                    || self.form.identity_file != b.identity_file
+                    || self.form.proxy_jump != b.proxy_jump
+                    || self.form.askpass != b.askpass
+                    || self.form.tags != b.tags
+            }
+            None => false,
+        }
+    }
+
+    /// Capture a baseline snapshot of the tunnel form for dirty-check on Esc.
+    pub fn capture_tunnel_form_baseline(&mut self) {
+        self.tunnel_form_baseline = Some(TunnelFormBaseline {
+            tunnel_type: self.tunnel_form.tunnel_type,
+            bind_port: self.tunnel_form.bind_port.clone(),
+            remote_host: self.tunnel_form.remote_host.clone(),
+            remote_port: self.tunnel_form.remote_port.clone(),
+            bind_address: self.tunnel_form.bind_address.clone(),
+        });
+    }
+
+    /// Check if the tunnel form has been modified since baseline was captured.
+    pub fn tunnel_form_is_dirty(&self) -> bool {
+        match &self.tunnel_form_baseline {
+            Some(b) => {
+                self.tunnel_form.tunnel_type != b.tunnel_type
+                    || self.tunnel_form.bind_port != b.bind_port
+                    || self.tunnel_form.remote_host != b.remote_host
+                    || self.tunnel_form.remote_port != b.remote_port
+                    || self.tunnel_form.bind_address != b.bind_address
+            }
+            None => false,
+        }
+    }
+
+    /// Capture a baseline snapshot of the snippet form for dirty-check on Esc.
+    pub fn capture_snippet_form_baseline(&mut self) {
+        self.snippet_form_baseline = Some(SnippetFormBaseline {
+            name: self.snippet_form.name.clone(),
+            command: self.snippet_form.command.clone(),
+            description: self.snippet_form.description.clone(),
+        });
+    }
+
+    /// Check if the snippet form has been modified since baseline was captured.
+    pub fn snippet_form_is_dirty(&self) -> bool {
+        match &self.snippet_form_baseline {
+            Some(b) => {
+                self.snippet_form.name != b.name
+                    || self.snippet_form.command != b.command
+                    || self.snippet_form.description != b.description
+            }
+            None => false,
+        }
+    }
+
+    /// Capture a baseline snapshot of the provider form for dirty-check on Esc.
+    pub fn capture_provider_form_baseline(&mut self) {
+        self.provider_form_baseline = Some(ProviderFormBaseline {
+            url: self.provider_form.url.clone(),
+            token: self.provider_form.token.clone(),
+            profile: self.provider_form.profile.clone(),
+            project: self.provider_form.project.clone(),
+            regions: self.provider_form.regions.clone(),
+            alias_prefix: self.provider_form.alias_prefix.clone(),
+            user: self.provider_form.user.clone(),
+            identity_file: self.provider_form.identity_file.clone(),
+            verify_tls: self.provider_form.verify_tls,
+            auto_sync: self.provider_form.auto_sync,
+        });
+    }
+
+    /// Check if the provider form has been modified since baseline was captured.
+    pub fn provider_form_is_dirty(&self) -> bool {
+        match &self.provider_form_baseline {
+            Some(b) => {
+                self.provider_form.url != b.url
+                    || self.provider_form.token != b.token
+                    || self.provider_form.profile != b.profile
+                    || self.provider_form.project != b.project
+                    || self.provider_form.regions != b.regions
+                    || self.provider_form.alias_prefix != b.alias_prefix
+                    || self.provider_form.user != b.user
+                    || self.provider_form.identity_file != b.identity_file
+                    || self.provider_form.verify_tls != b.verify_tls
+                    || self.provider_form.auto_sync != b.auto_sync
+            }
+            None => false,
+        }
     }
 
     /// Check if config or any Include file/directory has changed since the form was opened.

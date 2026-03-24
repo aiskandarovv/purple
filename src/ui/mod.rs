@@ -175,6 +175,28 @@ fn render_overlay(app: &mut App, f: impl FnOnce(&mut App)) {
     app.status = status;
 }
 
+/// Build a footer action span: key in accent_bold, label in muted.
+/// Use this for consistent footers across all screens.
+pub fn footer_action<'a>(key: &'a str, label: &'a str) -> [Span<'a>; 2] {
+    [
+        Span::styled(key, theme::accent_bold()),
+        Span::styled(label, theme::muted()),
+    ]
+}
+
+/// Build a primary footer action span: key in primary_action, label in muted.
+pub fn footer_primary<'a>(key: &'a str, label: &'a str) -> [Span<'a>; 2] {
+    [
+        Span::styled(key, theme::primary_action()),
+        Span::styled(label, theme::muted()),
+    ]
+}
+
+/// Footer separator: │ in muted.
+pub fn footer_sep<'a>() -> Span<'a> {
+    Span::styled("\u{2502} ", theme::muted())
+}
+
 /// Render footer with shortcuts always visible and optional status right-aligned.
 pub fn render_footer_with_status(
     frame: &mut Frame,

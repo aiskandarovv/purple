@@ -35,14 +35,6 @@ impl TunnelType {
         }
     }
 
-    pub fn prev(self) -> Self {
-        match self {
-            TunnelType::Local => TunnelType::Dynamic,
-            TunnelType::Remote => TunnelType::Local,
-            TunnelType::Dynamic => TunnelType::Remote,
-        }
-    }
-
     pub fn from_directive_key(key: &str) -> Option<Self> {
         if key.eq_ignore_ascii_case("localforward") {
             Some(TunnelType::Local)
@@ -310,6 +302,16 @@ pub fn start_tunnel(
         cmd.env("BW_SESSION", token);
     }
 
+    // Own process group so tunnel doesn't receive purple's signals.
+    #[cfg(unix)]
+    unsafe {
+        use std::os::unix::process::CommandExt;
+        cmd.pre_exec(|| {
+            libc::setpgid(0, 0);
+            Ok(())
+        });
+    }
+
     cmd.spawn()
         .map_err(|e| anyhow::anyhow!("Failed to start tunnel: {}", e))
 }
@@ -346,7 +348,7 @@ mod tests {
         assert_eq!(TunnelType::Local.next(), TunnelType::Remote);
         assert_eq!(TunnelType::Remote.next(), TunnelType::Dynamic);
         assert_eq!(TunnelType::Dynamic.next(), TunnelType::Local);
-        assert_eq!(TunnelType::Local.prev(), TunnelType::Dynamic);
+        // prev() removed: Space cycles forward only via next()
     }
 
     // --- Parse tests ---

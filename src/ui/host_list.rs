@@ -207,10 +207,9 @@ fn password_label(source: &str) -> &'static str {
 }
 
 /// Derive a short auth label from identity_file path or askpass source.
-/// Priority: key file name > password source. Shows the most relevant auth method.
+/// Only shows explicitly configured auth. No implicit/default key detection.
 fn auth_label(host: &crate::ssh_config::model::HostEntry) -> String {
     if !host.identity_file.is_empty() {
-        // Extract filename from path like ~/.ssh/id_ed25519
         let path = std::path::Path::new(&host.identity_file);
         path.file_name()
             .map(|f| f.to_string_lossy().into_owned())
@@ -367,10 +366,19 @@ fn render_display_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::
         } else {
             0
         };
-        Line::from(vec![
+        let mut title_spans = vec![
             Span::styled(" purple. ", theme::brand_badge()),
             Span::raw(format!(" {}/{} ", pos, host_count)),
-        ])
+        ];
+        if app.tag_input.is_some() {
+            title_spans.push(Span::styled(" TAGGING ", theme::brand_badge()));
+        } else if !app.multi_select.is_empty() {
+            title_spans.push(Span::styled(
+                format!(" {} SELECTED ", app.multi_select.len()),
+                theme::brand_badge(),
+            ));
+        }
+        Line::from(title_spans)
     };
 
     let update_title = app.update_available.as_ref().map(|ver| {
@@ -858,13 +866,15 @@ fn build_host_item<'a>(
             String::new()
         };
 
+        let has_jump = !host.proxy_jump.is_empty();
+        let jump_w = if has_jump { 2 } else { 0 }; // " →"
         let available = cols.host;
         let prefix_w = user_prefix.width();
         let suffix_w = port_suffix.width();
-        let hostname_budget = available.saturating_sub(prefix_w).saturating_sub(suffix_w);
+        let hostname_budget = available.saturating_sub(prefix_w + suffix_w + jump_w);
 
         if hostname_budget >= 4 || !has_user {
-            // Enough room: show user@, truncated hostname, :port
+            // Enough room: show user@, truncated hostname, :port, →
             if has_user {
                 spans.push(Span::styled(user_prefix.clone(), theme::muted()));
                 host_used += prefix_w;
@@ -875,6 +885,10 @@ fn build_host_item<'a>(
             if has_port {
                 spans.push(Span::styled(port_suffix, theme::muted()));
                 host_used += suffix_w;
+            }
+            if has_jump {
+                spans.push(Span::styled(" \u{2192}", theme::muted()));
+                host_used += 2;
             }
         } else {
             // Very tight: just truncate the whole composite
@@ -897,15 +911,13 @@ fn build_host_item<'a>(
     if cols.auth > 0 {
         let label = auth_label(host);
         if !label.is_empty() {
+            let style = theme::muted();
             spans.push(Span::styled(
                 format!("{:<width$}", label, width = cols.auth),
-                theme::muted(),
+                style,
             ));
         } else {
-            spans.push(Span::styled(
-                format!("{:<width$}", "-", width = cols.auth),
-                theme::muted(),
-            ));
+            spans.push(Span::raw(" ".repeat(cols.auth)));
         }
         spans.push(Span::raw(gap.clone()));
     }
@@ -1063,15 +1075,12 @@ fn build_tag_column(
 
 fn render_search_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     let query = app.search.query.as_deref().unwrap_or("");
+    let total = app.hosts.len();
     let match_info = if query.is_empty() {
         String::new()
     } else {
         let count = app.search.filtered_indices.len();
-        match count {
-            0 => " (no matches)".to_string(),
-            1 => " (1 match)".to_string(),
-            n => format!(" ({} matches)", n),
-        }
+        format!(" ({} of {})", count, total)
     };
     let search_line = Line::from(vec![
         Span::styled(" / ", theme::brand_badge()),
@@ -1120,6 +1129,8 @@ fn footer_spans(
             format!("{} selected ", multi_count),
             theme::accent_bold(),
         ));
+        spans.push(Span::styled("r", theme::accent_bold()));
+        spans.push(Span::styled(" run ", theme::muted()));
     }
     if group_by_provider {
         spans.push(Span::styled("\u{2502} ", theme::muted()));
@@ -1134,7 +1145,12 @@ fn search_footer_spans<'a>() -> Vec<Span<'a>> {
         Span::styled(" connect ", theme::muted()),
         Span::styled("\u{2502} ", theme::muted()),
         Span::styled("Esc", theme::accent_bold()),
-        Span::styled(" cancel", theme::muted()),
+        Span::styled(" cancel ", theme::muted()),
+        Span::styled("\u{2502} ", theme::muted()),
+        Span::styled("tag:", theme::accent_bold()),
+        Span::styled("fuzzy ", theme::muted()),
+        Span::styled("tag=", theme::accent_bold()),
+        Span::styled("exact", theme::muted()),
     ]
 }
 

@@ -99,6 +99,7 @@ fn left_column() -> Vec<Line<'static>> {
         help_line(" s         ", "cycle sort mode"),
         help_line(" g         ", "group by provider"),
         help_line(" v         ", "toggle detail panel"),
+        help_line(" [ / ]     ", "scroll detail panel"),
         Line::from(""),
         section_header("SEARCH SYNTAX"),
         help_line(" tag:name  ", "fuzzy tag filter"),
@@ -108,8 +109,9 @@ fn left_column() -> Vec<Line<'static>> {
         help_line(" Tab       ", "next field"),
         help_line(" Shift+Tab ", "previous field"),
         help_line(" Enter     ", "save / open picker"),
+        help_line(" Space     ", "toggle / cycle"),
         help_line(" ^D        ", "set global default"),
-        help_line(" Esc       ", "cancel"),
+        help_line(" Esc       ", "cancel (confirms if changed)"),
     ]
 }
 
@@ -117,13 +119,13 @@ fn middle_column() -> Vec<Line<'static>> {
     vec![
         Line::from(""),
         section_header("HOSTS"),
-        help_line(" a         ", "add host"),
+        help_line(" a         ", "add (paste user@host:port)"),
         help_line(" e         ", "edit host"),
         help_line(" d         ", "delete host"),
         help_line(" c         ", "clone host"),
         help_line(" u         ", "undo delete"),
         Line::from(""),
-        help_line(" i         ", "inspect directives"),
+        help_line(" i         ", "inspect all directives"),
         help_line(" y         ", "copy ssh command"),
         help_line(" x         ", "copy config block"),
         help_line(" t         ", "tag host (inline)"),
@@ -159,6 +161,11 @@ fn right_column() -> Vec<Line<'static>> {
         help_line(" !         ", "run (raw terminal)"),
         help_line(" /         ", "search snippets"),
         help_line(" a / e / d ", "add / edit / delete"),
+        Line::from(""),
+        section_header("SNIPPET OUTPUT"),
+        help_line(" G / g     ", "jump to end / start"),
+        help_line(" n / N     ", "next / prev host"),
+        help_line(" c         ", "copy output"),
         Line::from(""),
         help_line(" q / Esc   ", "quit / close"),
     ]

@@ -9,6 +9,59 @@ pub struct ConnectResult {
     pub stderr_output: String,
 }
 
+/// RAII guard that restores the signal mask when dropped.
+/// Ensures SIGINT/SIGTSTP are unmasked even on early return or error.
+#[cfg(unix)]
+struct SignalMaskGuard {
+    old: libc::sigset_t,
+}
+
+#[cfg(unix)]
+impl SignalMaskGuard {
+    /// Block SIGINT and SIGTSTP, saving the previous mask for restore on drop.
+    fn block_interactive() -> Self {
+        unsafe {
+            let mut old: libc::sigset_t = std::mem::zeroed();
+            let mut mask: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&mut mask);
+            libc::sigaddset(&mut mask, libc::SIGINT);
+            libc::sigaddset(&mut mask, libc::SIGTSTP);
+            libc::sigprocmask(libc::SIG_BLOCK, &mask, &mut old);
+            Self { old }
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for SignalMaskGuard {
+    fn drop(&mut self) {
+        unsafe {
+            // Discard any pending SIGINT/SIGTSTP that arrived while masked.
+            // Without this, queued signals would fire immediately on unmask and
+            // kill/suspend purple before the TUI can be restored.
+            let mut pending: libc::sigset_t = std::mem::zeroed();
+            libc::sigpending(&mut pending);
+            let has_sigint = libc::sigismember(&pending, libc::SIGINT) == 1;
+            let has_sigtstp = libc::sigismember(&pending, libc::SIGTSTP) == 1;
+            // Temporarily ignore pending signals so they're consumed on unmask.
+            if has_sigint {
+                libc::signal(libc::SIGINT, libc::SIG_IGN);
+            }
+            if has_sigtstp {
+                libc::signal(libc::SIGTSTP, libc::SIG_IGN);
+            }
+            libc::sigprocmask(libc::SIG_SETMASK, &self.old, std::ptr::null_mut());
+            // Restore default handlers after pending signals are consumed.
+            if has_sigint {
+                libc::signal(libc::SIGINT, libc::SIG_DFL);
+            }
+            if has_sigtstp {
+                libc::signal(libc::SIGTSTP, libc::SIG_DFL);
+            }
+        }
+    }
+}
+
 /// Launch an SSH connection to the given host alias.
 /// Uses the system `ssh` binary with inherited stdin/stdout. Stderr is piped and
 /// forwarded to real stderr in real time so the output is captured for error detection.
@@ -54,9 +107,31 @@ pub fn connect(
         cmd.env("BW_SESSION", token);
     }
 
+    // Reset signal mask in the child process so SSH receives Ctrl+C normally.
+    // We mask signals in the parent AFTER spawn so the child doesn't inherit
+    // the blocked mask.
+    #[cfg(unix)]
+    unsafe {
+        use std::os::unix::process::CommandExt;
+        cmd.pre_exec(|| {
+            // Ensure SSH starts with default signal handling even if parent
+            // has signals blocked. This runs after fork, before exec.
+            let mut mask: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&mut mask);
+            libc::sigprocmask(libc::SIG_SETMASK, &mask, std::ptr::null_mut());
+            Ok(())
+        });
+    }
+
     let mut child = cmd
         .spawn()
         .with_context(|| format!("Failed to launch ssh for '{}'", alias))?;
+
+    // Mask SIGINT/SIGTSTP in purple AFTER spawn so SSH doesn't inherit
+    // the blocked mask. SSH receives Ctrl+C normally via the terminal driver.
+    // The guard restores the mask on drop (even on early return).
+    #[cfg(unix)]
+    let _signal_guard = SignalMaskGuard::block_interactive();
 
     // Tee stderr: forward to real stderr while capturing for error detection
     let stderr_pipe = child.stderr.take().expect("stderr was piped");
@@ -84,6 +159,9 @@ pub fn connect(
         .wait()
         .with_context(|| format!("Failed to wait for ssh for '{}'", alias))?;
     let stderr_output = stderr_thread.join().unwrap_or_default();
+
+    // _signal_guard drops here, restoring the original signal mask.
+    // Any pending SIGINT from Ctrl+C during SSH is safely consumed.
 
     Ok(ConnectResult {
         status,

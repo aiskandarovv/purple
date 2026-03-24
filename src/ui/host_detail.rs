@@ -20,7 +20,9 @@ pub fn render(frame: &mut Frame, app: &App, index: usize) {
     let askpass_lines = if host.askpass.is_some() { 2 } else { 0 };
     let source_lines = if host.source_file.is_some() { 2 } else { 0 };
     let overflow_line = if directive_count > max_visible { 1 } else { 0 };
-    let height = (6 + visible.max(1) + overflow_line + askpass_lines + source_lines) as u16;
+    let footer_line = 1;
+    let height =
+        (6 + visible.max(1) + overflow_line + askpass_lines + source_lines + footer_line) as u16;
     let width = frame.area().width.clamp(58, 80);
     let area = super::centered_rect_fixed(width, height, frame.area());
 
@@ -71,7 +73,28 @@ pub fn render(frame: &mut Frame, app: &App, index: usize) {
         ]));
     }
 
-    lines.push(Line::from(""));
+    let is_included = host.source_file.is_some();
+    let mut footer_spans = vec![];
+    if !is_included {
+        footer_spans.extend([
+            Span::styled("  e", theme::accent_bold()),
+            Span::styled(" edit ", theme::muted()),
+            Span::styled("\u{2502} ", theme::muted()),
+        ]);
+    } else {
+        footer_spans.push(Span::raw("  "));
+    }
+    footer_spans.extend([
+        Span::styled("T", theme::accent_bold()),
+        Span::styled(" tunnels ", theme::muted()),
+        Span::styled("\u{2502} ", theme::muted()),
+        Span::styled("r", theme::accent_bold()),
+        Span::styled(" snippet ", theme::muted()),
+        Span::styled("\u{2502} ", theme::muted()),
+        Span::styled("Esc", theme::accent_bold()),
+        Span::styled(" back", theme::muted()),
+    ]);
+    lines.push(Line::from(footer_spans));
 
     let paragraph = Paragraph::new(lines).block(block);
     frame.render_widget(paragraph, area);

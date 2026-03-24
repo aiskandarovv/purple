@@ -1,3 +1,27 @@
+## 2.10.0
+
+- Smarter forms, visual routes and a sparkline that fits your data
+- ProxyJump chain visualization in detail panel. Shows the full hop route (○ you → ● bastion → ● target) with validation for missing hosts in red
+- ProxyJump arrow indicator (→) in host list for hosts using a jump host
+- Activity sparkline auto-scales to your data. Ranges from 5 days to 1 year based on connection history
+- Sparkline shows dotted baseline (·) for empty periods and a midpoint time label for orientation
+- Fewer than 3 connections show a compact text list instead of a sparkline
+- Dirty-check on Esc. All four form types now ask "Discard changes?" when you press Esc with unsaved edits
+- Auto-submit after picker selection. Pick a key, proxy host or password source and the form submits if ready
+- Space bar toggles and cycles. Tunnel type and provider booleans now use Space instead of arrow keys
+- Arrow keys are cursor-only in all forms. Left/Right never toggle or cycle values
+- HostDetail overlay is no longer a dead end. Press e to edit, T for tunnels, r for snippets
+- Signal safety during SSH. Ctrl+C reaches SSH normally but no longer kills purple
+- Tunnel processes run in their own process group for clean signal isolation
+- Context-aware mode badges in title bar (TAGGING, N SELECTED)
+- Search footer shows tag syntax hints (tag: fuzzy, tag= exact) and improved match count (N of M)
+- Import confirmation accepts both y and Y
+- Consistent footer separators (│) across all screens with shared helper functions
+- Help screen updated with Space toggle, detail panel scroll, snippet output navigation and smart-paste hint
+- Smart-paste placeholder in Alias field shows user@host:port format
+- Edit form title shows the host alias being edited
+- 62 new tests covering dirty-check, delete confirmations, navigation, ProxyJump chain resolution and sparkline behavior (3968 total)
+
 ## 2.9.0
 
 - Redesigned host list with smarter column layout and provider tag separation
