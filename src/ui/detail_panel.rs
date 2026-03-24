@@ -112,7 +112,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         if let Some(entry) = history_entry {
             let ago = ConnectionHistory::format_time_ago(entry.last_connected);
             if !ago.is_empty() {
-                push_field(&mut lines, "Last SSH", &ago, max_value_width);
+                push_field(&mut lines, "Last SSH", &format!("{} ago", ago), max_value_width);
             }
             push_field(
                 &mut lines,
@@ -148,11 +148,16 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     // Tags section
-    if !host.tags.is_empty() || host.provider.is_some() {
+    if !host.tags.is_empty() || !host.provider_tags.is_empty() || host.provider.is_some() {
         lines.push(Line::from(""));
         lines.push(section_header("Tags"));
 
-        let mut all_tags: Vec<String> = host.tags.iter().map(|t| format!("#{}", t)).collect();
+        let mut all_tags: Vec<String> = host
+            .provider_tags
+            .iter()
+            .chain(host.tags.iter())
+            .map(|t| format!("#{}", t))
+            .collect();
         if let Some(ref provider) = host.provider {
             all_tags.push(format!("#{}", provider));
         }

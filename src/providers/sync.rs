@@ -55,6 +55,8 @@ fn is_volatile_meta(key: &str) -> bool {
 }
 
 /// Sync hosts from a cloud provider into the SSH config.
+/// Provider tags are always stored in `# purple:provider_tags` and exactly
+/// mirror the remote state. User tags in `# purple:tags` are preserved.
 pub fn sync_provider(
     config: &mut SshConfigFile,
     provider: &dyn Provider,
@@ -62,29 +64,6 @@ pub fn sync_provider(
     section: &ProviderSection,
     remove_deleted: bool,
     dry_run: bool,
-) -> SyncResult {
-    sync_provider_with_options(
-        config,
-        provider,
-        remote_hosts,
-        section,
-        remove_deleted,
-        dry_run,
-        false,
-    )
-}
-
-/// Sync hosts from a cloud provider into the SSH config.
-/// When `reset_tags` is true, local tags are replaced with provider tags
-/// instead of being merged (cleans up stale tags).
-pub fn sync_provider_with_options(
-    config: &mut SshConfigFile,
-    provider: &dyn Provider,
-    remote_hosts: &[ProviderHost],
-    section: &ProviderSection,
-    remove_deleted: bool,
-    dry_run: bool,
-    reset_tags: bool,
 ) -> SyncResult {
     let mut result = SyncResult::default();
 
@@ -160,27 +139,40 @@ pub fn sync_provider_with_options(
                 };
                 let trimmed_remote: Vec<String> =
                     remote.tags.iter().map(|t| t.trim().to_string()).collect();
-                let tags_changed = if reset_tags {
-                    // Exact comparison (case-insensitive, whitespace-normalized):
-                    // replace local tags with provider tags
-                    let mut sorted_local: Vec<String> =
-                        entry.tags.iter().map(|t| t.trim().to_lowercase()).collect();
+                let tags_changed = {
+                    // Compare provider_tags with remote (case-insensitive, sorted)
+                    let mut sorted_local: Vec<String> = entry
+                        .provider_tags
+                        .iter()
+                        .map(|t| t.trim().to_lowercase())
+                        .collect();
                     sorted_local.sort();
                     let mut sorted_remote: Vec<String> =
                         trimmed_remote.iter().map(|t| t.to_lowercase()).collect();
                     sorted_remote.sort();
                     sorted_local != sorted_remote
-                } else {
-                    // Subset check (case-insensitive, whitespace-normalized):
-                    // only trigger when provider tags are missing locally
-                    trimmed_remote.iter().any(|rt| {
-                        !entry
-                            .tags
-                            .iter()
-                            .any(|lt| lt.trim().eq_ignore_ascii_case(rt))
-                    })
                 };
-                if alias_changed || ip_changed || tags_changed || meta_changed {
+                // First migration: host has old-format tags (# purple:tags) but
+                // no # purple:provider_tags comment yet. Tags need splitting.
+                let first_migration =
+                    !entry.has_provider_tags && !entry.tags.is_empty();
+
+                // After first migration: check if user tags overlap with provider tags
+                let user_tags_overlap = !first_migration
+                    && !trimmed_remote.is_empty()
+                    && entry.tags.iter().any(|t| {
+                        trimmed_remote
+                            .iter()
+                            .any(|rt| rt.eq_ignore_ascii_case(t.trim()))
+                    });
+
+                if alias_changed
+                    || ip_changed
+                    || tags_changed
+                    || meta_changed
+                    || user_tags_overlap
+                    || first_migration
+                {
                     if dry_run {
                         result.updated += 1;
                     } else {
@@ -195,7 +187,13 @@ pub fn sync_provider_with_options(
                         // Re-evaluate: dedup may resolve back to the current alias
                         let alias_changed = new_alias != *existing_alias;
 
-                        if alias_changed || ip_changed || tags_changed || meta_changed {
+                        if alias_changed
+                            || ip_changed
+                            || tags_changed
+                            || meta_changed
+                            || user_tags_overlap
+                            || first_migration
+                        {
                             if alias_changed || ip_changed {
                                 let updated = HostEntry {
                                     alias: new_alias.clone(),
@@ -210,20 +208,40 @@ pub fn sync_provider_with_options(
                             } else {
                                 existing_alias
                             };
-                            if tags_changed {
-                                if reset_tags {
-                                    config.set_host_tags(tags_alias, &trimmed_remote);
-                                } else {
-                                    // Merge (case-insensitive, whitespace-normalized):
-                                    // keep existing local tags, add missing remote tags
-                                    let mut merged = entry.tags.clone();
-                                    for rt in &trimmed_remote {
-                                        if !merged.iter().any(|t| t.trim().eq_ignore_ascii_case(rt))
-                                        {
-                                            merged.push(rt.clone());
-                                        }
-                                    }
-                                    config.set_host_tags(tags_alias, &merged);
+                            if tags_changed || first_migration {
+                                config.set_host_provider_tags(tags_alias, &trimmed_remote);
+                            }
+                            // Migration cleanup
+                            if first_migration {
+                                // First migration: old # purple:tags had both provider
+                                // and user tags mixed. Keep only tags NOT in remote
+                                // (those must be user-added). Provider tags move to
+                                // # purple:provider_tags.
+                                let user_only: Vec<String> = entry
+                                    .tags
+                                    .iter()
+                                    .filter(|t| {
+                                        !trimmed_remote
+                                            .iter()
+                                            .any(|rt| rt.eq_ignore_ascii_case(t.trim()))
+                                    })
+                                    .cloned()
+                                    .collect();
+                                config.set_host_tags(tags_alias, &user_only);
+                            } else if tags_changed || user_tags_overlap {
+                                // Ongoing: remove user tags that overlap with provider tags
+                                let cleaned: Vec<String> = entry
+                                    .tags
+                                    .iter()
+                                    .filter(|t| {
+                                        !trimmed_remote
+                                            .iter()
+                                            .any(|rt| rt.eq_ignore_ascii_case(t.trim()))
+                                    })
+                                    .cloned()
+                                    .collect();
+                                if cleaned.len() != entry.tags.len() {
+                                    config.set_host_tags(tags_alias, &cleaned);
                                 }
                             }
                             // Update provider marker with new alias
@@ -283,7 +301,6 @@ pub fn sync_provider_with_options(
                     hostname: remote.ip.clone(),
                     user: section.user.clone(),
                     identity_file: section.identity_file.clone(),
-                    tags: remote.tags.clone(),
                     provider: Some(provider.name().to_string()),
                     ..Default::default()
                 };
@@ -316,7 +333,7 @@ pub fn sync_provider_with_options(
 
                 config.set_host_provider(&alias, provider.name(), &remote.server_id);
                 if !remote.tags.is_empty() {
-                    config.set_host_tags(&alias, &remote.tags);
+                    config.set_host_provider_tags(&alias, &remote.tags);
                 }
                 if !remote.metadata.is_empty() {
                     config.set_host_meta(&alias, &remote.metadata);
@@ -705,7 +722,7 @@ Host do-web-1-copy
         sync_provider(&mut config, &MockProvider, &remote, &section, false, false);
 
         let entries = config.host_entries();
-        assert_eq!(entries[0].tags, vec!["production", "us-east"]);
+        assert_eq!(entries[0].provider_tags, vec!["production", "us-east"]);
     }
 
     #[test]
@@ -721,9 +738,9 @@ Host do-web-1-copy
             vec!["staging".to_string()],
         )];
         sync_provider(&mut config, &MockProvider, &remote, &section, false, false);
-        assert_eq!(config.host_entries()[0].tags, vec!["staging"]);
+        assert_eq!(config.host_entries()[0].provider_tags, vec!["staging"]);
 
-        // Second sync: new provider tags added — existing tags are preserved (merge)
+        // Second sync: provider tags replaced exactly
         let remote = vec![ProviderHost::new(
             "123".to_string(),
             "web-1".to_string(),
@@ -733,8 +750,8 @@ Host do-web-1-copy
         let result = sync_provider(&mut config, &MockProvider, &remote, &section, false, false);
         assert_eq!(result.updated, 1);
         assert_eq!(
-            config.host_entries()[0].tags,
-            vec!["staging", "production", "us-east"]
+            config.host_entries()[0].provider_tags,
+            vec!["production", "us-east"]
         );
     }
 
@@ -912,9 +929,9 @@ Host do-web-1-copy
             vec!["production".to_string()],
         )];
         sync_provider(&mut config, &MockProvider, &remote, &section, false, false);
-        assert_eq!(config.host_entries()[0].tags, vec!["production"]);
+        assert_eq!(config.host_entries()[0].provider_tags, vec!["production"]);
 
-        // Second sync: remote tags empty — local tags preserved (may be user-added)
+        // Second sync: remote tags empty — provider_tags cleared
         let remote = vec![ProviderHost::new(
             "123".to_string(),
             "web-1".to_string(),
@@ -922,8 +939,8 @@ Host do-web-1-copy
             Vec::new(),
         )];
         let result = sync_provider(&mut config, &MockProvider, &remote, &section, false, false);
-        assert_eq!(result.unchanged, 1);
-        assert_eq!(config.host_entries()[0].tags, vec!["production"]);
+        assert_eq!(result.updated, 1);
+        assert!(config.host_entries()[0].provider_tags.is_empty());
     }
 
     #[test]
@@ -1221,16 +1238,18 @@ Host do-web-1-copy
             vec!["nyc1".to_string()],
         )];
         sync_provider(&mut config, &MockProvider, &remote, &section, false, false);
-        assert_eq!(config.host_entries()[0].tags, vec!["nyc1"]);
+        assert_eq!(config.host_entries()[0].provider_tags, vec!["nyc1"]);
 
-        // User manually adds a tag via the TUI
+        // User manually adds a tag via the TUI (including duplicate "nyc1")
         config.set_host_tags("do-web-1", &["nyc1".to_string(), "prod".to_string()]);
         assert_eq!(config.host_entries()[0].tags, vec!["nyc1", "prod"]);
 
-        // Second sync: same provider tags — user tag "prod" must survive
+        // Second sync: provider tags unchanged but overlap detected, "nyc1" migrated out
         let result = sync_provider(&mut config, &MockProvider, &remote, &section, false, false);
-        assert_eq!(result.unchanged, 1);
-        assert_eq!(config.host_entries()[0].tags, vec!["nyc1", "prod"]);
+        assert_eq!(result.updated, 1);
+        assert_eq!(config.host_entries()[0].provider_tags, vec!["nyc1"]);
+        // "nyc1" removed from user tags (overlap with provider), "prod" preserved
+        assert_eq!(config.host_entries()[0].tags, vec!["prod"]);
     }
 
     #[test]
@@ -1259,14 +1278,18 @@ Host do-web-1-copy
         )];
         let result = sync_provider(&mut config, &MockProvider, &remote, &section, false, false);
         assert_eq!(result.updated, 1);
+        // Provider tags exactly mirror remote
+        let ptags = &config.host_entries()[0].provider_tags;
+        assert!(ptags.contains(&"nyc1".to_string()));
+        assert!(ptags.contains(&"v2".to_string()));
+        // User tag "critical" survives, "nyc1" migrated out of user tags
         let tags = &config.host_entries()[0].tags;
-        assert!(tags.contains(&"nyc1".to_string()));
         assert!(tags.contains(&"critical".to_string()));
-        assert!(tags.contains(&"v2".to_string()));
+        assert!(!tags.contains(&"nyc1".to_string()));
     }
 
     #[test]
-    fn test_sync_reset_tags_replaces_local_tags() {
+    fn test_sync_migration_cleans_overlapping_user_tags() {
         let mut config = empty_config();
         let section = make_section();
 
@@ -1283,22 +1306,23 @@ Host do-web-1-copy
         config.set_host_tags("do-web-1", &["nyc1".to_string(), "prod".to_string()]);
         assert_eq!(config.host_entries()[0].tags, vec!["nyc1", "prod"]);
 
-        // Sync with reset_tags: user tag "prod" is removed
-        let result = sync_provider_with_options(
+        // Provider_tags match remote but user tags overlap — migration cleanup runs
+        let result = sync_provider(
             &mut config,
             &MockProvider,
             &remote,
             &section,
             false,
             false,
-            true,
         );
         assert_eq!(result.updated, 1);
-        assert_eq!(config.host_entries()[0].tags, vec!["nyc1"]);
+        assert_eq!(config.host_entries()[0].provider_tags, vec!["nyc1"]);
+        // "nyc1" removed from user tags (overlap), "prod" preserved
+        assert_eq!(config.host_entries()[0].tags, vec!["prod"]);
     }
 
     #[test]
-    fn test_sync_reset_tags_clears_stale_tags() {
+    fn test_sync_provider_tags_cleared_remotely() {
         let mut config = empty_config();
         let section = make_section();
 
@@ -1311,28 +1335,58 @@ Host do-web-1-copy
         )];
         sync_provider(&mut config, &MockProvider, &remote, &section, false, false);
 
-        // Second sync with reset_tags: provider removed all tags
+        // Second sync: provider removed all tags
         let remote = vec![ProviderHost::new(
             "123".to_string(),
             "web-1".to_string(),
             "1.2.3.4".to_string(),
             Vec::new(),
         )];
-        let result = sync_provider_with_options(
+        let result = sync_provider(
             &mut config,
             &MockProvider,
             &remote,
             &section,
             false,
             false,
-            true,
         );
         assert_eq!(result.updated, 1);
         assert!(config.host_entries()[0].tags.is_empty());
     }
 
     #[test]
-    fn test_sync_reset_tags_unchanged_when_matching() {
+    fn test_sync_provider_tags_cleared_user_tags_survive() {
+        let mut config = empty_config();
+        let section = make_section();
+
+        // First sync: host with provider tag
+        let remote = vec![ProviderHost::new(
+            "123".to_string(),
+            "web-1".to_string(),
+            "1.2.3.4".to_string(),
+            vec!["staging".to_string()],
+        )];
+        sync_provider(&mut config, &MockProvider, &remote, &section, false, false);
+
+        // User adds their own tag
+        config.set_host_tags("do-web-1", &["my-custom".to_string()]);
+
+        // Provider removes all tags
+        let remote = vec![ProviderHost::new(
+            "123".to_string(),
+            "web-1".to_string(),
+            "1.2.3.4".to_string(),
+            Vec::new(),
+        )];
+        let result = sync_provider(&mut config, &MockProvider, &remote, &section, false, false);
+        assert_eq!(result.updated, 1);
+        assert!(config.host_entries()[0].provider_tags.is_empty());
+        // User tags survive even when provider tags are cleared
+        assert_eq!(config.host_entries()[0].tags, vec!["my-custom"]);
+    }
+
+    #[test]
+    fn test_sync_provider_tags_exact_match_unchanged() {
         let mut config = empty_config();
         let section = make_section();
 
@@ -1352,14 +1406,13 @@ Host do-web-1-copy
             "1.2.3.4".to_string(),
             vec!["nyc1".to_string(), "prod".to_string()],
         )];
-        let result = sync_provider_with_options(
+        let result = sync_provider(
             &mut config,
             &MockProvider,
             &remote,
             &section,
             false,
             false,
-            true,
         );
         assert_eq!(result.unchanged, 1);
     }
@@ -1377,7 +1430,7 @@ Host do-web-1-copy
             vec!["prod".to_string()],
         )];
         sync_provider(&mut config, &MockProvider, &remote, &section, false, false);
-        assert_eq!(config.host_entries()[0].tags, vec!["prod"]);
+        assert_eq!(config.host_entries()[0].provider_tags, vec!["prod"]);
 
         // Second sync: provider returns same tag with different casing — no duplicate
         let remote = vec![ProviderHost::new(
@@ -1388,11 +1441,11 @@ Host do-web-1-copy
         )];
         let result = sync_provider(&mut config, &MockProvider, &remote, &section, false, false);
         assert_eq!(result.unchanged, 1);
-        assert_eq!(config.host_entries()[0].tags, vec!["prod"]);
+        assert_eq!(config.host_entries()[0].provider_tags, vec!["prod"]);
     }
 
     #[test]
-    fn test_sync_reset_tags_case_insensitive_unchanged() {
+    fn test_sync_provider_tags_case_insensitive_unchanged() {
         let mut config = empty_config();
         let section = make_section();
 
@@ -1412,14 +1465,13 @@ Host do-web-1-copy
             "1.2.3.4".to_string(),
             vec!["Prod".to_string()],
         )];
-        let result = sync_provider_with_options(
+        let result = sync_provider(
             &mut config,
             &MockProvider,
             &remote,
             &section,
             false,
             false,
-            true,
         );
         assert_eq!(result.unchanged, 1);
     }
@@ -1843,11 +1895,11 @@ Host do-web-1-copy
         let result = sync_provider(&mut config, &MockProvider, &remote2, &section, false, false);
         assert_eq!(result.updated, 1);
 
-        // Verify both tags present
+        // Verify both provider tags present
         let entries = config.host_entries();
         let entry = entries.iter().find(|e| e.alias == "do-web").unwrap();
-        assert!(entry.tags.iter().any(|t| t == "prod"));
-        assert!(entry.tags.iter().any(|t| t == "us-east"));
+        assert!(entry.provider_tags.iter().any(|t| t == "prod"));
+        assert!(entry.provider_tags.iter().any(|t| t == "us-east"));
     }
 
     #[test]
@@ -1865,16 +1917,17 @@ Host do-web-1-copy
         // Manually add a local tag
         config.set_host_tags("do-web", &["prod".to_string(), "my-custom".to_string()]);
 
-        // Sync again with only "prod" - local "my-custom" should survive
+        // Sync again: "prod" overlap cleaned from user tags, "my-custom" preserved
         let result = sync_provider(&mut config, &MockProvider, &remote, &section, false, false);
-        assert_eq!(result.unchanged, 1);
+        assert_eq!(result.updated, 1);
         let entries = config.host_entries();
         let entry = entries.iter().find(|e| e.alias == "do-web").unwrap();
         assert!(entry.tags.iter().any(|t| t == "my-custom"));
+        assert!(!entry.tags.iter().any(|t| t == "prod")); // migrated to provider_tags
     }
 
     #[test]
-    fn test_sync_reset_tags_replaces_local() {
+    fn test_sync_provider_tags_replaces_with_migration() {
         let mut config = empty_config();
         let section = make_section();
         let remote = vec![ProviderHost::new(
@@ -1888,29 +1941,31 @@ Host do-web-1-copy
         // Add local-only tag
         config.set_host_tags("do-web", &["prod".to_string(), "my-custom".to_string()]);
 
-        // Sync with reset_tags=true
+        // Sync: provider_tags replaced, user tags migrated
         let remote2 = vec![ProviderHost::new(
             "1".to_string(),
             "web".to_string(),
             "1.2.3.4".to_string(),
             vec!["prod".to_string(), "new-tag".to_string()],
         )];
-        let result = sync_provider_with_options(
+        let result = sync_provider(
             &mut config,
             &MockProvider,
             &remote2,
             &section,
             false,
             false,
-            true,
         );
         assert_eq!(result.updated, 1);
 
         let entries = config.host_entries();
         let entry = entries.iter().find(|e| e.alias == "do-web").unwrap();
-        assert!(entry.tags.iter().any(|t| t == "new-tag"));
-        // "my-custom" should be gone with reset_tags
-        assert!(!entry.tags.iter().any(|t| t == "my-custom"));
+        // Provider tags exactly mirror remote
+        assert!(entry.provider_tags.iter().any(|t| t == "prod"));
+        assert!(entry.provider_tags.iter().any(|t| t == "new-tag"));
+        // User tag "my-custom" survives, "prod" migrated to provider_tags
+        assert!(!entry.tags.iter().any(|t| t == "prod"));
+        assert!(entry.tags.iter().any(|t| t == "my-custom"));
     }
 
     // =========================================================================
@@ -2285,8 +2340,8 @@ Host do-web-1-copy
         )];
         sync_provider(&mut config, &MockProvider, &remote, &section, false, false);
         let entries = config.host_entries();
-        // Tags are trimmed during the write+parse roundtrip via set_host_tags
-        assert_eq!(entries[0].tags, vec!["production", "us-east"]);
+        // Tags are trimmed during the write+parse roundtrip via set_host_provider_tags
+        assert_eq!(entries[0].provider_tags, vec!["production", "us-east"]);
     }
 
     #[test]
@@ -2467,7 +2522,7 @@ Host do-web-1-copy
         )];
         sync_provider(&mut config, &MockProvider, &remote, &section, false, false);
         assert_eq!(config.host_entries()[0].alias, "do-old-name");
-        assert_eq!(config.host_entries()[0].tags, vec!["staging"]);
+        assert_eq!(config.host_entries()[0].provider_tags, vec!["staging"]);
 
         // Change name and add new tag
         let remote2 = vec![ProviderHost::new(
@@ -2482,8 +2537,8 @@ Host do-web-1-copy
 
         let entries = config.host_entries();
         let entry = entries.iter().find(|e| e.alias == "do-new-name").unwrap();
-        assert!(entry.tags.contains(&"staging".to_string()));
-        assert!(entry.tags.contains(&"prod".to_string()));
+        assert!(entry.provider_tags.contains(&"staging".to_string()));
+        assert!(entry.provider_tags.contains(&"prod".to_string()));
     }
 
     // =========================================================================
@@ -2631,7 +2686,7 @@ Host do-web-1-copy
     // =========================================================================
 
     #[test]
-    fn test_sync_reset_tags_with_rename() {
+    fn test_sync_provider_tags_with_rename() {
         let mut config = empty_config();
         let section = make_section();
         let remote = vec![ProviderHost::new(
@@ -2646,29 +2701,31 @@ Host do-web-1-copy
             &["staging".to_string(), "custom".to_string()],
         );
 
-        // Rename + reset_tags
+        // Rename + provider tags update
         let remote2 = vec![ProviderHost::new(
             "1".to_string(),
             "new-name".to_string(),
             "1.2.3.4".to_string(),
             vec!["production".to_string()],
         )];
-        let result = sync_provider_with_options(
+        let result = sync_provider(
             &mut config,
             &MockProvider,
             &remote2,
             &section,
             false,
             false,
-            true,
         );
         assert_eq!(result.updated, 1);
         assert_eq!(result.renames.len(), 1);
 
         let entries = config.host_entries();
         let entry = entries.iter().find(|e| e.alias == "do-new-name").unwrap();
-        assert_eq!(entry.tags, vec!["production"]);
-        assert!(!entry.tags.contains(&"custom".to_string()));
+        // Provider tags exactly mirror remote
+        assert_eq!(entry.provider_tags, vec!["production"]);
+        // User tags preserved (migration only removes tags matching remote "production")
+        assert!(entry.tags.contains(&"custom".to_string()));
+        assert!(entry.tags.contains(&"staging".to_string()));
     }
 
     // =========================================================================
@@ -3403,7 +3460,7 @@ Host do-web
     // =========================================================================
 
     #[test]
-    fn test_sync_reset_tags_case_insensitive_no_update() {
+    fn test_sync_provider_tags_case_insensitive_no_update() {
         let mut config = empty_config();
         let section = make_section();
 
@@ -3413,31 +3470,29 @@ Host do-web
             "1.2.3.4".to_string(),
             vec!["Production".to_string()],
         )];
-        sync_provider_with_options(
+        sync_provider(
             &mut config,
             &MockProvider,
             &remote,
             &section,
             false,
             false,
-            true,
         );
 
-        // Same tag but different case -> unchanged with reset_tags
+        // Same tag but different case -> unchanged
         let remote2 = vec![ProviderHost::new(
             "1".to_string(),
             "web".to_string(),
             "1.2.3.4".to_string(),
             vec!["production".to_string()],
         )];
-        let result = sync_provider_with_options(
+        let result = sync_provider(
             &mut config,
             &MockProvider,
             &remote2,
             &section,
             false,
             false,
-            true,
         );
         assert_eq!(
             result.unchanged, 1,
@@ -3683,5 +3738,239 @@ Host do-web
         let result = sync_provider(&mut config, &MockProvider, &remote2, &section, false, false);
         assert_eq!(result.updated, 1);
         assert_eq!(config.host_entries()[0].provider_meta.len(), 2);
+    }
+
+    // =========================================================================
+    // Migration and provider_tags edge cases
+    // =========================================================================
+
+    #[test]
+    fn test_sync_upgrade_migration() {
+        // Host with old-format tags (no provider_tags line). Provider tags
+        // mixed into user tags. First sync should create provider_tags and
+        // clean the user tags.
+        let content = "\
+Host do-web-1
+  HostName 1.2.3.4
+  User root
+  # purple:tags prod,us-east,my-custom
+  # purple:provider digitalocean:123
+";
+        let mut config = SshConfigFile {
+            elements: SshConfigFile::parse_content(content),
+            path: PathBuf::from("/tmp/test_config"),
+            crlf: false,
+            bom: false,
+        };
+        let section = make_section();
+
+        // Provider returns tags that overlap with user tags
+        let remote = vec![ProviderHost::new(
+            "123".to_string(),
+            "web-1".to_string(),
+            "1.2.3.4".to_string(),
+            vec!["prod".to_string(), "us-east".to_string()],
+        )];
+
+        let result = sync_provider(&mut config, &MockProvider, &remote, &section, false, false);
+        // Should detect tags_changed (no provider_tags existed before)
+        assert_eq!(result.updated, 1);
+
+        let entry = &config.host_entries()[0];
+        // provider_tags should now contain the provider tags
+        let mut ptags = entry.provider_tags.clone();
+        ptags.sort();
+        assert_eq!(ptags, vec!["prod", "us-east"]);
+
+        // User tags should have provider tags removed, leaving only "my-custom"
+        assert_eq!(entry.tags, vec!["my-custom"]);
+    }
+
+    #[test]
+    fn test_sync_duplicate_user_provider_tag() {
+        // User manually adds tag "prod" that already exists in provider_tags.
+        // Next sync with same provider tags (unchanged) should clean the duplicate.
+        // NOTE: This tests DESIRED behavior. If the current code doesn't clean
+        // duplicates when tags_changed=false, the test may fail until the fix lands.
+        let mut config = empty_config();
+        let section = make_section();
+
+        // First sync: add host with provider tag "prod"
+        let remote = vec![ProviderHost::new(
+            "123".to_string(),
+            "web-1".to_string(),
+            "1.2.3.4".to_string(),
+            vec!["prod".to_string()],
+        )];
+        sync_provider(&mut config, &MockProvider, &remote, &section, false, false);
+        assert_eq!(config.host_entries()[0].provider_tags, vec!["prod"]);
+
+        // User manually adds "prod" to user tags (simulating TUI tag edit)
+        config.set_host_tags("do-web-1", &["prod".to_string(), "custom".to_string()]);
+        assert_eq!(config.host_entries()[0].tags, vec!["prod", "custom"]);
+
+        // Second sync: same provider tags (unchanged)
+        let result = sync_provider(&mut config, &MockProvider, &remote, &section, false, false);
+
+        // Desired: duplicate "prod" removed from user tags
+        let entry = &config.host_entries()[0];
+        assert!(
+            !entry.tags.contains(&"prod".to_string()),
+            "User tag 'prod' should be cleaned since it duplicates a provider tag"
+        );
+        assert!(
+            entry.tags.contains(&"custom".to_string()),
+            "User tag 'custom' should be preserved"
+        );
+        // provider_tags unchanged
+        assert_eq!(entry.provider_tags, vec!["prod"]);
+    }
+
+    #[test]
+    fn test_sync_set_provider_tags_empty_writes_sentinel() {
+        // Calling set_provider_tags(&[]) should write an empty sentinel comment
+        let content = "\
+Host do-web-1
+  HostName 1.2.3.4
+  # purple:provider_tags prod
+  # purple:provider digitalocean:123
+";
+        let mut config = SshConfigFile {
+            elements: SshConfigFile::parse_content(content),
+            path: PathBuf::from("/tmp/test_config"),
+            crlf: false,
+            bom: false,
+        };
+
+        // Clear provider tags via the model
+        config.set_host_provider_tags("do-web-1", &[]);
+
+        let serialized = config.serialize();
+        assert!(
+            serialized.contains("# purple:provider_tags"),
+            "empty sentinel should exist. Got:\n{}",
+            serialized
+        );
+        assert!(
+            !serialized.contains("# purple:provider_tags "),
+            "sentinel should have no trailing content. Got:\n{}",
+            serialized
+        );
+        // Host block should still exist
+        assert!(serialized.contains("Host do-web-1"));
+        assert!(serialized.contains("purple:provider digitalocean:123"));
+    }
+
+    #[test]
+    fn test_sync_set_provider_does_not_clobber_provider_tags() {
+        // Updating the provider marker should not remove provider_tags
+        let content = "\
+Host do-web-1
+  HostName 1.2.3.4
+  # purple:provider digitalocean:123
+  # purple:provider_tags prod
+";
+        let mut config = SshConfigFile {
+            elements: SshConfigFile::parse_content(content),
+            path: PathBuf::from("/tmp/test_config"),
+            crlf: false,
+            bom: false,
+        };
+
+        // Update provider marker (e.g. server_id changed)
+        config.set_host_provider("do-web-1", "digitalocean", "456");
+
+        let serialized = config.serialize();
+        assert!(
+            serialized.contains("# purple:provider_tags prod"),
+            "provider_tags should survive set_provider. Got:\n{}",
+            serialized
+        );
+        assert!(
+            serialized.contains("# purple:provider digitalocean:456"),
+            "provider marker should be updated. Got:\n{}",
+            serialized
+        );
+    }
+
+    #[test]
+    fn test_sync_provider_tags_roundtrip() {
+        // Parse -> serialize -> reparse should preserve provider_tags
+        let content = "\
+Host do-web-1
+  HostName 1.2.3.4
+  User root
+  # purple:provider_tags prod,us-east
+  # purple:provider digitalocean:123
+";
+        let config = SshConfigFile {
+            elements: SshConfigFile::parse_content(content),
+            path: PathBuf::from("/tmp/test_config"),
+            crlf: false,
+            bom: false,
+        };
+
+        // Verify initial parse
+        let entries = config.host_entries();
+        assert_eq!(entries.len(), 1);
+        let mut ptags = entries[0].provider_tags.clone();
+        ptags.sort();
+        assert_eq!(ptags, vec!["prod", "us-east"]);
+
+        // Serialize and reparse
+        let serialized = config.serialize();
+        let config2 = SshConfigFile {
+            elements: SshConfigFile::parse_content(&serialized),
+            path: PathBuf::from("/tmp/test_config"),
+            crlf: false,
+            bom: false,
+        };
+
+        let entries2 = config2.host_entries();
+        assert_eq!(entries2.len(), 1);
+        let mut ptags2 = entries2[0].provider_tags.clone();
+        ptags2.sort();
+        assert_eq!(ptags2, vec!["prod", "us-east"]);
+    }
+
+    #[test]
+    fn test_sync_first_migration_empty_remote_writes_sentinel() {
+        // Old-format host: has # purple:tags but no # purple:provider_tags
+        let mut config = SshConfigFile {
+            elements: SshConfigFile::parse_content(
+                "Host do-web-1\n  HostName 1.2.3.4\n  # purple:provider digitalocean:123\n  # purple:tags prod\n",
+            ),
+            path: PathBuf::from("/tmp/test_config"),
+            crlf: false,
+            bom: false,
+        };
+        let section = make_section();
+
+        // Verify: no provider_tags comment yet
+        let entries = config.host_entries();
+        assert!(!entries[0].has_provider_tags);
+        assert_eq!(entries[0].tags, vec!["prod"]);
+
+        // First sync: provider returns empty tags
+        let remote = vec![ProviderHost::new(
+            "123".to_string(),
+            "web-1".to_string(),
+            "1.2.3.4".to_string(),
+            Vec::new(),
+        )];
+        let result = sync_provider(&mut config, &MockProvider, &remote, &section, false, false);
+        assert_eq!(result.updated, 1);
+
+        // Verify: provider_tags sentinel written (has_provider_tags=true, but empty)
+        let entries = config.host_entries();
+        assert!(entries[0].has_provider_tags);
+        assert!(entries[0].provider_tags.is_empty());
+        // User tag "prod" preserved (no overlap with empty remote)
+        assert_eq!(entries[0].tags, vec!["prod"]);
+
+        // Second sync: same empty tags. Now first_migration=false (has_provider_tags=true).
+        // Nothing changed, so host should be unchanged.
+        let result2 = sync_provider(&mut config, &MockProvider, &remote, &section, false, false);
+        assert_eq!(result2.unchanged, 1);
     }
 }

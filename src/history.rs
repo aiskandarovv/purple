@@ -140,15 +140,15 @@ impl ConnectionHistory {
             .as_secs();
         let diff = now.saturating_sub(timestamp);
         if diff < 60 {
-            "<1m ago".to_string()
+            "<1m".to_string()
         } else if diff < 3600 {
-            format!("{}m ago", diff / 60)
+            format!("{}m", diff / 60)
         } else if diff < 86400 {
-            format!("{}h ago", diff / 3600)
+            format!("{}h", diff / 3600)
         } else if diff < 604800 {
-            format!("{}d ago", diff / 86400)
+            format!("{}d", diff / 86400)
         } else {
-            format!("{}w ago", diff / 604800)
+            format!("{}w", diff / 604800)
         }
     }
 
@@ -354,9 +354,9 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        assert_eq!(ConnectionHistory::format_time_ago(now), "<1m ago");
-        assert_eq!(ConnectionHistory::format_time_ago(now - 300), "5m ago");
-        assert_eq!(ConnectionHistory::format_time_ago(now - 7200), "2h ago");
-        assert_eq!(ConnectionHistory::format_time_ago(now - 172800), "2d ago");
+        assert_eq!(ConnectionHistory::format_time_ago(now), "<1m");
+        assert_eq!(ConnectionHistory::format_time_ago(now - 300), "5m");
+        assert_eq!(ConnectionHistory::format_time_ago(now - 7200), "2h");
+        assert_eq!(ConnectionHistory::format_time_ago(now - 172800), "2d");
     }
 }

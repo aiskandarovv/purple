@@ -171,7 +171,7 @@ const LANDING_PAGE = `<!DOCTYPE html>
   "url": "https://getpurple.sh",
   "downloadUrl": "https://getpurple.sh",
   "installUrl": "https://github.com/erickochen/purple/releases",
-  "softwareVersion": "2.8.1",
+  "softwareVersion": "2.9.0",
   "programmingLanguage": "Rust",
   "license": "https://opensource.org/licenses/MIT",
   "codeRepository": "https://github.com/erickochen/purple",
@@ -286,7 +286,7 @@ const LANDING_PAGE = `<!DOCTYPE html>
       "name": "Can I use purple with SSH Include files?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Yes. Hosts from Include files are displayed in the TUI but never modified. purple resolves Include directives recursively (up to depth 5) with tilde and glob expansion."
+        "text": "Yes. Hosts from Include files are displayed in the TUI but never modified. purple resolves Include directives recursively (up to depth 16) with tilde and glob expansion."
       }
     },
     {
@@ -887,7 +887,7 @@ footer a:hover { color: var(--accent); }
 
   <section>
     <h2>Cloud providers</h2>
-    <p>Pull servers from eleven cloud providers directly into your <code>~/.ssh/config</code>. Sync adds new hosts, updates changed IPs and merges tags. Provider metadata (region, plan, OS, status) is stored in config comments and displayed in the detail panel.</p>
+    <p>Pull servers from eleven cloud providers directly into your <code>~/.ssh/config</code>. Sync adds new hosts, updates changed IPs and stores provider tags separately. Your own tags are never touched. Provider metadata (region, plan, OS, status) is stored in config comments and displayed in the detail panel.</p>
     <div class="providers">
       <span>AWS EC2</span>
       <span>Azure</span>
@@ -901,7 +901,7 @@ footer a:hover { color: var(--accent); }
       <span>UpCloud</span>
       <span>Vultr</span>
     </div>
-    <p>Preview changes with <code>--dry-run</code>. Remove deleted hosts with <code>--remove</code>. Replace local tags with <code>--reset-tags</code>.</p>
+    <p>Preview changes with <code>--dry-run</code>. Remove deleted hosts with <code>--remove</code>.</p>
   </section>
 
   <section>
@@ -979,7 +979,7 @@ footer a:hover { color: var(--accent); }
       </details>
       <details>
         <summary>Can I use Include files?</summary>
-        <div class="a-wrap"><div class="answer">Yes. Hosts from Include files are displayed in the TUI but never modified. Resolved recursively up to depth 5 with tilde and glob expansion.</div></div>
+        <div class="a-wrap"><div class="answer">Yes. Hosts from Include files are displayed in the TUI but never modified. Resolved recursively up to depth 16 with tilde and glob expansion.</div></div>
       </details>
       <details>
         <summary>How do I sync GCP instances?</summary>
@@ -1059,13 +1059,13 @@ purple turns your ~/.ssh/config into a searchable, visual interface. Find any ho
 - Command snippets: save commands, run on single host, multi-host selection or all hosts. Sequential and parallel execution. TUI and CLI
 - Password management: OS Keychain, 1Password (op://), Bitwarden (bw:), pass (pass:), HashiCorp Vault (vault:), custom command. Automatic SSH_ASKPASS integration
 - SSH tunnel management: LocalForward, RemoteForward, DynamicForward. Start/stop from TUI or CLI
-- Host tagging via SSH config comments (# purple:tags). Tag picker, fuzzy and exact tag filtering
+- Host tagging via SSH config comments. User tags in # purple:tags, provider tags in # purple:provider_tags (exact mirror of remote). Tag picker, fuzzy and exact tag filtering
 - Bulk import from hosts files or ~/.ssh/known_hosts
 - SSH key browsing with metadata (type, bits, fingerprint) and host linking
 - Split-pane detail panel showing connection info, activity sparkline, tags, provider metadata, tunnels and snippets
 - TCP ping / connectivity check per host or all at once
 - Atomic writes with automatic backups (last 5). Temp file, chmod 600, rename
-- Include file support (read-only, recursive up to depth 5, tilde + glob expansion)
+- Include file support (read-only, recursive up to depth 16, tilde + glob expansion)
 - Host key reset: detects changed host keys after server reinstalls and offers to remove the old key and reconnect
 - Auto-reload: detects external config changes every 4 seconds
 - Self-update mechanism (macOS and Linux curl installs). Homebrew and cargo users update via their package manager
@@ -1106,7 +1106,6 @@ purple sync                         # Sync all providers
 purple sync digitalocean            # Sync single provider
 purple sync --dry-run               # Preview changes
 purple sync --remove                # Remove hosts deleted from provider
-purple sync --reset-tags            # Replace local tags with provider tags
 purple tunnel list                  # List all tunnels
 purple tunnel list myserver         # List tunnels for a host
 purple tunnel add myserver L:8080:localhost:80
@@ -1128,7 +1127,7 @@ purple --completions zsh            # Generate shell completions
 
 Sync servers from cloud providers into ~/.ssh/config. Each synced host is tracked via a comment (# purple:provider name:id) so purple knows which hosts belong to which provider.
 
-Supported providers: AWS EC2, DigitalOcean, Vultr, Linode (Akamai), Hetzner, UpCloud, Proxmox VE, Scaleway, GCP (Compute Engine), Azure and Tailscale. Tags and labels from each provider are synced. Provider metadata (region, plan, OS, status. Proxmox: node, type, status) is stored in config comments and displayed in the detail panel.
+Supported providers: AWS EC2, DigitalOcean, Vultr, Linode (Akamai), Hetzner, UpCloud, Proxmox VE, Scaleway, GCP (Compute Engine), Azure and Tailscale. Provider tags and labels are stored separately in # purple:provider_tags (always replaced on sync). User tags in # purple:tags are never touched by sync. Provider metadata (region, plan, OS, status. Proxmox: node, type, status) is stored in config comments and displayed in the detail panel.
 
 Provider-specific details:
 - AWS EC2: multi-region sync, ~/.aws/credentials profiles, SigV4 request signing, AMI name resolution for OS metadata
@@ -1138,7 +1137,7 @@ Provider-specific details:
 - Azure: multi-subscription sync via the Azure Resource Manager API. Authenticate with a service principal JSON file (tenantId, clientId, clientSecret -> OAuth2 client credentials) or a raw Bearer token (e.g. from az account get-access-token). Requires subscription IDs via --regions. Batch IP resolution (3 list calls: VMs, NICs, Public IPs). VM tags synced as host tags
 - Tailscale: dual mode. Without a token it uses the local \`tailscale status --json\` CLI (no API key needed). With a token it uses the Tailscale HTTP API. Tags are synced (tag: prefix stripped). IPv4 (100.x) preferred over IPv6
 
-Per-provider auto_sync toggle controls startup sync. Default is true for all providers except Proxmox (default false). Manual sync via the TUI (s key) or CLI always works. Preview changes with --dry-run. Remove deleted hosts with --remove. Replace local tags with --reset-tags.
+Per-provider auto_sync toggle controls startup sync. Default is true for all providers except Proxmox (default false). Manual sync via the TUI (s key) or CLI always works. Preview changes with --dry-run. Remove deleted hosts with --remove.
 
 ## Password management
 
@@ -1162,7 +1161,7 @@ Manage LocalForward, RemoteForward and DynamicForward rules per host. Start and 
 
 ## Tags
 
-Tags are stored as SSH config comments (# purple:tags prod,us-east). Filter with tag: prefix in search (fuzzy match) or tag= prefix (exact match). Provider names appear as virtual tags. The tag picker (# key) shows all tags with host counts.
+User tags are stored as SSH config comments (# purple:tags prod,us-east). Provider tags from cloud sync are stored separately (# purple:provider_tags). Sync always replaces provider_tags with the exact remote tags. User tags are never touched by sync. Filter with tag: prefix in search (fuzzy match) or tag= prefix (exact match). Provider names appear as virtual tags. The tag picker (# key) shows all tags with host counts.
 
 ## Round-trip fidelity
 

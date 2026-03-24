@@ -1913,7 +1913,7 @@ impl App {
                 .iter()
                 .enumerate()
                 .filter(|(_, host)| {
-                    host.tags.iter().any(|t| eq_ci(t, tag_exact))
+                    host.provider_tags.iter().chain(host.tags.iter()).any(|t| eq_ci(t, tag_exact))
                         || host.provider.as_ref().is_some_and(|p| eq_ci(p, tag_exact))
                 })
                 .map(|(i, _)| i)
@@ -1925,7 +1925,7 @@ impl App {
                 .iter()
                 .enumerate()
                 .filter(|(_, host)| {
-                    host.tags.iter().any(|t| contains_ci(t, tag_query))
+                    host.provider_tags.iter().chain(host.tags.iter()).any(|t| contains_ci(t, tag_query))
                         || host
                             .provider
                             .as_ref()
@@ -1942,7 +1942,7 @@ impl App {
                     contains_ci(&host.alias, &query)
                         || contains_ci(&host.hostname, &query)
                         || contains_ci(&host.user, &query)
-                        || host.tags.iter().any(|t| contains_ci(t, &query))
+                        || host.provider_tags.iter().chain(host.tags.iter()).any(|t| contains_ci(t, &query))
                         || host
                             .provider
                             .as_ref()
@@ -2246,7 +2246,7 @@ impl App {
         let mut seen = std::collections::HashSet::new();
         let mut tags = Vec::new();
         for host in &self.hosts {
-            for tag in &host.tags {
+            for tag in host.provider_tags.iter().chain(host.tags.iter()) {
                 if seen.insert(tag.as_str()) {
                     tags.push(tag.clone());
                 }
@@ -4525,5 +4525,54 @@ Host vultr-app
         assert!(matches!(fields[5], FormField::ProxyJump));
         assert!(matches!(fields[6], FormField::AskPass));
         assert!(matches!(fields[7], FormField::Tags));
+    }
+
+    // =========================================================================
+    // Search/filter with provider_tags
+    // =========================================================================
+
+    #[test]
+    fn test_search_tag_exact_matches_provider_tags() {
+        let mut app = make_app(
+            "Host myserver\n  HostName 10.0.0.1\n  # purple:provider_tags prod\n",
+        );
+        app.start_search();
+        app.search.query = Some("tag=prod".to_string());
+        app.apply_filter();
+        assert_eq!(app.search.filtered_indices, vec![0]);
+    }
+
+    #[test]
+    fn test_search_tag_fuzzy_matches_provider_tags() {
+        let mut app = make_app(
+            "Host myserver\n  HostName 10.0.0.1\n  # purple:provider_tags production\n",
+        );
+        app.start_search();
+        app.search.query = Some("tag:prod".to_string());
+        app.apply_filter();
+        assert_eq!(app.search.filtered_indices, vec![0]);
+    }
+
+    #[test]
+    fn test_search_general_matches_provider_tags() {
+        let mut app = make_app(
+            "Host myserver\n  HostName 10.0.0.1\n  # purple:provider_tags staging\n",
+        );
+        app.start_search();
+        app.search.query = Some("staging".to_string());
+        app.apply_filter();
+        assert_eq!(app.search.filtered_indices, vec![0]);
+    }
+
+    #[test]
+    fn test_collect_unique_tags_includes_provider_tags() {
+        let app = make_app(
+            "Host srv1\n  HostName 10.0.0.1\n  # purple:tags user1\n  # purple:provider_tags cloud1\n\nHost srv2\n  HostName 10.0.0.2\n  # purple:provider_tags cloud2\n  # purple:tags user2\n",
+        );
+        let tags = app.collect_unique_tags();
+        assert!(tags.contains(&"user1".to_string()));
+        assert!(tags.contains(&"user2".to_string()));
+        assert!(tags.contains(&"cloud1".to_string()));
+        assert!(tags.contains(&"cloud2".to_string()));
     }
 }

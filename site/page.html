@@ -35,7 +35,7 @@
   "url": "https://getpurple.sh",
   "downloadUrl": "https://getpurple.sh",
   "installUrl": "https://github.com/erickochen/purple/releases",
-  "softwareVersion": "2.8.1",
+  "softwareVersion": "2.9.0",
   "programmingLanguage": "Rust",
   "license": "https://opensource.org/licenses/MIT",
   "codeRepository": "https://github.com/erickochen/purple",
@@ -150,7 +150,7 @@
       "name": "Can I use purple with SSH Include files?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Yes. Hosts from Include files are displayed in the TUI but never modified. purple resolves Include directives recursively (up to depth 5) with tilde and glob expansion."
+        "text": "Yes. Hosts from Include files are displayed in the TUI but never modified. purple resolves Include directives recursively (up to depth 16) with tilde and glob expansion."
       }
     },
     {
@@ -751,7 +751,7 @@ footer a:hover { color: var(--accent); }
 
   <section>
     <h2>Cloud providers</h2>
-    <p>Pull servers from eleven cloud providers directly into your <code>~/.ssh/config</code>. Sync adds new hosts, updates changed IPs and merges tags. Provider metadata (region, plan, OS, status) is stored in config comments and displayed in the detail panel.</p>
+    <p>Pull servers from eleven cloud providers directly into your <code>~/.ssh/config</code>. Sync adds new hosts, updates changed IPs and stores provider tags separately. Your own tags are never touched. Provider metadata (region, plan, OS, status) is stored in config comments and displayed in the detail panel.</p>
     <div class="providers">
       <span>AWS EC2</span>
       <span>Azure</span>
@@ -765,7 +765,7 @@ footer a:hover { color: var(--accent); }
       <span>UpCloud</span>
       <span>Vultr</span>
     </div>
-    <p>Preview changes with <code>--dry-run</code>. Remove deleted hosts with <code>--remove</code>. Replace local tags with <code>--reset-tags</code>.</p>
+    <p>Preview changes with <code>--dry-run</code>. Remove deleted hosts with <code>--remove</code>.</p>
   </section>
 
   <section>
@@ -843,7 +843,7 @@ footer a:hover { color: var(--accent); }
       </details>
       <details>
         <summary>Can I use Include files?</summary>
-        <div class="a-wrap"><div class="answer">Yes. Hosts from Include files are displayed in the TUI but never modified. Resolved recursively up to depth 5 with tilde and glob expansion.</div></div>
+        <div class="a-wrap"><div class="answer">Yes. Hosts from Include files are displayed in the TUI but never modified. Resolved recursively up to depth 16 with tilde and glob expansion.</div></div>
       </details>
       <details>
         <summary>How do I sync GCP instances?</summary>

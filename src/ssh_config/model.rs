@@ -93,8 +93,12 @@ pub struct HostEntry {
     pub proxy_jump: String,
     /// If this host comes from an included file, the file path.
     pub source_file: Option<PathBuf>,
-    /// Tags from purple:tags comment.
+    /// User-added tags from purple:tags comment.
     pub tags: Vec<String>,
+    /// Provider-synced tags from purple:provider_tags comment.
+    pub provider_tags: Vec<String>,
+    /// Whether a purple:provider_tags comment exists (distinguishes "never migrated" from "empty").
+    pub has_provider_tags: bool,
     /// Cloud provider label from purple:provider comment (e.g. "do", "vultr").
     pub provider: Option<String>,
     /// Number of tunnel forwarding directives.
@@ -116,6 +120,8 @@ impl Default for HostEntry {
             proxy_jump: String::new(),
             source_file: None,
             tags: Vec::new(),
+            provider_tags: Vec::new(),
+            has_provider_tags: false,
             provider: None,
             tunnel_count: 0,
             askpass: None,
@@ -219,6 +225,34 @@ impl HostBlock {
         Vec::new()
     }
 
+    /// Extract provider-synced tags from purple:provider_tags comment.
+    pub fn provider_tags(&self) -> Vec<String> {
+        for d in &self.directives {
+            if d.is_non_directive {
+                let trimmed = d.raw_line.trim();
+                if let Some(rest) = trimmed.strip_prefix("# purple:provider_tags ") {
+                    return rest
+                        .split(',')
+                        .map(|t| t.trim().to_string())
+                        .filter(|t| !t.is_empty())
+                        .collect();
+                }
+            }
+        }
+        Vec::new()
+    }
+
+    /// Check if a purple:provider_tags comment exists (even if empty).
+    /// Used to distinguish "never migrated" from "migrated with no tags".
+    pub fn has_provider_tags_comment(&self) -> bool {
+        self.directives.iter().any(|d| {
+            d.is_non_directive && {
+                let t = d.raw_line.trim();
+                t == "# purple:provider_tags" || t.starts_with("# purple:provider_tags ")
+            }
+        })
+    }
+
     /// Extract provider info from purple:provider comment in directives.
     /// Returns (provider_name, server_id), e.g. ("digitalocean", "412345678").
     pub fn provider(&self) -> Option<(String, String)> {
@@ -239,7 +273,7 @@ impl HostBlock {
     pub fn set_provider(&mut self, provider_name: &str, server_id: &str) {
         let indent = self.detect_indent();
         self.directives.retain(|d| {
-            !(d.is_non_directive && d.raw_line.trim().starts_with("# purple:provider"))
+            !(d.is_non_directive && d.raw_line.trim().starts_with("# purple:provider "))
         });
         let pos = self.content_end();
         self.directives.insert(
@@ -277,7 +311,12 @@ impl HostBlock {
     pub fn set_askpass(&mut self, source: &str) {
         let indent = self.detect_indent();
         self.directives
-            .retain(|d| !(d.is_non_directive && d.raw_line.trim().starts_with("# purple:askpass")));
+            .retain(|d| {
+                !(d.is_non_directive && {
+                    let t = d.raw_line.trim();
+                    t == "# purple:askpass" || t.starts_with("# purple:askpass ")
+                })
+            });
         if !source.is_empty() {
             let pos = self.content_end();
             self.directives.insert(
@@ -323,13 +362,18 @@ impl HostBlock {
     pub fn set_meta(&mut self, meta: &[(String, String)]) {
         let indent = self.detect_indent();
         self.directives
-            .retain(|d| !(d.is_non_directive && d.raw_line.trim().starts_with("# purple:meta")));
+            .retain(|d| {
+                !(d.is_non_directive && {
+                    let t = d.raw_line.trim();
+                    t == "# purple:meta" || t.starts_with("# purple:meta ")
+                })
+            });
         if !meta.is_empty() {
             let encoded: Vec<String> = meta
                 .iter()
                 .map(|(k, v)| {
-                    let clean_k = k.replace([',', '='], "");
-                    let clean_v = v.replace(',', "");
+                    let clean_k = Self::sanitize_tag(&k.replace([',', '='], ""));
+                    let clean_v = Self::sanitize_tag(&v.replace(',', ""));
                     format!("{}={}", clean_k, clean_v)
                 })
                 .collect();
@@ -346,23 +390,80 @@ impl HostBlock {
         }
     }
 
-    /// Set tags on a host block. Replaces existing purple:tags comment or adds one.
+    /// Sanitize a tag value: strip control characters, commas (delimiter),
+    /// and Unicode format/bidi override characters. Truncate to 128 chars.
+    fn sanitize_tag(tag: &str) -> String {
+        tag.chars()
+            .filter(|c| {
+                !c.is_control()
+                    && *c != ','
+                    && !('\u{200B}'..='\u{200F}').contains(c) // zero-width, bidi marks
+                    && !('\u{202A}'..='\u{202E}').contains(c) // bidi embedding/override
+                    && !('\u{2066}'..='\u{2069}').contains(c) // bidi isolate
+                    && *c != '\u{FEFF}' // BOM/zero-width no-break space
+            })
+            .take(128)
+            .collect()
+    }
+
+    /// Set user tags on a host block. Replaces existing purple:tags comment or adds one.
     pub fn set_tags(&mut self, tags: &[String]) {
         let indent = self.detect_indent();
-        self.directives
-            .retain(|d| !(d.is_non_directive && d.raw_line.trim().starts_with("# purple:tags")));
-        if !tags.is_empty() {
+        self.directives.retain(|d| {
+            !(d.is_non_directive && {
+                let t = d.raw_line.trim();
+                t == "# purple:tags" || t.starts_with("# purple:tags ")
+            })
+        });
+        let sanitized: Vec<String> = tags
+            .iter()
+            .map(|t| Self::sanitize_tag(t))
+            .filter(|t| !t.is_empty())
+            .collect();
+        if !sanitized.is_empty() {
             let pos = self.content_end();
             self.directives.insert(
                 pos,
                 Directive {
                     key: String::new(),
                     value: String::new(),
-                    raw_line: format!("{}# purple:tags {}", indent, tags.join(",")),
+                    raw_line: format!("{}# purple:tags {}", indent, sanitized.join(",")),
                     is_non_directive: true,
                 },
             );
         }
+    }
+
+    /// Set provider-synced tags. Replaces existing purple:provider_tags comment.
+    /// Always writes the comment (even when empty) as a migration sentinel.
+    pub fn set_provider_tags(&mut self, tags: &[String]) {
+        let indent = self.detect_indent();
+        self.directives.retain(|d| {
+            !(d.is_non_directive && {
+                let t = d.raw_line.trim();
+                t == "# purple:provider_tags" || t.starts_with("# purple:provider_tags ")
+            })
+        });
+        let sanitized: Vec<String> = tags
+            .iter()
+            .map(|t| Self::sanitize_tag(t))
+            .filter(|t| !t.is_empty())
+            .collect();
+        let raw = if sanitized.is_empty() {
+            format!("{}# purple:provider_tags", indent)
+        } else {
+            format!("{}# purple:provider_tags {}", indent, sanitized.join(","))
+        };
+        let pos = self.content_end();
+        self.directives.insert(
+            pos,
+            Directive {
+                key: String::new(),
+                value: String::new(),
+                raw_line: raw,
+                is_non_directive: true,
+            },
+        );
     }
 
     /// Extract a convenience HostEntry view from this block.
@@ -391,6 +492,8 @@ impl HostBlock {
             }
         }
         entry.tags = self.tags();
+        entry.provider_tags = self.provider_tags();
+        entry.has_provider_tags = self.has_provider_tags_comment();
         entry.provider = self.provider().map(|(name, _)| name);
         entry.tunnel_count = self.tunnel_count();
         entry.askpass = self.askpass();
@@ -1059,6 +1162,18 @@ impl SshConfigFile {
             if let ConfigElement::HostBlock(block) = element {
                 if block.host_pattern == alias {
                     block.set_tags(tags);
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Set provider-synced tags on a host block by alias.
+    pub fn set_host_provider_tags(&mut self, alias: &str, tags: &[String]) {
+        for element in &mut self.elements {
+            if let ConfigElement::HostBlock(block) = element {
+                if block.host_pattern == alias {
+                    block.set_provider_tags(tags);
                     return;
                 }
             }
@@ -2709,5 +2824,150 @@ Host *
                 crate::providers::provider_display_name(name),
             );
         }
+    }
+
+    #[test]
+    fn test_sanitize_tag_strips_control_chars() {
+        assert_eq!(HostBlock::sanitize_tag("prod"), "prod");
+        assert_eq!(HostBlock::sanitize_tag("prod\n"), "prod");
+        assert_eq!(HostBlock::sanitize_tag("pr\x00od"), "prod");
+        assert_eq!(HostBlock::sanitize_tag("\t\r\n"), "");
+    }
+
+    #[test]
+    fn test_sanitize_tag_strips_commas() {
+        assert_eq!(HostBlock::sanitize_tag("prod,staging"), "prodstaging");
+        assert_eq!(HostBlock::sanitize_tag(",,,"), "");
+    }
+
+    #[test]
+    fn test_sanitize_tag_strips_bidi() {
+        assert_eq!(HostBlock::sanitize_tag("prod\u{202E}tset"), "prodtset");
+        assert_eq!(HostBlock::sanitize_tag("\u{200B}zero\u{FEFF}"), "zero");
+    }
+
+    #[test]
+    fn test_sanitize_tag_truncates_long() {
+        let long = "a".repeat(200);
+        assert_eq!(HostBlock::sanitize_tag(&long).len(), 128);
+    }
+
+    #[test]
+    fn test_sanitize_tag_preserves_unicode() {
+        assert_eq!(HostBlock::sanitize_tag("日本語"), "日本語");
+        assert_eq!(HostBlock::sanitize_tag("café"), "café");
+    }
+
+    // =========================================================================
+    // provider_tags parsing and has_provider_tags_comment tests
+    // =========================================================================
+
+    #[test]
+    fn test_provider_tags_parsing() {
+        let config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n  # purple:provider_tags a,b,c\n",
+        );
+        let entry = first_block(&config).to_host_entry();
+        assert_eq!(entry.provider_tags, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn test_provider_tags_empty() {
+        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
+        let entry = first_block(&config).to_host_entry();
+        assert!(entry.provider_tags.is_empty());
+    }
+
+    #[test]
+    fn test_has_provider_tags_comment_present() {
+        let config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n  # purple:provider_tags prod\n",
+        );
+        assert!(first_block(&config).has_provider_tags_comment());
+        assert!(first_block(&config).to_host_entry().has_provider_tags);
+    }
+
+    #[test]
+    fn test_has_provider_tags_comment_sentinel() {
+        // Bare sentinel (no tags) still counts as "has provider_tags"
+        let config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n  # purple:provider_tags\n",
+        );
+        assert!(first_block(&config).has_provider_tags_comment());
+        assert!(first_block(&config).to_host_entry().has_provider_tags);
+        assert!(first_block(&config).to_host_entry().provider_tags.is_empty());
+    }
+
+    #[test]
+    fn test_has_provider_tags_comment_absent() {
+        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
+        assert!(!first_block(&config).has_provider_tags_comment());
+        assert!(!first_block(&config).to_host_entry().has_provider_tags);
+    }
+
+    #[test]
+    fn test_set_tags_does_not_delete_provider_tags() {
+        let mut config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n  # purple:tags user1\n  # purple:provider_tags cloud1,cloud2\n",
+        );
+        config.set_host_tags("myserver", &["newuser".to_string()]);
+        let entry = first_block(&config).to_host_entry();
+        assert_eq!(entry.tags, vec!["newuser"]);
+        assert_eq!(entry.provider_tags, vec!["cloud1", "cloud2"]);
+    }
+
+    #[test]
+    fn test_set_provider_tags_does_not_delete_user_tags() {
+        let mut config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n  # purple:tags user1,user2\n  # purple:provider_tags old\n",
+        );
+        config.set_host_provider_tags("myserver", &["new1".to_string(), "new2".to_string()]);
+        let entry = first_block(&config).to_host_entry();
+        assert_eq!(entry.tags, vec!["user1", "user2"]);
+        assert_eq!(entry.provider_tags, vec!["new1", "new2"]);
+    }
+
+    #[test]
+    fn test_set_askpass_does_not_delete_similar_comments() {
+        // A hypothetical "# purple:askpass_backup test" should NOT be deleted by set_askpass
+        let mut config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n  # purple:askpass_backup test\n",
+        );
+        config.set_host_askpass("myserver", "op://vault/item/pass");
+        let entry = first_block(&config).to_host_entry();
+        assert_eq!(entry.askpass, Some("op://vault/item/pass".to_string()));
+        // The similar-but-different comment survives
+        let serialized = config.serialize();
+        assert!(serialized.contains("purple:askpass_backup test"));
+    }
+
+    #[test]
+    fn test_set_meta_does_not_delete_similar_comments() {
+        // A hypothetical "# purple:metadata foo" should NOT be deleted by set_meta
+        let mut config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n  # purple:meta region=us-east\n  # purple:metadata foo\n",
+        );
+        config.set_host_meta("myserver", &[("region".to_string(), "eu-west".to_string())]);
+        let serialized = config.serialize();
+        assert!(serialized.contains("purple:meta region=eu-west"));
+        assert!(serialized.contains("purple:metadata foo"));
+    }
+
+    #[test]
+    fn test_set_meta_sanitizes_control_chars() {
+        let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
+        config.set_host_meta(
+            "myserver",
+            &[
+                ("region".to_string(), "us\x00east".to_string()),
+                ("zone".to_string(), "a\u{202E}b".to_string()),
+            ],
+        );
+        let serialized = config.serialize();
+        // Control chars and bidi should be stripped from values
+        assert!(serialized.contains("region=useast"));
+        assert!(serialized.contains("zone=ab"));
+        assert!(!serialized.contains('\x00'));
+        assert!(!serialized.contains('\u{202E}'));
     }
 }

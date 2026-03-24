@@ -6,7 +6,7 @@ use ratatui::widgets::{Block, BorderType, List, ListItem, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 use super::theme;
-use crate::app::{self, App, HostListItem, PingStatus, SortMode, ViewMode};
+use crate::app::{self, App, HostListItem, PingStatus, ViewMode};
 use crate::ssh_config::model::ConfigElement;
 
 /// Minimum terminal width to show the detail panel in detailed view mode.
@@ -42,6 +42,8 @@ fn build_update_label(ver: &str, headline: Option<&str>, hint: &str, max_width: 
 }
 
 const HOST_MIN: usize = 12;
+/// Width of the row marker (indent + selection checkmark space).
+const MARKER_WIDTH: usize = 2;
 
 /// Column layout computed from the visible host list.
 struct Columns {
@@ -53,10 +55,17 @@ struct Columns {
     show_ping: bool,
     history: usize,
     gap: usize,
-    content: usize,
+    /// Flexible gap between left cluster (NAME+HOST) and right cluster (AUTH..LAST).
+    flex_gap: usize,
 }
 
 impl Columns {
+    /// Add ~10% breathing room to a content-measured column width.
+    /// Returns 0 for 0-width columns (no content = no column).
+    fn padded(w: usize) -> usize {
+        if w == 0 { 0 } else { w + w / 10 + 1 }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn compute(
         alias_w: usize,
@@ -68,93 +77,91 @@ impl Columns {
         history_w: usize,
         content: usize,
     ) -> Self {
-        let alias = alias_w.clamp(8, 24);
-        let host_content = host_w.max(HOST_MIN);
-        let mut tags = tags_w;
-        let mut tunnel = tunnel_w;
-        let mut auth = auth_w;
-        let mut show_ping = has_ping;
-        let mut history = history_w;
+        // All columns get ~110% of their content width for breathing room.
+        // Columns are capped — they never grow beyond content needs.
+        let alias = Self::padded(alias_w).clamp(8, 32);
+        let mut host = Self::padded(host_w).max(HOST_MIN);
+        let mut tags = if tags_w > 0 { Self::padded(tags_w).max(4) } else { 0 };
+        let mut tunnel = if tunnel_w > 0 { Self::padded(tunnel_w).max(6) } else { 0 };
+        let mut auth = if auth_w > 0 { Self::padded(auth_w).max(4) } else { 0 };
+        let show_ping = has_ping; // fixed 4 chars, never hidden
+        let mut history = if history_w > 0 { Self::padded(history_w).max(4) } else { 0 };
 
-        // Dynamic gap: more breathing room on wider terminals
-        let base_gap = if content >= 160 {
-            7
-        } else if content >= 130 {
-            6
-        } else if content >= 100 {
-            5
-        } else {
-            4
-        };
+        // Fixed gap between columns within a cluster
+        let gap: usize = if content >= 120 { 3 } else { 2 };
 
-        // Sum of all non-HOST fixed columns + gaps
-        let fixed_rest = |gap: usize,
-                          tags: usize,
-                          tunnel: usize,
-                          auth: usize,
-                          ping: bool,
-                          history: usize|
+        // Total width of the right cluster (AUTH, TUNNEL, PING, TAGS, LAST + gaps)
+        let right_cluster = |tags: usize,
+                             tunnel: usize,
+                             auth: usize,
+                             ping: bool,
+                             history: usize|
          -> usize {
-            let mut n = 2usize; // NAME + HOST always present
-            let mut w = alias;
-            if tags > 0 {
-                w += tags;
+            let mut w = 0usize;
+            let mut n = 0usize;
+            if auth > 0 {
+                w += auth;
                 n += 1;
             }
             if tunnel > 0 {
                 w += tunnel;
                 n += 1;
             }
-            if auth > 0 {
-                w += auth;
-                n += 1;
-            }
             if ping {
                 w += 4;
+                n += 1;
+            }
+            if tags > 0 {
+                w += tags;
                 n += 1;
             }
             if history > 0 {
                 w += history;
                 n += 1;
             }
-            1 + w + (n - 1) * gap // 1 for marker
+            let gaps = if n > 1 { (n - 1) * gap } else { 0 };
+            w + gaps
         };
 
-        // HOST gets remaining space: at least content width, absorbs extra
-        let calc_host = |gap: usize,
-                         tags: usize,
-                         tunnel: usize,
-                         auth: usize,
-                         ping: bool,
-                         history: usize|
-         -> usize {
-            content.saturating_sub(fixed_rest(gap, tags, tunnel, auth, ping, history))
-        };
+        // Left cluster: highlight_symbol(1) + marker + NAME + gap + HOST
+        let left = MARKER_WIDTH + 1 + alias + gap + host;
 
-        let mut host = calc_host(base_gap, tags, tunnel, auth, show_ping, history);
+        // Total with minimum flex_gap = gap
+        let mut rw = right_cluster(tags, tunnel, auth, show_ping, history);
+        let min_total = left + gap + rw;
 
-        // Hide columns by priority until HOST >= content width
-        if host < host_content && history > 0 {
-            history = 0;
-            host = calc_host(base_gap, tags, tunnel, auth, show_ping, history);
-        }
-        if host < host_content && tags > 0 {
+        // Hide right-cluster columns by priority: TAGS → AUTH → TUNNEL → LAST
+        if min_total > content && tags > 0 {
             tags = 0;
-            host = calc_host(base_gap, tags, tunnel, auth, show_ping, history);
+            rw = right_cluster(tags, tunnel, auth, show_ping, history);
         }
-        if host < host_content && show_ping {
-            show_ping = false;
-            host = calc_host(base_gap, tags, tunnel, auth, show_ping, history);
-        }
-        if host < host_content && auth > 0 {
+        if left + gap + rw > content && auth > 0 {
             auth = 0;
-            host = calc_host(base_gap, tags, tunnel, auth, show_ping, history);
+            rw = right_cluster(tags, tunnel, auth, show_ping, history);
         }
-        if host < host_content && tunnel > 0 {
+        if left + gap + rw > content && tunnel > 0 {
             tunnel = 0;
-            host = calc_host(base_gap, tags, tunnel, auth, show_ping, history);
+            rw = right_cluster(tags, tunnel, auth, show_ping, history);
+        }
+        if left + gap + rw > content && history > 0 {
+            history = 0;
+            rw = right_cluster(tags, tunnel, auth, show_ping, history);
+        }
+
+        // Still too wide: shrink HOST
+        let needed = MARKER_WIDTH + 1 + alias + gap + host + gap + rw;
+        if needed > content {
+            host = host.saturating_sub(needed - content);
         }
         host = host.max(HOST_MIN);
+
+        // Flex gap: remaining space between left and right clusters
+        let left_final = MARKER_WIDTH + 1 + alias + gap + host;
+        let flex_gap = if rw > 0 {
+            content.saturating_sub(left_final + rw)
+        } else {
+            0
+        };
 
         Columns {
             alias,
@@ -164,8 +171,8 @@ impl Columns {
             auth,
             show_ping,
             history,
-            gap: base_gap,
-            content,
+            gap,
+            flex_gap,
         }
     }
 }
@@ -319,7 +326,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         super::render_footer_with_status(
             frame,
             chunks[1],
-            footer_spans(use_detail, app.multi_select.len()),
+            footer_spans(use_detail, app.multi_select.len(), app.group_by_provider),
             app,
         );
     }
@@ -348,24 +355,10 @@ fn render_display_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::
         } else {
             0
         };
-        let mut spans = vec![
+        Line::from(vec![
             Span::styled(" purple. ", theme::brand_badge()),
             Span::raw(format!(" {}/{} ", pos, host_count)),
-        ];
-        if app.sort_mode != SortMode::Original || app.group_by_provider {
-            let mut label = String::new();
-            if app.sort_mode != SortMode::Original {
-                label.push_str(app.sort_mode.label());
-            }
-            if app.group_by_provider {
-                if !label.is_empty() {
-                    label.push_str(", ");
-                }
-                label.push_str("grouped");
-            }
-            spans.push(Span::raw(format!("({}) ", label)));
-        }
-        Line::from(spans)
+        ])
     };
 
     let update_title = app.update_available.as_ref().map(|ver| {
@@ -423,7 +416,7 @@ fn render_display_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::
     let tunnel_summaries = &app.tunnel_summaries_cache;
 
     // Compute column layout
-    let content_width = (inner.width as usize).saturating_sub(1);
+    let content_width = (inner.width as usize).saturating_sub(2); // -1 highlight, -1 right margin
     let alias_w = app.hosts.iter().map(|h| h.alias.width()).max().unwrap_or(8);
     let host_w = app
         .hosts
@@ -464,11 +457,19 @@ fn render_display_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::
         content_width,
     );
 
-    // Column header + list body
-    let [header_area, list_area] =
-        Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(inner);
+    // Column header + underline + list body
+    let [header_area, underline_area, list_area] =
+        Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Min(1)])
+            .areas(inner);
 
-    render_header(frame, header_area, &cols);
+    render_header(frame, header_area, &cols, app.sort_mode);
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            "─".repeat(underline_area.width as usize),
+            theme::muted(),
+        )),
+        underline_area,
+    );
 
     // Count hosts per group for group headers
     let group_counts: std::collections::HashMap<&str, usize> = {
@@ -495,8 +496,8 @@ fn render_display_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::
             HostListItem::GroupHeader(text) => {
                 let upper = text.to_uppercase();
                 let count = group_counts.get(text.as_str()).copied().unwrap_or(0);
-                let label = format!("{} ({}) ", upper, count);
-                let fill = cols.content.saturating_sub(label.width());
+                let label = format!("{}  {} ", upper, count);
+                let fill = content_width.saturating_sub(label.width());
                 let line = Line::from(vec![
                     Span::styled(label, theme::muted()),
                     Span::styled("─".repeat(fill), theme::muted()),
@@ -526,7 +527,7 @@ fn render_display_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::
 
     let list = List::new(items)
         .highlight_style(theme::selected_row())
-        .highlight_symbol(" ");
+        .highlight_symbol("\u{258C}");
 
     frame.render_stateful_widget(list, list_area, &mut app.ui.list_state);
 }
@@ -591,7 +592,7 @@ fn render_search_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::R
     }
     let tunnel_summaries = &app.tunnel_summaries_cache;
 
-    let content_width = (inner.width as usize).saturating_sub(1);
+    let content_width = (inner.width as usize).saturating_sub(2); // -1 highlight, -1 right margin
     let filtered_hosts = || {
         app.search
             .filtered_indices
@@ -632,10 +633,18 @@ fn render_search_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::R
         content_width,
     );
 
-    let [header_area, list_area] =
-        Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(inner);
+    let [header_area, underline_area, list_area] =
+        Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Min(1)])
+            .areas(inner);
 
-    render_header(frame, header_area, &cols);
+    render_header(frame, header_area, &cols, app.sort_mode);
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            "─".repeat(underline_area.width as usize),
+            theme::muted(),
+        )),
+        underline_area,
+    );
 
     let query = app.search.query.as_deref();
     let mut items: Vec<ListItem> = Vec::new();
@@ -658,58 +667,92 @@ fn render_search_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::R
 
     let list = List::new(items)
         .highlight_style(theme::selected_row())
-        .highlight_symbol(" ");
+        .highlight_symbol("\u{258C}");
 
     frame.render_stateful_widget(list, list_area, &mut app.ui.list_state);
 }
 
-fn render_header(frame: &mut Frame, area: ratatui::layout::Rect, cols: &Columns) {
+fn render_header(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    cols: &Columns,
+    sort_mode: crate::app::SortMode,
+) {
+    use crate::app::SortMode;
     let style = theme::bold();
     let gap = " ".repeat(cols.gap);
+    let flex = " ".repeat(cols.flex_gap);
+
+    // Sort indicator: ▾ next to the active sort column
+    let name_sort = matches!(sort_mode, SortMode::AlphaAlias);
+    let host_sort = matches!(sort_mode, SortMode::AlphaHostname);
+    let last_sort = matches!(sort_mode, SortMode::MostRecent | SortMode::Frecency);
+
     let mut spans = vec![
-        Span::styled(format!("  {:<width$}", "NAME", width = cols.alias), style),
+        Span::styled(
+            format!(
+                "{}{:<width$}",
+                " ".repeat(MARKER_WIDTH + 1),
+                if name_sort { "NAME \u{25BE}" } else { "NAME" },
+                width = cols.alias
+            ),
+            style,
+        ),
         Span::raw(gap.clone()),
-        Span::styled(format!("{:<width$}", "HOST", width = cols.host), style),
+        Span::styled(
+            format!(
+                "{:<width$}",
+                if host_sort { "HOST \u{25BE}" } else { "HOST" },
+                width = cols.host
+            ),
+            style,
+        ),
     ];
+    // Flex gap between left and right cluster
+    if cols.flex_gap > 0 {
+        spans.push(Span::raw(flex));
+    }
     if cols.auth > 0 {
-        spans.push(Span::raw(gap.clone()));
         spans.push(Span::styled(
             format!("{:<width$}", "AUTH", width = cols.auth),
             style,
         ));
+        spans.push(Span::raw(gap.clone()));
     }
     if cols.tunnel > 0 {
-        spans.push(Span::raw(gap.clone()));
         spans.push(Span::styled(
             format!("{:<width$}", "TUNNEL", width = cols.tunnel),
             style,
         ));
+        spans.push(Span::raw(gap.clone()));
     }
     if cols.show_ping {
-        spans.push(Span::raw(gap.clone()));
         spans.push(Span::styled("PING", style));
+        spans.push(Span::raw(gap.clone()));
     }
     if cols.tags > 0 {
-        spans.push(Span::raw(gap.clone()));
         spans.push(Span::styled(
             format!("{:<width$}", "TAGS", width = cols.tags),
             style,
         ));
+        spans.push(Span::raw(gap.clone()));
     }
     if cols.history > 0 {
-        spans.push(Span::raw(gap));
         spans.push(Span::styled(
             format!("{:>width$}", "LAST", width = cols.history),
             style,
         ));
+        if last_sort {
+            spans.push(Span::styled("\u{25BE}", style));
+        }
     }
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-/// Compute the display width of a host's tags (including provider and source file).
+/// Compute the display width of a host's tags (including provider_tags, provider and source file).
 fn host_tags_width(host: &crate::ssh_config::model::HostEntry) -> usize {
     let mut w = 0usize;
-    for tag in &host.tags {
+    for tag in host.provider_tags.iter().chain(host.tags.iter()) {
         if w > 0 {
             w += 1;
         } // space between tags
@@ -719,7 +762,7 @@ fn host_tags_width(host: &crate::ssh_config::model::HostEntry) -> usize {
         if w > 0 {
             w += 1;
         }
-        w += 1 + label.width();
+        w += 1 + label.width(); // # + label
     }
     if let Some(ref source) = host.source_file {
         let name = source
@@ -764,7 +807,7 @@ fn build_host_item<'a>(
     } else {
         theme::bold()
     };
-    let marker = if multi_selected { "\u{2713}" } else { " " };
+    let marker = if multi_selected { " \u{2713}" } else { "  " };
     let alias_truncated = super::truncate(&host.alias, cols.alias);
     spans.push(Span::styled(
         format!("{}{:<width$}", marker, alias_truncated, width = cols.alias),
@@ -827,9 +870,13 @@ fn build_host_item<'a>(
         spans.push(Span::raw(" ".repeat(host_pad)));
     }
 
+    // === Flex gap between left cluster (NAME+HOST) and right cluster ===
+    if cols.flex_gap > 0 {
+        spans.push(Span::raw(" ".repeat(cols.flex_gap)));
+    }
+
     // === AUTH column (SSH key or password source) ===
     if cols.auth > 0 {
-        spans.push(Span::raw(gap.clone()));
         let label = auth_label(host);
         if !label.is_empty() {
             spans.push(Span::styled(
@@ -837,13 +884,16 @@ fn build_host_item<'a>(
                 theme::muted(),
             ));
         } else {
-            spans.push(Span::raw(" ".repeat(cols.auth)));
+            spans.push(Span::styled(
+                format!("{:<width$}", "-", width = cols.auth),
+                theme::muted(),
+            ));
         }
+        spans.push(Span::raw(gap.clone()));
     }
 
     // === TUNNEL column ===
     if cols.tunnel > 0 {
-        spans.push(Span::raw(gap.clone()));
         if let Some(summary) = tunnel_summaries.get(&host.alias) {
             let style = if tunnel_active {
                 theme::success()
@@ -857,11 +907,11 @@ fn build_host_item<'a>(
         } else {
             spans.push(Span::raw(" ".repeat(cols.tunnel)));
         }
+        spans.push(Span::raw(gap.clone()));
     }
 
     // === PING column ===
     if cols.show_ping {
-        spans.push(Span::raw(gap.clone()));
         if let Some(status) = ping_status.get(&host.alias) {
             let (indicator, style) = match status {
                 PingStatus::Checking => ("..", theme::muted()),
@@ -875,18 +925,20 @@ fn build_host_item<'a>(
         } else {
             spans.push(Span::raw("    "));
         }
+        spans.push(Span::raw(gap.clone()));
     }
 
     // === TAGS column (fixed width, +N overflow) ===
     if cols.tags > 0 {
-        spans.push(Span::raw(gap.clone()));
         let tag_matches = !q.is_empty() && !alias_matches && !host_matches;
         build_tag_column(&mut spans, host, tag_matches, q, cols.tags);
+        if cols.history > 0 {
+            spans.push(Span::raw(gap.clone()));
+        }
     }
 
     // === LAST column (right-aligned) ===
     if cols.history > 0 {
-        spans.push(Span::raw(gap));
         if let Some(entry) = history.entries.get(&host.alias) {
             let ago = crate::history::ConnectionHistory::format_time_ago(entry.last_connected);
             if !ago.is_empty() {
@@ -895,10 +947,16 @@ fn build_host_item<'a>(
                     theme::muted(),
                 ));
             } else {
-                spans.push(Span::raw(" ".repeat(cols.history)));
+                spans.push(Span::styled(
+                    format!("{:>width$}", "-", width = cols.history),
+                    theme::muted(),
+                ));
             }
         } else {
-            spans.push(Span::raw(" ".repeat(cols.history)));
+            spans.push(Span::styled(
+                format!("{:>width$}", "-", width = cols.history),
+                theme::muted(),
+            ));
         }
     }
 
@@ -913,9 +971,9 @@ fn build_tag_column(
     query: &str,
     width: usize,
 ) {
-    // Collect all tags: user tags + provider + source file
+    // Collect all tags: provider_tags + user tags + provider + source file
     let mut all_tags: Vec<(String, Style)> = Vec::new();
-    for tag in &host.tags {
+    for tag in host.provider_tags.iter().chain(host.tags.iter()) {
         let style = if tag_matches && app::contains_ci(tag, query) {
             theme::highlight_bold()
         } else {
@@ -1007,7 +1065,11 @@ fn render_search_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) 
     frame.render_widget(Paragraph::new(search_line), area);
 }
 
-fn footer_spans(detail_active: bool, multi_count: usize) -> Vec<Span<'static>> {
+fn footer_spans(
+    detail_active: bool,
+    multi_count: usize,
+    group_by_provider: bool,
+) -> Vec<Span<'static>> {
     let view_label = if detail_active {
         " compact "
     } else {
@@ -1032,14 +1094,18 @@ fn footer_spans(detail_active: bool, multi_count: usize) -> Vec<Span<'static>> {
         Span::styled("v", theme::accent_bold()),
         Span::styled(view_label, theme::muted()),
         Span::styled("?", theme::accent_bold()),
-        Span::styled(" help", theme::muted()),
+        Span::styled(" help ", theme::muted()),
     ];
     if multi_count > 0 {
         spans.push(Span::styled("\u{2502} ", theme::muted()));
         spans.push(Span::styled(
-            format!("{} selected", multi_count),
+            format!("{} selected ", multi_count),
             theme::accent_bold(),
         ));
+    }
+    if group_by_provider {
+        spans.push(Span::styled("\u{2502} ", theme::muted()));
+        spans.push(Span::styled("grouped ", theme::muted()));
     }
     spans
 }
@@ -1056,12 +1122,17 @@ fn search_footer_spans<'a>() -> Vec<Span<'a>> {
 
 fn render_tag_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     let input = app.tag_input.as_deref().unwrap_or("");
-    let tag_line = Line::from(vec![
-        Span::styled(" tags: ", theme::accent_bold()),
-        Span::raw(input),
-        Span::styled("_", theme::accent()),
-    ]);
-    frame.render_widget(Paragraph::new(tag_line), area);
+    let mut spans = vec![Span::styled(" tags: ", theme::accent_bold())];
+    // Show read-only provider tags if present
+    if let Some(host) = app.selected_host() {
+        if !host.provider_tags.is_empty() {
+            let ptags = host.provider_tags.join(", ");
+            spans.push(Span::styled(format!("[{}] ", ptags), theme::muted()));
+        }
+    }
+    spans.push(Span::raw(input));
+    spans.push(Span::styled("_", theme::accent()));
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 fn tag_footer_spans<'a>() -> Vec<Span<'a>> {
@@ -1164,5 +1235,97 @@ mod tests {
     fn label_zero_width() {
         let label = build_update_label("2.7.0", Some("Headline"), "purple update", 0);
         assert_eq!(label, " v2.7.0 available, run purple update ");
+    }
+
+    // =========================================================================
+    // Columns tests
+    // =========================================================================
+
+    use super::{Columns, HOST_MIN, MARKER_WIDTH, footer_spans};
+
+    #[test]
+    fn test_padded_zero() {
+        assert_eq!(Columns::padded(0), 0);
+    }
+
+    #[test]
+    fn test_padded_nonzero() {
+        // padded(10) = 10 + 10/10 + 1 = 12
+        assert_eq!(Columns::padded(10), 12);
+    }
+
+    #[test]
+    fn test_columns_compute_hides_tags_first() {
+        // Set up widths that are too wide for content area.
+        // Tags should be hidden first, while auth and tunnel remain.
+        let cols = Columns::compute(
+            10,  // alias_w
+            20,  // host_w
+            10,  // tags_w — should be hidden first
+            8,   // tunnel_w
+            8,   // auth_w
+            false, // no ping
+            6,   // history_w
+            60,  // narrow content
+        );
+        assert_eq!(cols.tags, 0, "Tags should be hidden first when too narrow");
+        assert!(cols.auth > 0 || cols.tunnel > 0, "Auth or tunnel should still be present");
+    }
+
+    #[test]
+    fn test_columns_compute_flex_gap() {
+        let cols = Columns::compute(
+            10,  // alias_w
+            15,  // host_w
+            8,   // tags_w
+            6,   // tunnel_w
+            6,   // auth_w
+            false, // no ping
+            5,   // history_w
+            200, // wide content
+        );
+        assert!(cols.flex_gap > 0, "flex_gap should be positive with wide content");
+        // Total consumed should not exceed content width
+        let gap = if 200 >= 120 { 3 } else { 2 };
+        let left = MARKER_WIDTH + 1 + cols.alias + gap + cols.host;
+        let mut right = 0;
+        if cols.auth > 0 { right += cols.auth; }
+        if cols.tunnel > 0 { right += cols.tunnel; }
+        if cols.tags > 0 { right += cols.tags; }
+        if cols.history > 0 { right += cols.history; }
+        // flex_gap fills the remaining space
+        assert_eq!(cols.flex_gap, 200usize.saturating_sub(left + right + (3 * 3))); // approximate
+    }
+
+    #[test]
+    fn test_columns_compute_host_shrinks() {
+        // Very narrow content: host shrinks but stays >= HOST_MIN
+        let cols = Columns::compute(
+            8,   // alias_w
+            30,  // host_w — should shrink
+            0,   // no tags
+            0,   // no tunnel
+            0,   // no auth
+            false, // no ping
+            0,   // no history
+            30,  // very narrow
+        );
+        assert!(
+            cols.host >= HOST_MIN,
+            "Host should stay >= HOST_MIN ({}), got {}",
+            HOST_MIN,
+            cols.host
+        );
+    }
+
+    #[test]
+    fn test_footer_spans_with_grouping() {
+        let spans = footer_spans(false, 0, true);
+        let text: String = spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(
+            text.contains("grouped"),
+            "Footer should contain 'grouped' when group_by_provider=true, got: {}",
+            text
+        );
     }
 }

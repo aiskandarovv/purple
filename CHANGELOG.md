@@ -1,3 +1,19 @@
+## 2.9.0
+
+- Redesigned host list with smarter column layout and provider tag separation
+- Provider tags are now stored in a dedicated comment and always mirror the remote. Your own tags are never touched by sync
+- Two-cluster column system. Left cluster (name and host) and right cluster (auth, tags, last) separated by a flexible gap
+- Add header underline and bold column headers for better scannability
+- Add sort indicator next to the active sort column name
+- Add selection indicator on the left edge of the selected row
+- Show dash for empty auth and last cells instead of blank space
+- Show read-only provider tags in the tag edit bar
+- Group headers show a horizontal leader line after the label
+- Tighter column gaps (2-3 fixed) for a more compact and professional look
+- Shorten time labels in the last column (5m instead of 5m ago)
+- Sanitize tag values: strip control characters, commas, bidi overrides and enforce max length
+- Remove --reset-tags CLI flag (no longer needed)
+
 ## 2.8.1
 
 - Add CI workflow with format, clippy, test, cargo-deny and MSRV checks

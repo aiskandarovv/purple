@@ -1,6 +1,6 @@
 [package]
 name = "purple-ssh"
-version = "2.8.1"
+version = "2.9.0"
 edition = "2024"
 description = "TUI for managing SSH servers. Search, connect, transfer files and sync from 11 cloud providers. Edits ~/.ssh/config with round-trip fidelity."
 license = "MIT"

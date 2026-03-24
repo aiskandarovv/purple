@@ -27,7 +27,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let tag_counts: std::collections::HashMap<&str, usize> = {
         let mut counts = std::collections::HashMap::new();
         for host in &app.hosts {
-            for tag in &host.tags {
+            for tag in host.provider_tags.iter().chain(host.tags.iter()) {
                 *counts.entry(tag.as_str()).or_insert(0) += 1;
             }
             if let Some(ref provider) = host.provider {

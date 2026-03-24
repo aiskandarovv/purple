@@ -3825,7 +3825,7 @@ fn update_host_equals_separator_with_equals_in_value() {
 // ============================================================================
 
 use purple_ssh::providers::config::ProviderSection;
-use purple_ssh::providers::sync::{sync_provider, sync_provider_with_options};
+use purple_ssh::providers::sync::sync_provider;
 use purple_ssh::providers::{Provider, ProviderError, ProviderHost};
 
 struct TestProvider {
@@ -3893,7 +3893,10 @@ fn sync_adds_host_to_empty_config() {
         output.contains("# purple:provider digitalocean:123"),
         "provider marker"
     );
-    assert!(output.contains("# purple:tags prod"), "tags");
+    assert!(
+        output.contains("# purple:provider_tags prod"),
+        "provider tags"
+    );
 }
 
 #[test]
@@ -4015,7 +4018,7 @@ Host do-web-1
 }
 
 #[test]
-fn sync_reset_tags_replaces_all() {
+fn sync_provider_tags_replaces_all() {
     let input = "\
 Host do-web-1
   HostName 1.2.3.4
@@ -4035,20 +4038,26 @@ Host do-web-1
         "1.2.3.4".to_string(),
         vec!["staging".to_string()],
     )];
-    let result = sync_provider_with_options(
+    let result = sync_provider(
         &mut config,
         &provider,
         &remote,
         &section,
         false,
         false,
-        true,
     );
     assert_eq!(result.updated, 1);
 
     let output = config.serialize();
-    assert!(output.contains("staging"), "new tag set");
-    assert!(!output.contains("my-custom"), "local tag replaced");
+    assert!(
+        output.contains("# purple:provider_tags staging"),
+        "provider tags set"
+    );
+    // User tags preserved (no overlap with remote)
+    assert!(
+        output.contains("# purple:tags prod,my-custom"),
+        "user tags preserved"
+    );
 }
 
 #[test]
@@ -4365,8 +4374,8 @@ fn sync_multiple_tags_serialized_comma_separated() {
 
     let output = config.serialize();
     assert!(
-        output.contains("# purple:tags prod,us-east,web"),
-        "tags comma-separated"
+        output.contains("# purple:provider_tags prod,us-east,web"),
+        "provider tags comma-separated"
     );
 }
 
@@ -4618,8 +4627,8 @@ fn sync_gcp_adds_host_with_metadata_and_tags() {
         "provider marker with uint64 ID"
     );
     assert!(
-        output.contains("# purple:tags http-server,env:prod"),
-        "tags from network tags and labels"
+        output.contains("# purple:provider_tags http-server,env:prod"),
+        "provider tags from network tags and labels"
     );
     assert!(
         output.contains("# purple:meta zone=us-central1-a,machine=e2-micro,os=debian-11"),
@@ -4631,8 +4640,8 @@ fn sync_gcp_adds_host_with_metadata_and_tags() {
     let entries = config2.host_entries();
     let gcp_entry = entries.iter().find(|e| e.alias == "gcp-web-1").unwrap();
     assert_eq!(gcp_entry.provider.as_deref(), Some("gcp"));
-    assert!(gcp_entry.tags.contains(&"http-server".to_string()));
-    assert!(gcp_entry.tags.contains(&"env:prod".to_string()));
+    assert!(gcp_entry.provider_tags.contains(&"http-server".to_string()));
+    assert!(gcp_entry.provider_tags.contains(&"env:prod".to_string()));
 }
 
 #[test]
@@ -5023,7 +5032,10 @@ Host do-worker-1
     ];
     let result = sync_provider(&mut config, &provider, &remote, &section, true, false);
     assert_eq!(result.added, 2, "should add cache-1 and cache-2");
-    assert_eq!(result.updated, 1, "should update api-1 IP");
+    assert_eq!(
+        result.updated, 2,
+        "should update api-1 (IP + tags) and api-2 (tags migration)"
+    );
     assert_eq!(result.removed, 1, "should remove worker-1");
 
     // Verify all manual hosts retain exactly their original directives

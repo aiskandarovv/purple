@@ -73,7 +73,7 @@ Organize hosts by environment, team or project without external tools. Label hos
 
 ### Cloud provider sync
 
-Never manually add a server IP to your SSH config again. Pull servers from **AWS EC2**, **DigitalOcean**, **Vultr**, **Linode (Akamai)**, **Hetzner**, **UpCloud**, **Proxmox VE**, **Scaleway**, **GCP (Compute Engine)**, **Azure** and **Tailscale** directly into `~/.ssh/config`. Sync adds new hosts, updates changed IPs and optionally removes deleted servers. Tags from your cloud provider are merged with local tags.
+Never manually add a server IP to your SSH config again. Pull servers from **AWS EC2**, **DigitalOcean**, **Vultr**, **Linode (Akamai)**, **Hetzner**, **UpCloud**, **Proxmox VE**, **Scaleway**, **GCP (Compute Engine)**, **Azure** and **Tailscale** directly into `~/.ssh/config`. Sync adds new hosts, updates changed IPs and optionally removes deleted servers. Tags from your cloud provider are stored separately and always mirror the remote. Your own tags are never touched by sync.
 
 ```bash
 purple provider add digitalocean --token YOUR_TOKEN   # or use PURPLE_TOKEN env var
@@ -89,7 +89,6 @@ purple provider add digitalocean --token YOUR_TOKEN --no-auto-sync  # disable st
 purple sync                                            # sync all providers
 purple sync --dry-run                                  # preview changes
 purple sync --remove                                   # remove deleted hosts
-purple sync --reset-tags                               # replace local tags with provider tags
 ```
 
 Synced hosts are tagged by provider and appear alongside your manual hosts. Auto-sync runs on startup for providers that have it enabled (configurable per provider). The provider list is sorted by last sync time and shows sync results.
@@ -190,7 +189,6 @@ purple sync                         # Sync all providers
 purple sync digitalocean            # Sync single provider
 purple sync --dry-run               # Preview sync changes
 purple sync --remove                # Remove hosts deleted from provider
-purple sync --reset-tags            # Replace local tags with provider tags
 purple tunnel list                  # List configured tunnels
 purple tunnel list myserver         # List tunnels for a host
 purple tunnel add myserver L:8080:localhost:80  # Add forward
@@ -451,7 +449,6 @@ purple provider add tailscale --token tskey-api-YOUR_KEY    # API mode
 purple sync                     # sync all providers
 purple sync --dry-run           # preview changes without writing
 purple sync --remove            # remove hosts deleted from provider
-purple sync --reset-tags        # replace local tags with provider tags
 purple provider add NAME --no-auto-sync   # disable auto-sync on startup
 ```
 
@@ -551,7 +548,7 @@ No. It's a single binary. Run it, use it, close it.
 No. Your config never leaves your machine. Provider sync calls cloud APIs to fetch server lists. The TUI checks GitHub for new releases on startup (cached for 24 hours). No config data is transmitted in either case.
 
 **Can I use purple with Include files?**
-Yes. Hosts from Include files are displayed in the TUI but never modified. purple resolves Include directives recursively (up to depth 5) with tilde and glob expansion.
+Yes. Hosts from Include files are displayed in the TUI but never modified. purple resolves Include directives recursively (up to depth 16) with tilde and glob expansion.
 
 **How does password management work?**
 Configure a password source per host (Enter on the Password Source field in the host form) and purple retrieves the password automatically when you connect via the SSH_ASKPASS mechanism. Six sources are supported: OS Keychain, 1Password, Bitwarden, pass, HashiCorp Vault and custom commands. See the [Password managers](#password-managers) section for details on each source and how to set them up.

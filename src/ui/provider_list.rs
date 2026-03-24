@@ -73,7 +73,8 @@ pub fn render_provider_list(frame: &mut Frame, app: &mut App) {
                     if ago.is_empty() {
                         Some(record.message.clone())
                     } else {
-                        Some(format!("{}, {}", record.message, ago))
+                        // format_time_ago returns compact "5m"; add "ago" here for readability
+                        Some(format!("{}, {} ago", record.message, ago))
                     }
                 } else {
                     None

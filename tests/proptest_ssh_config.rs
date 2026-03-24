@@ -225,6 +225,11 @@ fn purple_tags_strategy() -> impl Strategy<Value = String> {
         .prop_map(|tags| format!("  # purple:tags {}", tags.join(",")))
 }
 
+fn purple_provider_tags_strategy() -> impl Strategy<Value = String> {
+    prop::collection::vec("[a-z]{2,8}", 1..=5)
+        .prop_map(|tags| format!("  # purple:provider_tags {}", tags.join(",")))
+}
+
 fn purple_provider_strategy() -> impl Strategy<Value = String> {
     (
         prop_oneof![
@@ -253,14 +258,18 @@ fn annotated_host_block_strategy() -> impl Strategy<Value = String> {
     (
         host_block_strategy(),
         prop::option::of(purple_tags_strategy()),
+        prop::option::of(purple_provider_tags_strategy()),
         prop::option::of(purple_provider_strategy()),
         prop::option::of(purple_meta_strategy()),
     )
-        .prop_map(|(block, tags, provider, meta)| {
+        .prop_map(|(block, tags, ptags, provider, meta)| {
             let mut lines: Vec<&str> = block.lines().collect();
             // Insert purple comments before any trailing blank
             if let Some(t) = &tags {
                 lines.push(t);
+            }
+            if let Some(pt) = &ptags {
+                lines.push(pt);
             }
             if let Some(p) = &provider {
                 lines.push(p);
