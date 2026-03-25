@@ -161,6 +161,10 @@ pub enum Screen {
     ConfirmImport {
         count: usize,
     },
+    ConfirmPurgeStale {
+        aliases: Vec<String>,
+        provider: Option<String>,
+    },
     Welcome {
         has_backup: bool,
         host_count: usize,
@@ -1620,23 +1624,49 @@ impl App {
             let mut indices: Vec<usize> = (0..self.hosts.len()).collect();
             match self.sort_mode {
                 SortMode::AlphaAlias => {
-                    indices.sort_by_cached_key(|&i| self.hosts[i].alias.to_lowercase());
+                    indices.sort_by(|a, b| {
+                        let sa = self.hosts[*a].stale.is_some();
+                        let sb = self.hosts[*b].stale.is_some();
+                        sa.cmp(&sb).then_with(|| {
+                            self.hosts[*a]
+                                .alias
+                                .to_lowercase()
+                                .cmp(&self.hosts[*b].alias.to_lowercase())
+                        })
+                    });
                 }
                 SortMode::AlphaHostname => {
-                    indices.sort_by_cached_key(|&i| self.hosts[i].hostname.to_lowercase());
+                    indices.sort_by(|a, b| {
+                        let sa = self.hosts[*a].stale.is_some();
+                        let sb = self.hosts[*b].stale.is_some();
+                        sa.cmp(&sb).then_with(|| {
+                            self.hosts[*a]
+                                .hostname
+                                .to_lowercase()
+                                .cmp(&self.hosts[*b].hostname.to_lowercase())
+                        })
+                    });
                 }
                 SortMode::Frecency => {
                     indices.sort_by(|a, b| {
-                        let score_a = self.history.frecency_score(&self.hosts[*a].alias);
-                        let score_b = self.history.frecency_score(&self.hosts[*b].alias);
-                        score_b.total_cmp(&score_a)
+                        let sa = self.hosts[*a].stale.is_some();
+                        let sb = self.hosts[*b].stale.is_some();
+                        sa.cmp(&sb).then_with(|| {
+                            let score_a = self.history.frecency_score(&self.hosts[*a].alias);
+                            let score_b = self.history.frecency_score(&self.hosts[*b].alias);
+                            score_b.total_cmp(&score_a)
+                        })
                     });
                 }
                 SortMode::MostRecent => {
                     indices.sort_by(|a, b| {
-                        let ts_a = self.history.last_connected(&self.hosts[*a].alias);
-                        let ts_b = self.history.last_connected(&self.hosts[*b].alias);
-                        ts_b.cmp(&ts_a)
+                        let sa = self.hosts[*a].stale.is_some();
+                        let sb = self.hosts[*b].stale.is_some();
+                        sa.cmp(&sb).then_with(|| {
+                            let ts_a = self.history.last_connected(&self.hosts[*a].alias);
+                            let ts_b = self.history.last_connected(&self.hosts[*b].alias);
+                            ts_b.cmp(&ts_a)
+                        })
                     });
                 }
                 _ => {}
@@ -1966,31 +1996,35 @@ impl App {
         };
 
         if let Some(tag_exact) = query.strip_prefix("tag=") {
-            // Exact tag match (from tag picker), includes provider name
+            // Exact tag match (from tag picker), includes provider name and virtual "stale"
             self.search.filtered_indices = self
                 .hosts
                 .iter()
                 .enumerate()
                 .filter(|(_, host)| {
-                    host.provider_tags
-                        .iter()
-                        .chain(host.tags.iter())
-                        .any(|t| eq_ci(t, tag_exact))
+                    (eq_ci("stale", tag_exact) && host.stale.is_some())
+                        || host
+                            .provider_tags
+                            .iter()
+                            .chain(host.tags.iter())
+                            .any(|t| eq_ci(t, tag_exact))
                         || host.provider.as_ref().is_some_and(|p| eq_ci(p, tag_exact))
                 })
                 .map(|(i, _)| i)
                 .collect();
         } else if let Some(tag_query) = query.strip_prefix("tag:") {
-            // Fuzzy tag match (manual search), includes provider name
+            // Fuzzy tag match (manual search), includes provider name and virtual "stale"
             self.search.filtered_indices = self
                 .hosts
                 .iter()
                 .enumerate()
                 .filter(|(_, host)| {
-                    host.provider_tags
-                        .iter()
-                        .chain(host.tags.iter())
-                        .any(|t| contains_ci(t, tag_query))
+                    (contains_ci("stale", tag_query) && host.stale.is_some())
+                        || host
+                            .provider_tags
+                            .iter()
+                            .chain(host.tags.iter())
+                            .any(|t| contains_ci(t, tag_query))
                         || host
                             .provider
                             .as_ref()
@@ -2117,6 +2151,8 @@ impl App {
                 | Screen::FileBrowser { .. }
                 | Screen::ConfirmDelete { .. }
                 | Screen::ConfirmHostKeyReset { .. }
+                | Screen::ConfirmPurgeStale { .. }
+                | Screen::ConfirmImport { .. }
         ) || self.tag_input.is_some()
         {
             return;
@@ -2426,6 +2462,7 @@ impl App {
     pub fn collect_unique_tags(&self) -> Vec<String> {
         let mut seen = std::collections::HashSet::new();
         let mut tags = Vec::new();
+        let mut has_stale = false;
         for host in &self.hosts {
             for tag in host.provider_tags.iter().chain(host.tags.iter()) {
                 if seen.insert(tag.as_str()) {
@@ -2437,6 +2474,12 @@ impl App {
                     tags.push(provider.clone());
                 }
             }
+            if host.stale.is_some() {
+                has_stale = true;
+            }
+        }
+        if has_stale && seen.insert("stale") {
+            tags.push("stale".to_string());
         }
         tags.sort_by_cached_key(|a| a.to_lowercase());
         tags
@@ -2660,14 +2703,33 @@ impl App {
         &mut self,
         provider: &str,
         hosts: Vec<crate::providers::ProviderHost>,
+        partial: bool,
     ) -> (String, bool, usize) {
         let section = match self.provider_config.section(provider).cloned() {
             Some(s) => s,
-            None => return (format!("{} sync skipped: no config.", provider), true, 0),
+            None => {
+                return (
+                    format!(
+                        "{} sync skipped: no config.",
+                        crate::providers::provider_display_name(provider)
+                    ),
+                    true,
+                    0,
+                );
+            }
         };
         let provider_impl = match crate::providers::get_provider_with_config(provider, &section) {
             Some(p) => p,
-            None => return (format!("Unknown provider: {}.", provider), true, 0),
+            None => {
+                return (
+                    format!(
+                        "Unknown provider: {}.",
+                        crate::providers::provider_display_name(provider)
+                    ),
+                    true,
+                    0,
+                );
+            }
         };
         let config_backup = self.config.clone();
         let result = crate::providers::sync::sync_provider(
@@ -2676,10 +2738,11 @@ impl App {
             &hosts,
             &section,
             false,
+            partial, // suppress stale marking on partial failures
             false,
         );
         let total = result.added + result.updated + result.unchanged;
-        if result.added > 0 || result.updated > 0 {
+        if result.added > 0 || result.updated > 0 || result.stale > 0 {
             if let Err(e) = self.config.write() {
                 self.config = config_backup;
                 return (format!("Sync failed to save: {}", e), true, total);
@@ -2695,14 +2758,15 @@ impl App {
             }
         }
         let name = crate::providers::provider_display_name(provider);
-        (
-            format!(
-                "Synced {}: added {}, updated {}, unchanged {}.",
-                name, result.added, result.updated, result.unchanged
-            ),
-            false,
-            total,
-        )
+        let mut msg = format!(
+            "Synced {}: added {}, updated {}, unchanged {}",
+            name, result.added, result.updated, result.unchanged
+        );
+        if result.stale > 0 {
+            msg.push_str(&format!(", stale {}", result.stale));
+        }
+        msg.push('.');
+        (msg, false, total)
     }
 }
 
@@ -3610,7 +3674,7 @@ Host vultr-app
     fn test_apply_sync_result_no_config() {
         let mut app = make_app("Host test\n  HostName test.com\n");
         app.provider_config = crate::providers::config::ProviderConfig::default();
-        let (msg, is_err, total) = app.apply_sync_result("digitalocean", vec![]);
+        let (msg, is_err, total) = app.apply_sync_result("digitalocean", vec![], false);
         assert!(is_err);
         assert_eq!(total, 0);
         assert!(msg.contains("no config"));
@@ -3619,7 +3683,7 @@ Host vultr-app
     #[test]
     fn test_apply_sync_result_empty_hosts_returns_zero_total() {
         let mut app = make_provider_app();
-        let (msg, is_err, total) = app.apply_sync_result("digitalocean", vec![]);
+        let (msg, is_err, total) = app.apply_sync_result("digitalocean", vec![], false);
         assert!(!is_err);
         assert_eq!(total, 0);
         assert!(msg.contains("added 0"));
@@ -3643,7 +3707,7 @@ Host vultr-app
                 vec![],
             ),
         ];
-        let (msg, is_err, total) = app.apply_sync_result("digitalocean", hosts);
+        let (msg, is_err, total) = app.apply_sync_result("digitalocean", hosts, false);
         assert!(!is_err);
         assert_eq!(total, 2);
         assert!(msg.contains("added 2"));
@@ -3669,7 +3733,7 @@ Host vultr-app
                 vec![],
             ),
         ];
-        let (msg, is_err, total) = app.apply_sync_result("digitalocean", hosts);
+        let (msg, is_err, total) = app.apply_sync_result("digitalocean", hosts, false);
         assert!(is_err);
         assert_eq!(total, 2); // total preserved despite write failure
         assert!(msg.contains("Sync failed to save"));
@@ -3694,7 +3758,7 @@ Host vultr-app
                 regions: String::new(),
                 project: String::new(),
             });
-        let (msg, is_err, total) = app.apply_sync_result("nonexistent", vec![]);
+        let (msg, is_err, total) = app.apply_sync_result("nonexistent", vec![], false);
         assert!(is_err);
         assert_eq!(total, 0);
         assert!(msg.contains("Unknown provider"));
@@ -4752,5 +4816,169 @@ Host vultr-app
         assert!(tags.contains(&"user2".to_string()));
         assert!(tags.contains(&"cloud1".to_string()));
         assert!(tags.contains(&"cloud2".to_string()));
+    }
+
+    #[test]
+    fn test_sort_alpha_alias_stale_to_bottom() {
+        let config_str = "\
+Host alpha
+  HostName 1.1.1.1
+  # purple:stale 1711900000
+
+Host beta
+  HostName 2.2.2.2
+
+Host gamma
+  HostName 3.3.3.3
+  # purple:stale 1711900000
+";
+        let mut app = make_app(config_str);
+        app.sort_mode = SortMode::AlphaAlias;
+        app.apply_sort();
+
+        // beta (non-stale) should come first, then alpha and gamma (stale, sorted alphabetically)
+        assert_eq!(app.display_list.len(), 3);
+        if let HostListItem::Host { index } = &app.display_list[0] {
+            assert_eq!(app.hosts[*index].alias, "beta");
+        } else {
+            panic!("Expected Host item at position 0");
+        }
+        if let HostListItem::Host { index } = &app.display_list[1] {
+            assert_eq!(app.hosts[*index].alias, "alpha");
+        } else {
+            panic!("Expected Host item at position 1");
+        }
+        if let HostListItem::Host { index } = &app.display_list[2] {
+            assert_eq!(app.hosts[*index].alias, "gamma");
+        } else {
+            panic!("Expected Host item at position 2");
+        }
+    }
+
+    #[test]
+    fn test_filter_tag_exact_stale() {
+        let config_str = "\
+Host alpha
+  HostName 1.1.1.1
+  # purple:stale 1711900000
+
+Host beta
+  HostName 2.2.2.2
+
+Host gamma
+  HostName 3.3.3.3
+  # purple:stale 1711900000
+";
+        let mut app = make_app(config_str);
+        app.start_search();
+        app.search.query = Some("tag=stale".to_string());
+        app.apply_filter();
+
+        // Only stale hosts (alpha and gamma) should match
+        assert_eq!(app.search.filtered_indices.len(), 2);
+        assert_eq!(app.hosts[app.search.filtered_indices[0]].alias, "alpha");
+        assert_eq!(app.hosts[app.search.filtered_indices[1]].alias, "gamma");
+    }
+
+    #[test]
+    fn test_filter_tag_fuzzy_stale() {
+        let config_str = "\
+Host alpha
+  HostName 1.1.1.1
+  # purple:stale 1711900000
+
+Host beta
+  HostName 2.2.2.2
+
+Host gamma
+  HostName 3.3.3.3
+  # purple:stale 1711900000
+";
+        let mut app = make_app(config_str);
+        app.start_search();
+        app.search.query = Some("tag:stal".to_string());
+        app.apply_filter();
+
+        // Fuzzy match on "stal" should match stale hosts
+        assert_eq!(app.search.filtered_indices.len(), 2);
+        assert_eq!(app.hosts[app.search.filtered_indices[0]].alias, "alpha");
+        assert_eq!(app.hosts[app.search.filtered_indices[1]].alias, "gamma");
+    }
+
+    #[test]
+    fn test_apply_sync_result_stale_in_message() {
+        // Create a temp config file so writes succeed
+        let tmp_dir = std::env::temp_dir();
+        let tmp_path = tmp_dir.join(format!("purple_test_stale_{}.conf", std::process::id()));
+        let initial_config = "\
+Host do-web
+  HostName 1.2.3.4
+  # purple:provider digitalocean:s1
+
+Host do-db
+  HostName 5.6.7.8
+  # purple:provider digitalocean:s2
+";
+        std::fs::write(&tmp_path, initial_config).unwrap();
+
+        let config = SshConfigFile {
+            elements: SshConfigFile::parse_content(initial_config),
+            path: tmp_path.clone(),
+            crlf: false,
+            bom: false,
+        };
+        let mut app = App::new(config);
+        app.provider_config = crate::providers::config::ProviderConfig::default();
+        app.provider_config
+            .set_section(crate::providers::config::ProviderSection {
+                provider: "digitalocean".to_string(),
+                token: "test-token".to_string(),
+                alias_prefix: "do".to_string(),
+                user: "root".to_string(),
+                identity_file: String::new(),
+                url: String::new(),
+                verify_tls: true,
+                auto_sync: true,
+                profile: String::new(),
+                regions: String::new(),
+                project: String::new(),
+            });
+
+        // First sync adds both hosts
+        let hosts = vec![
+            crate::providers::ProviderHost::new(
+                "s1".to_string(),
+                "web".to_string(),
+                "1.2.3.4".to_string(),
+                vec![],
+            ),
+            crate::providers::ProviderHost::new(
+                "s2".to_string(),
+                "db".to_string(),
+                "5.6.7.8".to_string(),
+                vec![],
+            ),
+        ];
+        let (_, is_err, _) = app.apply_sync_result("digitalocean", hosts, false);
+        assert!(!is_err);
+
+        // Second sync with only one host (non-partial) should mark the other as stale
+        let hosts2 = vec![crate::providers::ProviderHost::new(
+            "s1".to_string(),
+            "web".to_string(),
+            "1.2.3.4".to_string(),
+            vec![],
+        )];
+        let (msg, is_err, total) = app.apply_sync_result("digitalocean", hosts2, false);
+        assert!(!is_err);
+        assert_eq!(total, 1); // only the one host that's still present
+        assert!(
+            msg.contains("stale 1"),
+            "Expected stale count in message, got: {}",
+            msg
+        );
+
+        // Clean up
+        let _ = std::fs::remove_file(&tmp_path);
     }
 }

@@ -337,7 +337,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         super::render_footer_with_status(
             frame,
             chunks[1],
-            footer_spans(use_detail, app.multi_select.len(), app.group_by_provider),
+            footer_spans(
+                use_detail,
+                app.multi_select.len(),
+                app.group_by_provider,
+                app.hosts.iter().filter(|h| h.stale.is_some()).count(),
+            ),
             app,
         );
     }
@@ -828,8 +833,11 @@ fn build_host_item<'a>(
     let mut spans: Vec<Span> = Vec::new();
 
     // === NAME column (fixed width) ===
+    let is_stale = host.stale.is_some();
     let alias_style = if alias_matches {
         theme::highlight_bold()
+    } else if is_stale {
+        theme::muted()
     } else {
         theme::bold()
     };
@@ -881,7 +889,12 @@ fn build_host_item<'a>(
             }
             let hostname_trunc = super::truncate(&host.hostname, hostname_budget);
             host_used += hostname_trunc.width();
-            spans.push(Span::styled(hostname_trunc, Style::default()));
+            let hostname_style = if is_stale {
+                theme::muted()
+            } else {
+                Style::default()
+            };
+            spans.push(Span::styled(hostname_trunc, hostname_style));
             if has_port {
                 spans.push(Span::styled(port_suffix, theme::muted()));
                 host_used += suffix_w;
@@ -893,7 +906,12 @@ fn build_host_item<'a>(
         } else {
             // Very tight: just truncate the whole composite
             host_used = composite_trunc.width();
-            spans.push(Span::raw(composite_trunc));
+            let style = if is_stale {
+                theme::muted()
+            } else {
+                Style::default()
+            };
+            spans.push(Span::styled(composite_trunc, style));
         }
     }
 
@@ -1096,6 +1114,7 @@ fn footer_spans(
     detail_active: bool,
     multi_count: usize,
     group_by_provider: bool,
+    stale_count: usize,
 ) -> Vec<Span<'static>> {
     let view_label = if detail_active {
         " compact "
@@ -1108,18 +1127,22 @@ fn footer_spans(
         Span::styled("\u{2502} ", theme::muted()),
         Span::styled("/", theme::accent_bold()),
         Span::styled(" search ", theme::muted()),
+        Span::styled("\u{2502} ", theme::muted()),
         Span::styled("#", theme::accent_bold()),
         Span::styled(" tag ", theme::muted()),
         Span::styled("\u{2502} ", theme::muted()),
         Span::styled("a", theme::accent_bold()),
         Span::styled(" add ", theme::muted()),
+        Span::styled("\u{2502} ", theme::muted()),
         Span::styled("e", theme::accent_bold()),
         Span::styled(" edit ", theme::muted()),
+        Span::styled("\u{2502} ", theme::muted()),
         Span::styled("d", theme::accent_bold()),
         Span::styled(" del ", theme::muted()),
         Span::styled("\u{2502} ", theme::muted()),
         Span::styled("v", theme::accent_bold()),
         Span::styled(view_label, theme::muted()),
+        Span::styled("\u{2502} ", theme::muted()),
         Span::styled("?", theme::accent_bold()),
         Span::styled(" help ", theme::muted()),
     ];
@@ -1135,6 +1158,14 @@ fn footer_spans(
     if group_by_provider {
         spans.push(Span::styled("\u{2502} ", theme::muted()));
         spans.push(Span::styled("grouped ", theme::muted()));
+    }
+    if stale_count > 0 {
+        spans.push(Span::styled("\u{2502} ", theme::muted()));
+        spans.push(Span::styled("X", theme::accent_bold()));
+        spans.push(Span::styled(
+            format!(" purge {} stale ", stale_count),
+            theme::muted(),
+        ));
     }
     spans
 }
@@ -1371,12 +1402,35 @@ mod tests {
 
     #[test]
     fn test_footer_spans_with_grouping() {
-        let spans = footer_spans(false, 0, true);
+        let spans = footer_spans(false, 0, true, 0);
         let text: String = spans.iter().map(|s| s.content.to_string()).collect();
         assert!(
             text.contains("grouped"),
             "Footer should contain 'grouped' when group_by_provider=true, got: {}",
             text
         );
+    }
+
+    #[test]
+    fn test_footer_spans_with_stale_hosts() {
+        let spans = footer_spans(false, 0, false, 5);
+        let text: String = spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(text.contains("X"));
+        assert!(text.contains("purge 5 stale"));
+    }
+
+    #[test]
+    fn test_footer_spans_no_stale() {
+        let spans = footer_spans(false, 0, false, 0);
+        let text: String = spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(!text.contains("stale"));
+        assert!(!text.contains("purge"));
+    }
+
+    #[test]
+    fn test_footer_spans_stale_single() {
+        let spans = footer_spans(false, 0, false, 1);
+        let text: String = spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(text.contains("purge 1 stale"));
     }
 }

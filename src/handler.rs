@@ -121,6 +121,26 @@ pub fn handle_key_event(
                 app.screen = Screen::HostList;
             }
         }
+        Screen::ConfirmPurgeStale { provider: p, .. } => {
+            let provider = p.clone();
+            if key.code == KeyCode::Char('y') || key.code == KeyCode::Char('Y') {
+                execute_purge_stale(app, provider.as_deref());
+                if provider.is_some() {
+                    app.screen = Screen::Providers;
+                } else {
+                    app.screen = Screen::HostList;
+                }
+            } else if key.code == KeyCode::Esc
+                || key.code == KeyCode::Char('n')
+                || key.code == KeyCode::Char('N')
+            {
+                if provider.is_some() {
+                    app.screen = Screen::Providers;
+                } else {
+                    app.screen = Screen::HostList;
+                }
+            }
+        }
         Screen::FileBrowser { .. } => handle_file_browser(app, key, events_tx),
         Screen::Welcome {
             known_hosts_count, ..
@@ -153,7 +173,7 @@ fn execute_known_hosts_import(app: &mut App) {
                 app.reload_hosts();
                 app.set_status(
                     format!(
-                        "Imported {} host{}, skipped {} duplicate{}",
+                        "Imported {} host{}, skipped {} duplicate{}.",
                         imported,
                         if imported == 1 { "" } else { "s" },
                         skipped,
@@ -164,9 +184,9 @@ fn execute_known_hosts_import(app: &mut App) {
             } else {
                 app.set_status(
                     if skipped == 1 {
-                        "Host already exists".to_string()
+                        "Host already exists.".to_string()
                     } else {
-                        format!("All {} hosts already exist", skipped)
+                        format!("All {} hosts already exist.", skipped)
                     },
                     false,
                 );
@@ -177,6 +197,74 @@ fn execute_known_hosts_import(app: &mut App) {
             app.set_status(e, true);
         }
     }
+}
+
+fn execute_purge_stale(app: &mut App, provider: Option<&str>) {
+    let stale = app.config.stale_hosts();
+    if stale.is_empty() {
+        return;
+    }
+    // Filter by provider if specified
+    let targets: Vec<(String, u64)> = if let Some(prov) = provider {
+        stale
+            .into_iter()
+            .filter(|(alias, _)| {
+                app.config
+                    .host_entries()
+                    .iter()
+                    .any(|e| e.alias == *alias && e.provider.as_deref() == Some(prov))
+            })
+            .collect()
+    } else {
+        stale
+    };
+    if targets.is_empty() {
+        return;
+    }
+    let config_backup = app.config.clone();
+    let count = targets.len();
+    for (alias, _) in &targets {
+        app.config.delete_host(alias);
+    }
+    if let Err(e) = app.config.write() {
+        app.config = config_backup;
+        app.set_status(format!("Failed to save: {}", e), true);
+        return;
+    }
+    // Kill active tunnels only after successful write (no rollback needed)
+    for (alias, _) in &targets {
+        if let Some(mut tunnel) = app.active_tunnels.remove(alias) {
+            let _ = tunnel.child.kill();
+            let _ = tunnel.child.wait();
+        }
+    }
+    app.undo_stack.clear();
+    app.update_last_modified();
+    app.reload_hosts();
+    let msg = if let Some(prov) = provider {
+        let display = crate::providers::provider_display_name(prov);
+        format!(
+            "Removed {} stale {} host{}.",
+            count,
+            display,
+            if count == 1 { "" } else { "s" }
+        )
+    } else {
+        format!(
+            "Removed {} stale host{}.",
+            count,
+            if count == 1 { "" } else { "s" }
+        )
+    };
+    app.set_status(msg, false);
+}
+
+/// Build a provider hint string for stale host messages, e.g. " gone from DigitalOcean".
+fn stale_provider_hint(host: &crate::ssh_config::model::HostEntry) -> String {
+    host.provider
+        .as_ref()
+        .map(|p| format!(" gone from {}", crate::providers::provider_display_name(p)))
+        .unwrap_or_default()
 }
 
 fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEvent>) {
@@ -206,6 +294,14 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
             if let Some(host) = app.selected_host() {
                 let alias = host.alias.clone();
                 let askpass = host.askpass.clone();
+                let stale_hint = if host.stale.is_some() {
+                    Some(stale_provider_hint(host))
+                } else {
+                    None
+                };
+                if let Some(hint) = stale_hint {
+                    app.set_status(format!("Stale host.{}", hint), true);
+                }
                 app.pending_connect = Some((alias, askpass));
             }
         }
@@ -223,8 +319,16 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
                     app.set_status(format!("{} lives in {}. Edit it there.", alias, path), true);
                     return;
                 }
+                let stale_hint = if host.stale.is_some() {
+                    Some(stale_provider_hint(host))
+                } else {
+                    None
+                };
                 let alias = host.alias.clone();
                 app.form = HostForm::from_entry(host);
+                if let Some(hint) = stale_hint {
+                    app.set_status(format!("Stale host.{}", hint), true);
+                }
                 app.screen = Screen::EditHost { alias };
                 app.capture_form_mtime();
                 app.capture_form_baseline();
@@ -238,7 +342,15 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
                     app.set_status(format!("{} lives in {}. Edit it there.", alias, path), true);
                     return;
                 }
+                let stale_hint = if host.stale.is_some() {
+                    Some(stale_provider_hint(host))
+                } else {
+                    None
+                };
                 let alias = host.alias.clone();
+                if let Some(hint) = stale_hint {
+                    app.set_status(format!("Stale host.{}", hint), true);
+                }
                 app.screen = Screen::ConfirmDelete { alias };
             }
         }
@@ -253,9 +365,18 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
                     );
                     return;
                 }
+                let stale_hint = if host.stale.is_some() {
+                    Some(stale_provider_hint(host))
+                } else {
+                    None
+                };
+                let copy_alias = format!("{}-copy", host.alias);
                 let mut form = HostForm::from_entry(host);
-                form.alias = format!("{}-copy", host.alias);
+                form.alias = copy_alias;
                 form.cursor_pos = form.alias.chars().count();
+                if let Some(hint) = stale_hint {
+                    app.set_status(format!("Stale host.{}", hint), true);
+                }
                 app.form = form;
                 app.screen = Screen::AddHost;
                 app.capture_form_mtime();
@@ -427,7 +548,15 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
         }
         KeyCode::Char('T') => {
             if let Some(host) = app.selected_host() {
+                let stale_hint = if host.stale.is_some() {
+                    Some(stale_provider_hint(host))
+                } else {
+                    None
+                };
                 let alias = host.alias.clone();
+                if let Some(hint) = stale_hint {
+                    app.set_status(format!("Stale host.{}", hint), true);
+                }
                 app.refresh_tunnel_list(&alias);
                 app.ui.tunnel_list_state = ratatui::widgets::ListState::default();
                 if !app.tunnel_list.is_empty() {
@@ -450,6 +579,18 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
                 app.set_status("No importable hosts in known_hosts.", true);
             }
         }
+        KeyCode::Char('X') => {
+            let stale = app.config.stale_hosts();
+            if stale.is_empty() {
+                app.set_status("No stale hosts.", true);
+            } else {
+                let aliases: Vec<String> = stale.into_iter().map(|(a, _)| a).collect();
+                app.screen = Screen::ConfirmPurgeStale {
+                    aliases,
+                    provider: None,
+                };
+            }
+        }
         KeyCode::Char(' ') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             if let Some(idx) = app.selected_host_index() {
                 if app.multi_select.contains(&idx) {
@@ -460,16 +601,38 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
             }
         }
         KeyCode::Char('r') => {
-            let aliases: Vec<String> = if app.multi_select.is_empty() {
-                app.selected_host()
-                    .map(|h| vec![h.alias.clone()])
-                    .unwrap_or_default()
-            } else {
-                app.multi_select
-                    .iter()
-                    .filter_map(|&idx| app.hosts.get(idx).map(|h| h.alias.clone()))
-                    .collect()
-            };
+            let (aliases, stale_hint): (Vec<String>, Option<String>) =
+                if app.multi_select.is_empty() {
+                    if let Some(host) = app.selected_host() {
+                        let hint = if host.stale.is_some() {
+                            Some(stale_provider_hint(host))
+                        } else {
+                            None
+                        };
+                        (vec![host.alias.clone()], hint)
+                    } else {
+                        (Vec::new(), None)
+                    }
+                } else {
+                    let has_stale = app
+                        .multi_select
+                        .iter()
+                        .any(|&idx| app.hosts.get(idx).is_some_and(|h| h.stale.is_some()));
+                    (
+                        app.multi_select
+                            .iter()
+                            .filter_map(|&idx| app.hosts.get(idx).map(|h| h.alias.clone()))
+                            .collect(),
+                        if has_stale {
+                            Some(" Selection includes stale hosts.".to_string())
+                        } else {
+                            None
+                        },
+                    )
+                };
+            if let Some(hint) = stale_hint {
+                app.set_status(format!("Stale host.{}", hint), true);
+            }
             if aliases.is_empty() {
                 app.set_status("No host selected.", true);
             } else {
@@ -495,8 +658,16 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
         }
         KeyCode::Char('f') => {
             if let Some(host) = app.selected_host() {
+                let stale_hint = if host.stale.is_some() {
+                    Some(stale_provider_hint(host))
+                } else {
+                    None
+                };
                 let alias = host.alias.clone();
                 let askpass = host.askpass.clone();
+                if let Some(hint) = stale_hint {
+                    app.set_status(format!("Stale host.{}", hint), true);
+                }
                 let has_tunnel = app.active_tunnels.contains_key(&alias);
                 let (local_path, remote_path) = app
                     .file_browser_paths
@@ -602,7 +773,15 @@ fn handle_host_list_search(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sende
             if let Some(host) = app.selected_host() {
                 let alias = host.alias.clone();
                 let askpass = host.askpass.clone();
+                let stale_hint = if host.stale.is_some() {
+                    Some(stale_provider_hint(host))
+                } else {
+                    None
+                };
                 app.cancel_search();
+                if let Some(hint) = stale_hint {
+                    app.set_status(format!("Stale host.{}", hint), true);
+                }
                 app.pending_connect = Some((alias, askpass));
             }
         }
@@ -873,6 +1052,14 @@ fn submit_form(app: &mut App) {
     }
 
     let target_alias = app.form.alias.trim().to_string();
+    // Editing a stale host means the user asserts it is still wanted
+    if let Screen::EditHost { ref alias } = app.screen {
+        app.config.clear_host_stale(alias);
+        // If alias was renamed, also clear on the new alias
+        if *alias != target_alias {
+            app.config.clear_host_stale(&target_alias);
+        }
+    }
     app.clear_form_mtime();
     app.form_baseline = None;
     app.screen = Screen::HostList;
@@ -1155,8 +1342,16 @@ fn handle_host_detail(app: &mut App, key: KeyEvent) {
                     app.set_status(format!("{} lives in {}. Edit it there.", alias, path), true);
                     return;
                 }
+                let stale_hint = if host.stale.is_some() {
+                    Some(stale_provider_hint(host))
+                } else {
+                    None
+                };
                 let alias = host.alias.clone();
                 app.form = HostForm::from_entry(host);
+                if let Some(hint) = stale_hint {
+                    app.set_status(format!("Stale host.{}", hint), true);
+                }
                 app.screen = Screen::EditHost { alias };
                 app.capture_form_mtime();
                 app.capture_form_baseline();
@@ -1164,7 +1359,15 @@ fn handle_host_detail(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Char('T') => {
             if let Some(host) = app.hosts.get(index) {
+                let stale_hint = if host.stale.is_some() {
+                    Some(stale_provider_hint(host))
+                } else {
+                    None
+                };
                 let alias = host.alias.clone();
+                if let Some(hint) = stale_hint {
+                    app.set_status(format!("Stale host.{}", hint), true);
+                }
                 app.refresh_tunnel_list(&alias);
                 app.ui.tunnel_list_state = ratatui::widgets::ListState::default();
                 if !app.tunnel_list.is_empty() {
@@ -1175,7 +1378,15 @@ fn handle_host_detail(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Char('r') => {
             if let Some(host) = app.hosts.get(index) {
+                let stale_hint = if host.stale.is_some() {
+                    Some(stale_provider_hint(host))
+                } else {
+                    None
+                };
                 let alias = host.alias.clone();
+                if let Some(hint) = stale_hint {
+                    app.set_status(format!("Stale host.{}", hint), true);
+                }
                 app.screen = Screen::SnippetPicker {
                     target_aliases: vec![alias],
                 };
@@ -1369,6 +1580,33 @@ fn handle_provider_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<A
                             format!("{} is not configured. Nothing to remove.", display_name),
                             false,
                         );
+                    }
+                }
+            }
+        }
+        KeyCode::Char('X') => {
+            if let Some(index) = app.ui.provider_list_state.selected() {
+                let sorted = app.sorted_provider_names();
+                if let Some(name) = sorted.get(index) {
+                    let stale = app.config.stale_hosts();
+                    let provider_stale: Vec<_> = stale
+                        .iter()
+                        .filter(|(alias, _)| {
+                            app.config.host_entries().iter().any(|e| {
+                                e.alias == *alias && e.provider.as_deref() == Some(name.as_str())
+                            })
+                        })
+                        .collect();
+                    if provider_stale.is_empty() {
+                        let display = crate::providers::provider_display_name(name);
+                        app.set_status(format!("No stale hosts for {}.", display), true);
+                    } else {
+                        let aliases: Vec<String> =
+                            provider_stale.into_iter().map(|(a, _)| a.clone()).collect();
+                        app.screen = Screen::ConfirmPurgeStale {
+                            aliases,
+                            provider: Some(name.clone()),
+                        };
                     }
                 }
             }
@@ -7073,5 +7311,265 @@ Host gamma
         let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
         let _ = handle_key_event(&mut app, key(KeyCode::Char('x')), &tx);
         assert!(app.pending_discard_confirm);
+    }
+
+    // --- Stale purge tests ---
+
+    #[test]
+    fn test_x_key_opens_confirm_purge_stale() {
+        let mut app = make_app(
+            "Host do-web\n  HostName 1.2.3.4\n  # purple:provider digitalocean:123\n  # purple:stale 1711900000\n",
+        );
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('X')), &tx);
+        match &app.screen {
+            Screen::ConfirmPurgeStale { aliases, provider } => {
+                assert_eq!(aliases.len(), 1);
+                assert_eq!(aliases[0], "do-web");
+                assert!(provider.is_none());
+            }
+            other => panic!("expected ConfirmPurgeStale, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_x_key_no_stale_shows_status() {
+        let mut app = make_app("Host normal\n  HostName 1.2.3.4\n");
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('X')), &tx);
+        assert!(matches!(app.screen, Screen::HostList));
+        let status = app.status.as_ref().expect("status should be set");
+        assert!(
+            status.text.contains("No stale hosts"),
+            "expected 'No stale hosts' in status, got: {}",
+            status.text
+        );
+    }
+
+    #[test]
+    fn test_confirm_purge_stale_y_deletes() {
+        let mut app = make_app(
+            "Host do-web\n  HostName 1.2.3.4\n  # purple:provider digitalocean:123\n  # purple:stale 1711900000\n\nHost keep\n  HostName 5.6.7.8\n",
+        );
+        app.screen = Screen::ConfirmPurgeStale {
+            aliases: vec!["do-web".to_string()],
+            provider: None,
+        };
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('y')), &tx);
+        assert!(matches!(app.screen, Screen::HostList));
+        // The stale host should be gone, only "keep" remains
+        let aliases: Vec<&str> = app.hosts.iter().map(|h| h.alias.as_str()).collect();
+        assert!(!aliases.contains(&"do-web"), "stale host should be removed");
+        assert!(aliases.contains(&"keep"), "non-stale host should remain");
+    }
+
+    #[test]
+    fn test_confirm_purge_stale_esc_cancels() {
+        let mut app = make_app(
+            "Host do-web\n  HostName 1.2.3.4\n  # purple:provider digitalocean:123\n  # purple:stale 1711900000\n",
+        );
+        app.screen = Screen::ConfirmPurgeStale {
+            aliases: vec!["do-web".to_string()],
+            provider: None,
+        };
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        assert!(matches!(app.screen, Screen::HostList));
+        // Host should still exist
+        assert_eq!(app.hosts.len(), 1);
+        assert_eq!(app.hosts[0].alias, "do-web");
+    }
+
+    #[test]
+    fn test_e_key_warns_on_stale_host() {
+        let mut app = make_app(
+            "Host do-web\n  HostName 1.2.3.4\n  # purple:provider digitalocean:123\n  # purple:stale 1711900000\n",
+        );
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('e')), &tx);
+        // Edit form should open (warning, not block)
+        assert!(matches!(app.screen, Screen::EditHost { .. }));
+        let status = app.status.as_ref().expect("status should be set");
+        assert!(status.text.contains("Stale host"));
+        assert!(status.text.contains("DigitalOcean"));
+        assert!(status.is_error);
+    }
+
+    #[test]
+    fn test_d_key_warns_on_stale_host() {
+        let mut app = make_app(
+            "Host do-web\n  HostName 1.2.3.4\n  # purple:provider digitalocean:123\n  # purple:stale 1711900000\n",
+        );
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('d')), &tx);
+        // Delete confirm should open (warning, not block)
+        assert!(matches!(app.screen, Screen::ConfirmDelete { .. }));
+        let status = app.status.as_ref().expect("status should be set");
+        assert!(status.text.contains("Stale host"));
+        assert!(status.is_error);
+    }
+
+    #[test]
+    fn test_enter_on_stale_host_shows_warning() {
+        let mut app = make_app(
+            "Host do-web\n  HostName 1.2.3.4\n  # purple:provider digitalocean:123\n  # purple:stale 1711900000\n",
+        );
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        // Connection should still be pending
+        assert!(app.pending_connect.is_some());
+        // But status should show stale warning
+        let status = app.status.as_ref().expect("status should be set");
+        assert!(
+            status.text.contains("Stale host"),
+            "expected stale warning, got: {}",
+            status.text
+        );
+        assert!(status.text.contains("DigitalOcean"));
+    }
+
+    #[test]
+    fn test_enter_on_normal_host_no_stale_warning() {
+        let mut app = make_app("Host normal\n  HostName 1.2.3.4\n");
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert!(app.pending_connect.is_some());
+        // No stale warning
+        assert!(app.status.is_none() || !app.status.as_ref().unwrap().text.contains("Stale"),);
+    }
+
+    #[test]
+    fn test_search_enter_on_stale_host_shows_warning() {
+        let mut app = make_app(
+            "Host do-web\n  HostName 1.2.3.4\n  # purple:provider digitalocean:123\n  # purple:stale 1711900000\n",
+        );
+        // Enter search mode
+        app.search.query = Some("do-web".to_string());
+        app.apply_filter();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert!(app.pending_connect.is_some());
+        let status = app.status.as_ref().expect("status should be set");
+        assert!(
+            status.text.contains("Stale host"),
+            "expected stale warning in search mode, got: {}",
+            status.text
+        );
+    }
+
+    #[test]
+    fn test_c_key_warns_on_stale_host() {
+        let mut app = make_app(
+            "Host do-web\n  HostName 1.2.3.4\n  # purple:provider digitalocean:123\n  # purple:stale 1711900000\n",
+        );
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('c')), &tx);
+        assert!(matches!(app.screen, Screen::AddHost));
+        let status = app.status.as_ref().expect("status should be set");
+        assert!(
+            status.text.contains("Stale host"),
+            "expected stale warning, got: {}",
+            status.text
+        );
+        assert!(status.is_error);
+    }
+
+    #[test]
+    fn test_t_key_warns_on_stale_host() {
+        let mut app = make_app(
+            "Host do-web\n  HostName 1.2.3.4\n  # purple:provider digitalocean:123\n  # purple:stale 1711900000\n",
+        );
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('T')), &tx);
+        assert!(
+            matches!(app.screen, Screen::TunnelList { .. }),
+            "expected TunnelList screen, got: {:?}",
+            app.screen
+        );
+        let status = app.status.as_ref().expect("status should be set");
+        assert!(
+            status.text.contains("Stale host"),
+            "expected stale warning, got: {}",
+            status.text
+        );
+        assert!(status.is_error);
+    }
+
+    #[test]
+    fn test_provider_x_key_opens_scoped_purge() {
+        let mut app = make_app(
+            "Host do-web\n  HostName 1.2.3.4\n  # purple:provider digitalocean:123\n  # purple:stale 1711900000\n",
+        );
+        app.screen = Screen::Providers;
+        app.provider_config = test_provider_config();
+        app.provider_config.set_section(ProviderSection {
+            provider: "digitalocean".to_string(),
+            token: "tok".to_string(),
+            alias_prefix: "do".to_string(),
+            user: "root".to_string(),
+            identity_file: String::new(),
+            url: String::new(),
+            verify_tls: true,
+            auto_sync: true,
+            profile: String::new(),
+            regions: String::new(),
+            project: String::new(),
+        });
+        // Select the DigitalOcean provider in the list
+        let sorted = app.sorted_provider_names();
+        let idx = sorted
+            .iter()
+            .position(|n| n == "digitalocean")
+            .expect("digitalocean should be in sorted list");
+        app.ui.provider_list_state.select(Some(idx));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('X')), &tx);
+        match &app.screen {
+            Screen::ConfirmPurgeStale { aliases, provider } => {
+                assert_eq!(aliases, &vec!["do-web".to_string()]);
+                assert_eq!(provider.as_deref(), Some("digitalocean"));
+            }
+            other => panic!("expected ConfirmPurgeStale, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_provider_purge_y_returns_to_providers() {
+        let mut app = make_app(
+            "Host do-web\n  HostName 1.2.3.4\n  # purple:provider digitalocean:123\n  # purple:stale 1711900000\n",
+        );
+        app.screen = Screen::ConfirmPurgeStale {
+            aliases: vec!["do-web".to_string()],
+            provider: Some("digitalocean".to_string()),
+        };
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('y')), &tx);
+        assert!(
+            matches!(app.screen, Screen::Providers),
+            "expected Providers screen after provider-scoped purge, got: {:?}",
+            app.screen
+        );
+    }
+
+    #[test]
+    fn test_provider_purge_esc_returns_to_providers() {
+        let mut app = make_app(
+            "Host do-web\n  HostName 1.2.3.4\n  # purple:provider digitalocean:123\n  # purple:stale 1711900000\n",
+        );
+        app.screen = Screen::ConfirmPurgeStale {
+            aliases: vec!["do-web".to_string()],
+            provider: Some("digitalocean".to_string()),
+        };
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        assert!(
+            matches!(app.screen, Screen::Providers),
+            "expected Providers screen after Esc on provider-scoped purge, got: {:?}",
+            app.screen
+        );
+        // Host should still exist (purge was cancelled)
+        assert_eq!(app.hosts.len(), 1);
+        assert_eq!(app.hosts[0].alias, "do-web");
     }
 }

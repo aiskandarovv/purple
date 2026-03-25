@@ -138,6 +138,7 @@ fn middle_column() -> Vec<Line<'static>> {
         help_line(" T         ", "tunnels for host"),
         help_line(" S         ", "cloud providers"),
         help_line(" I         ", "import known_hosts"),
+        help_line(" X         ", "purge stale hosts"),
         help_line(" K         ", "SSH keys"),
     ]
 }

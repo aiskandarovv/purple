@@ -93,6 +93,8 @@ purple sync --remove                                   # remove deleted hosts
 
 Synced hosts are tagged by provider and appear alongside your manual hosts. Auto-sync runs on startup for providers that have it enabled (configurable per provider). The provider list is sorted by last sync time and shows sync results.
 
+Hosts that disappear from a provider are marked stale instead of being silently kept or hard-deleted. Stale hosts appear dimmed in the host list and sort to the bottom. Press `X` to purge stale hosts (shows host names before deletion). Per-provider purge from the provider list. Stale hosts automatically clear when they reappear in the next sync. Filter with `tag:stale`.
+
 ### SSH tunnel management
 
 Add, edit and manage LocalForward, RemoteForward and DynamicForward rules per host. Start and stop background SSH tunnels from the TUI or CLI.
@@ -241,6 +243,7 @@ purple --completions zsh            # Shell completions
 | `R`         | Run snippet on all visible       |
 | `f`         | Remote file explorer (scp)       |
 | `T`         | Manage host tunnels              |
+| `X`         | Purge stale hosts                |
 | `K`         | SSH key list                     |
 | `?`         | Help                             |
 | `q` / `Esc` | Quit                             |
@@ -264,6 +267,7 @@ purple --completions zsh            # Shell completions
 | `Enter`     | Configure provider     |
 | `s`         | Sync selected provider |
 | `d`         | Remove provider        |
+| `X`         | Purge stale hosts      |
 | `q` / `Esc` | Back (cancels syncs)   |
 
 **Snippet Picker**
@@ -565,7 +569,7 @@ Found a bug or have a feature request? [Open an issue on GitHub](https://github.
 
 ## Built with
 
-Rust. 3900+ tests. Zero clippy warnings. No async runtime. Single binary.
+Rust. 4100+ tests. Zero clippy warnings. No async runtime. Single binary.
 
 <p align="center">
   <a href="LICENSE">MIT License</a>

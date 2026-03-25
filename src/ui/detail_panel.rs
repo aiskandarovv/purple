@@ -97,6 +97,27 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         push_field(&mut lines, "Password", askpass, max_value_width);
     }
 
+    if let Some(stale_ts) = host.stale {
+        let ago = ConnectionHistory::format_time_ago(stale_ts);
+        let stale_value = if ago.is_empty() {
+            "yes".to_string()
+        } else {
+            format!("{} ago", ago)
+        };
+        let display = if max_value_width > 0 {
+            super::truncate(&stale_value, max_value_width)
+        } else {
+            stale_value
+        };
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("{:<width$}", "Stale", width = LABEL_WIDTH),
+                theme::muted(),
+            ),
+            Span::styled(display, theme::error()),
+        ]));
+    }
+
     // Activity section
     let history_entry = app.history.entries.get(&host.alias);
     let ping = app.ping_status.get(&host.alias);
@@ -205,7 +226,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                     theme::error()
                 };
                 let name_trunc = super::truncate(name, hop_width);
-                let remaining = hop_width.saturating_sub(name_trunc.len());
+                let remaining = hop_width.saturating_sub(name_trunc.width());
                 let ip = if *in_config && name != hostname && remaining > 4 {
                     format!(
                         "  {}",
@@ -225,7 +246,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                 theme::muted(),
             )));
             let alias_trunc = super::truncate(&host.alias, hop_width);
-            let remaining = hop_width.saturating_sub(alias_trunc.len());
+            let remaining = hop_width.saturating_sub(alias_trunc.width());
             let target_ip = if remaining > 4 {
                 format!(
                     "  {}",
@@ -332,7 +353,10 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                 format!("{:<width$}", "Source", width = LABEL_WIDTH),
                 theme::muted(),
             ),
-            Span::styled(source.display().to_string(), theme::muted()),
+            Span::styled(
+                super::truncate(&source.display().to_string(), max_value_width),
+                theme::bold(),
+            ),
         ]));
     }
 

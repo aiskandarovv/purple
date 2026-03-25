@@ -33,6 +33,15 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             if let Some(ref provider) = host.provider {
                 *counts.entry(provider.as_str()).or_insert(0) += 1;
             }
+            if host.stale.is_some()
+                && !host
+                    .tags
+                    .iter()
+                    .chain(host.provider_tags.iter())
+                    .any(|t| t.eq_ignore_ascii_case("stale"))
+            {
+                *counts.entry("stale").or_insert(0) += 1;
+            }
         }
         counts
     };

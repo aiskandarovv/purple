@@ -35,7 +35,7 @@
   "url": "https://getpurple.sh",
   "downloadUrl": "https://getpurple.sh",
   "installUrl": "https://github.com/erickochen/purple/releases",
-  "softwareVersion": "2.10.1",
+  "softwareVersion": "2.11.0",
   "programmingLanguage": "Rust",
   "license": "https://opensource.org/licenses/MIT",
   "codeRepository": "https://github.com/erickochen/purple",
@@ -727,7 +727,7 @@ footer a:hover { color: var(--accent); }
     </div>
     <div class="pillar">
       <h3>11-provider cloud sync</h3>
-      <p>AWS, GCP, Azure and 8 more. Servers appear in your SSH config automatically.</p>
+      <p>AWS, GCP, Azure and 8 more. Servers sync in. Decommissioned ones get flagged, not lost.</p>
     </div>
   </div>
 
@@ -740,6 +740,7 @@ footer a:hover { color: var(--accent); }
       <div class="feature"><strong>Tunnels</strong><span>Manage port forwards per host. Start and stop from the TUI</span></div>
       <div class="feature"><strong>Round-trip fidelity</strong><span>Comments, formatting and unknown directives stay untouched</span></div>
       <div class="feature"><strong>SSH keys</strong><span>Browse keys with metadata and see which hosts use each key</span></div>
+      <div class="feature"><strong>Soft-delete</strong><span>Disappeared cloud hosts are dimmed, not deleted. Purge when ready</span></div>
       <div class="feature"><strong>Bulk import</strong><span>Migrate from hosts files or known_hosts in one command</span></div>
       <div class="feature"><strong>Atomic writes</strong><span>Temp file, chmod 600, rename. With automatic backups</span></div>
       <div class="feature"><strong>Detail panel</strong><span>Connection info, activity, provider metadata, tunnels and snippets</span></div>
@@ -775,7 +776,7 @@ footer a:hover { color: var(--accent); }
 
   <section>
     <h2>Built with Rust</h2>
-    <p>Starts instantly. No dependencies to install. No daemon running in the background. Won't corrupt your config. Single binary. MIT licensed. 3900+ tests.</p>
+    <p>Starts instantly. No dependencies to install. No daemon running in the background. Won't corrupt your config. Single binary. MIT licensed. 4100+ tests.</p>
   </section>
 
   <hr class="divider">

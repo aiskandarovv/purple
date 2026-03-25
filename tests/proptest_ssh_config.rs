@@ -253,6 +253,10 @@ fn purple_meta_strategy() -> impl Strategy<Value = String> {
     ]
 }
 
+fn purple_stale_strategy() -> impl Strategy<Value = String> {
+    (1_600_000_000u64..=1_900_000_000).prop_map(|ts| format!("  # purple:stale {}", ts))
+}
+
 /// Host block with purple annotations.
 fn annotated_host_block_strategy() -> impl Strategy<Value = String> {
     (
@@ -261,8 +265,9 @@ fn annotated_host_block_strategy() -> impl Strategy<Value = String> {
         prop::option::of(purple_provider_tags_strategy()),
         prop::option::of(purple_provider_strategy()),
         prop::option::of(purple_meta_strategy()),
+        prop::option::of(purple_stale_strategy()),
     )
-        .prop_map(|(block, tags, ptags, provider, meta)| {
+        .prop_map(|(block, tags, ptags, provider, meta, stale)| {
             let mut lines: Vec<&str> = block.lines().collect();
             // Insert purple comments before any trailing blank
             if let Some(t) = &tags {
@@ -276,6 +281,9 @@ fn annotated_host_block_strategy() -> impl Strategy<Value = String> {
             }
             if let Some(m) = &meta {
                 lines.push(m);
+            }
+            if let Some(s) = &stale {
+                lines.push(s);
             }
             lines.join("\n")
         })
@@ -640,6 +648,50 @@ proptest! {
             prop_assert!(
                 entry.tags == original_tags,
                 "Tags changed after update for host '{}'",
+                alias,
+            );
+        }
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(200))]
+
+    #[test]
+    fn stale_survives_update(content in annotated_config_strategy()) {
+        let mut config = parse_str(&content);
+        let entries = config.host_entries();
+        if entries.is_empty() {
+            return Ok(());
+        }
+
+        let alias = entries[0].alias.clone();
+        let original_stale = entries[0].stale;
+        let original_user = entries[0].user.clone();
+        let original_port = entries[0].port;
+        let original_identity = entries[0].identity_file.clone();
+        let original_proxy = entries[0].proxy_jump.clone();
+
+        // Update hostname only
+        config.update_host(
+            &alias,
+            &HostEntry {
+                alias: alias.clone(),
+                hostname: "10.99.99.99".to_string(),
+                user: original_user,
+                port: original_port,
+                identity_file: original_identity,
+                proxy_jump: original_proxy,
+                ..Default::default()
+            },
+        );
+
+        let updated_entries = config.host_entries();
+        let updated = updated_entries.iter().find(|e| e.alias == alias);
+        if let Some(entry) = updated {
+            prop_assert!(
+                entry.stale == original_stale,
+                "Stale changed after update for host '{}'",
                 alias,
             );
         }

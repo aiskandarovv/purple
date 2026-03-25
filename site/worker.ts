@@ -171,7 +171,7 @@ const LANDING_PAGE = `<!DOCTYPE html>
   "url": "https://getpurple.sh",
   "downloadUrl": "https://getpurple.sh",
   "installUrl": "https://github.com/erickochen/purple/releases",
-  "softwareVersion": "2.10.1",
+  "softwareVersion": "2.11.0",
   "programmingLanguage": "Rust",
   "license": "https://opensource.org/licenses/MIT",
   "codeRepository": "https://github.com/erickochen/purple",
@@ -863,7 +863,7 @@ footer a:hover { color: var(--accent); }
     </div>
     <div class="pillar">
       <h3>11-provider cloud sync</h3>
-      <p>AWS, GCP, Azure and 8 more. Servers appear in your SSH config automatically.</p>
+      <p>AWS, GCP, Azure and 8 more. Servers sync in. Decommissioned ones get flagged, not lost.</p>
     </div>
   </div>
 
@@ -876,6 +876,7 @@ footer a:hover { color: var(--accent); }
       <div class="feature"><strong>Tunnels</strong><span>Manage port forwards per host. Start and stop from the TUI</span></div>
       <div class="feature"><strong>Round-trip fidelity</strong><span>Comments, formatting and unknown directives stay untouched</span></div>
       <div class="feature"><strong>SSH keys</strong><span>Browse keys with metadata and see which hosts use each key</span></div>
+      <div class="feature"><strong>Soft-delete</strong><span>Disappeared cloud hosts are dimmed, not deleted. Purge when ready</span></div>
       <div class="feature"><strong>Bulk import</strong><span>Migrate from hosts files or known_hosts in one command</span></div>
       <div class="feature"><strong>Atomic writes</strong><span>Temp file, chmod 600, rename. With automatic backups</span></div>
       <div class="feature"><strong>Detail panel</strong><span>Connection info, activity, provider metadata, tunnels and snippets</span></div>
@@ -911,7 +912,7 @@ footer a:hover { color: var(--accent); }
 
   <section>
     <h2>Built with Rust</h2>
-    <p>Starts instantly. No dependencies to install. No daemon running in the background. Won't corrupt your config. Single binary. MIT licensed. 3900+ tests.</p>
+    <p>Starts instantly. No dependencies to install. No daemon running in the background. Won't corrupt your config. Single binary. MIT licensed. 4100+ tests.</p>
   </section>
 
   <hr class="divider">
@@ -1139,6 +1140,8 @@ Provider-specific details:
 
 Per-provider auto_sync toggle controls startup sync. Default is true for all providers except Proxmox (default false). Manual sync via the TUI (s key) or CLI always works. Preview changes with --dry-run. Remove deleted hosts with --remove.
 
+Soft-delete for disappeared hosts: when a provider sync no longer returns a host, it is marked stale with a # purple:stale timestamp comment instead of being silently kept or hard-deleted. Stale hosts appear dimmed in the host list and sort to the bottom. Purge stale hosts with X (shows host names in the confirmation dialog). Per-provider purge from the provider list. Stale hosts automatically clear when they reappear in the next sync. Partial sync failures suppress stale marking to prevent false positives. Editing a stale host clears the stale marker on save. Virtual "stale" tag for filtering (tag:stale fuzzy, tag=stale exact).
+
 ## Password management
 
 purple can retrieve SSH passwords automatically on connect. Set a password source per host via the TUI form or a global default in ~/.purple/preferences. purple acts as its own SSH_ASKPASS program.
@@ -1181,7 +1184,7 @@ Consecutive blank lines are collapsed to one. Hosts from Include files are displ
 - Language: Rust
 - Platforms: macOS and Linux
 - Binary name: purple (crate name: purple-ssh)
-- Tests: 3900+ (unit + integration + mockito HTTP)
+- Tests: 4100+ (unit + integration + mockito HTTP)
 - No async runtime. Single binary, no daemon
 - Atomic writes via temp file + chmod 600 + rename
 - Uses system ssh binary with -F <config_path>

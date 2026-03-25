@@ -107,6 +107,8 @@ pub struct HostEntry {
     pub askpass: Option<String>,
     /// Provider metadata from purple:meta comment (region, plan, etc.).
     pub provider_meta: Vec<(String, String)>,
+    /// Unix timestamp when the host was marked stale (disappeared from provider sync).
+    pub stale: Option<u64>,
 }
 
 impl Default for HostEntry {
@@ -126,6 +128,7 @@ impl Default for HostEntry {
             tunnel_count: 0,
             askpass: None,
             provider_meta: Vec::new(),
+            stale: None,
         }
     }
 }
@@ -388,6 +391,47 @@ impl HostBlock {
         }
     }
 
+    /// Extract stale timestamp from purple:stale comment in directives.
+    /// Returns `None` if absent or malformed.
+    pub fn stale(&self) -> Option<u64> {
+        for d in &self.directives {
+            if d.is_non_directive {
+                let trimmed = d.raw_line.trim();
+                if let Some(rest) = trimmed.strip_prefix("# purple:stale ") {
+                    return rest.trim().parse::<u64>().ok();
+                }
+            }
+        }
+        None
+    }
+
+    /// Mark a host block as stale with a unix timestamp.
+    /// Replaces existing purple:stale comment or adds one.
+    pub fn set_stale(&mut self, timestamp: u64) {
+        let indent = self.detect_indent();
+        self.clear_stale();
+        let pos = self.content_end();
+        self.directives.insert(
+            pos,
+            Directive {
+                key: String::new(),
+                value: String::new(),
+                raw_line: format!("{}# purple:stale {}", indent, timestamp),
+                is_non_directive: true,
+            },
+        );
+    }
+
+    /// Remove stale marking from a host block.
+    pub fn clear_stale(&mut self) {
+        self.directives.retain(|d| {
+            !(d.is_non_directive && {
+                let t = d.raw_line.trim();
+                t == "# purple:stale" || t.starts_with("# purple:stale ")
+            })
+        });
+    }
+
     /// Sanitize a tag value: strip control characters, commas (delimiter),
     /// and Unicode format/bidi override characters. Truncate to 128 chars.
     fn sanitize_tag(tag: &str) -> String {
@@ -496,6 +540,7 @@ impl HostBlock {
         entry.tunnel_count = self.tunnel_count();
         entry.askpass = self.askpass();
         entry.provider_meta = self.meta();
+        entry.stale = self.stale();
         entry
     }
 
@@ -1202,6 +1247,43 @@ impl SshConfigFile {
         }
     }
 
+    /// Mark a host as stale by alias.
+    pub fn set_host_stale(&mut self, alias: &str, timestamp: u64) {
+        for element in &mut self.elements {
+            if let ConfigElement::HostBlock(block) = element {
+                if block.host_pattern == alias {
+                    block.set_stale(timestamp);
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Clear stale marking from a host by alias.
+    pub fn clear_host_stale(&mut self, alias: &str) {
+        for element in &mut self.elements {
+            if let ConfigElement::HostBlock(block) = element {
+                if block.host_pattern == alias {
+                    block.clear_stale();
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Collect all stale hosts with their timestamps.
+    pub fn stale_hosts(&self) -> Vec<(String, u64)> {
+        let mut result = Vec::new();
+        for element in &self.elements {
+            if let ConfigElement::HostBlock(block) = element {
+                if let Some(ts) = block.stale() {
+                    result.push((block.host_pattern.clone(), ts));
+                }
+            }
+        }
+        result
+    }
+
     /// Delete a host entry by alias.
     #[allow(dead_code)]
     pub fn delete_host(&mut self, alias: &str) {
@@ -1794,6 +1876,13 @@ mod tests {
 
     fn first_block(config: &SshConfigFile) -> &HostBlock {
         match config.elements.first().unwrap() {
+            ConfigElement::HostBlock(b) => b,
+            _ => panic!("Expected HostBlock"),
+        }
+    }
+
+    fn first_block_mut(config: &mut SshConfigFile) -> &mut HostBlock {
+        match config.elements.first_mut().unwrap() {
             ConfigElement::HostBlock(b) => b,
             _ => panic!("Expected HostBlock"),
         }
@@ -2968,5 +3057,551 @@ Host *
         assert!(serialized.contains("zone=ab"));
         assert!(!serialized.contains('\x00'));
         assert!(!serialized.contains('\u{202E}'));
+    }
+
+    // ── stale tests ──────────────────────────────────────────────────────
+
+    #[test]
+    fn stale_returns_timestamp() {
+        let config_str = "\
+Host web
+  HostName 1.2.3.4
+  # purple:stale 1711900000
+";
+        let config = parse_str(config_str);
+        assert_eq!(first_block(&config).stale(), Some(1711900000));
+    }
+
+    #[test]
+    fn stale_returns_none_when_absent() {
+        let config_str = "Host web\n  HostName 1.2.3.4\n";
+        let config = parse_str(config_str);
+        assert_eq!(first_block(&config).stale(), None);
+    }
+
+    #[test]
+    fn stale_returns_none_for_malformed() {
+        for bad in &[
+            "Host w\n  HostName 1.2.3.4\n  # purple:stale abc\n",
+            "Host w\n  HostName 1.2.3.4\n  # purple:stale\n",
+            "Host w\n  HostName 1.2.3.4\n  # purple:stale -1\n",
+        ] {
+            let config = parse_str(bad);
+            assert_eq!(first_block(&config).stale(), None, "input: {bad}");
+        }
+    }
+
+    #[test]
+    fn set_stale_adds_comment() {
+        let config_str = "Host web\n  HostName 1.2.3.4\n";
+        let mut config = parse_str(config_str);
+        first_block_mut(&mut config).set_stale(1711900000);
+        assert_eq!(first_block(&config).stale(), Some(1711900000));
+        assert!(config.serialize().contains("# purple:stale 1711900000"));
+    }
+
+    #[test]
+    fn set_stale_replaces_existing() {
+        let config_str = "\
+Host web
+  HostName 1.2.3.4
+  # purple:stale 1000
+";
+        let mut config = parse_str(config_str);
+        first_block_mut(&mut config).set_stale(2000);
+        assert_eq!(first_block(&config).stale(), Some(2000));
+        let output = config.serialize();
+        assert!(!output.contains("1000"));
+        assert!(output.contains("# purple:stale 2000"));
+    }
+
+    #[test]
+    fn clear_stale_removes_comment() {
+        let config_str = "\
+Host web
+  HostName 1.2.3.4
+  # purple:stale 1711900000
+";
+        let mut config = parse_str(config_str);
+        first_block_mut(&mut config).clear_stale();
+        assert_eq!(first_block(&config).stale(), None);
+        assert!(!config.serialize().contains("purple:stale"));
+    }
+
+    #[test]
+    fn clear_stale_when_absent_is_noop() {
+        let config_str = "Host web\n  HostName 1.2.3.4\n";
+        let mut config = parse_str(config_str);
+        let before = config.serialize();
+        first_block_mut(&mut config).clear_stale();
+        assert_eq!(config.serialize(), before);
+    }
+
+    #[test]
+    fn stale_roundtrip() {
+        let config_str = "\
+Host web
+  HostName 1.2.3.4
+  # purple:stale 1711900000
+";
+        let config = parse_str(config_str);
+        let output = config.serialize();
+        let config2 = parse_str(&output);
+        assert_eq!(first_block(&config2).stale(), Some(1711900000));
+    }
+
+    #[test]
+    fn stale_in_host_entry() {
+        let config_str = "\
+Host web
+  HostName 1.2.3.4
+  # purple:stale 1711900000
+";
+        let config = parse_str(config_str);
+        let entry = first_block(&config).to_host_entry();
+        assert_eq!(entry.stale, Some(1711900000));
+    }
+
+    #[test]
+    fn stale_coexists_with_other_annotations() {
+        let config_str = "\
+Host web
+  HostName 1.2.3.4
+  # purple:tags prod
+  # purple:provider do:12345
+  # purple:askpass keychain
+  # purple:meta region=nyc3
+  # purple:stale 1711900000
+";
+        let config = parse_str(config_str);
+        let entry = first_block(&config).to_host_entry();
+        assert_eq!(entry.stale, Some(1711900000));
+        assert!(entry.tags.contains(&"prod".to_string()));
+        assert_eq!(entry.provider, Some("do".to_string()));
+        assert_eq!(entry.askpass, Some("keychain".to_string()));
+        assert_eq!(entry.provider_meta[0].0, "region");
+    }
+
+    #[test]
+    fn set_host_stale_delegates() {
+        let config_str = "\
+Host web
+  HostName 1.2.3.4
+
+Host db
+  HostName 5.6.7.8
+";
+        let mut config = parse_str(config_str);
+        config.set_host_stale("db", 1234567890);
+        assert_eq!(config.host_entries()[1].stale, Some(1234567890));
+        assert_eq!(config.host_entries()[0].stale, None);
+    }
+
+    #[test]
+    fn clear_host_stale_delegates() {
+        let config_str = "\
+Host web
+  HostName 1.2.3.4
+  # purple:stale 1711900000
+";
+        let mut config = parse_str(config_str);
+        config.clear_host_stale("web");
+        assert_eq!(first_block(&config).stale(), None);
+    }
+
+    #[test]
+    fn stale_hosts_collects_all() {
+        let config_str = "\
+Host web
+  HostName 1.2.3.4
+  # purple:stale 1000
+
+Host db
+  HostName 5.6.7.8
+
+Host app
+  HostName 9.10.11.12
+  # purple:stale 2000
+";
+        let config = parse_str(config_str);
+        let stale = config.stale_hosts();
+        assert_eq!(stale.len(), 2);
+        assert_eq!(stale[0], ("web".to_string(), 1000));
+        assert_eq!(stale[1], ("app".to_string(), 2000));
+    }
+
+    #[test]
+    fn set_stale_preserves_indent() {
+        let config_str = "Host web\n\tHostName 1.2.3.4\n";
+        let mut config = parse_str(config_str);
+        first_block_mut(&mut config).set_stale(1711900000);
+        assert!(config.serialize().contains("\t# purple:stale 1711900000"));
+    }
+
+    #[test]
+    fn stale_does_not_match_similar_comments() {
+        let config_str = "\
+Host web
+  HostName 1.2.3.4
+  # purple:stale_backup 999
+";
+        let config = parse_str(config_str);
+        assert_eq!(first_block(&config).stale(), None);
+    }
+
+    #[test]
+    fn stale_with_whitespace_in_timestamp() {
+        let config_str = "Host w\n  HostName 1.2.3.4\n  # purple:stale  1711900000 \n";
+        let config = parse_str(config_str);
+        assert_eq!(first_block(&config).stale(), Some(1711900000));
+    }
+
+    #[test]
+    fn stale_with_u64_max() {
+        let ts = u64::MAX;
+        let config_str = format!("Host w\n  HostName 1.2.3.4\n  # purple:stale {}\n", ts);
+        let config = parse_str(&config_str);
+        assert_eq!(first_block(&config).stale(), Some(ts));
+        // Round-trip
+        let output = config.serialize();
+        let config2 = parse_str(&output);
+        assert_eq!(first_block(&config2).stale(), Some(ts));
+    }
+
+    #[test]
+    fn stale_with_u64_overflow() {
+        let config_str = "Host w\n  HostName 1.2.3.4\n  # purple:stale 18446744073709551616\n";
+        let config = parse_str(config_str);
+        assert_eq!(first_block(&config).stale(), None);
+    }
+
+    #[test]
+    fn stale_timestamp_zero() {
+        let config_str = "Host w\n  HostName 1.2.3.4\n  # purple:stale 0\n";
+        let config = parse_str(config_str);
+        assert_eq!(first_block(&config).stale(), Some(0));
+    }
+
+    #[test]
+    fn set_host_stale_nonexistent_alias_is_noop() {
+        let config_str = "Host web\n  HostName 1.2.3.4\n";
+        let mut config = parse_str(config_str);
+        let before = config.serialize();
+        config.set_host_stale("nonexistent", 12345);
+        assert_eq!(config.serialize(), before);
+    }
+
+    #[test]
+    fn clear_host_stale_nonexistent_alias_is_noop() {
+        let config_str = "Host web\n  HostName 1.2.3.4\n";
+        let mut config = parse_str(config_str);
+        let before = config.serialize();
+        config.clear_host_stale("nonexistent");
+        assert_eq!(config.serialize(), before);
+    }
+
+    #[test]
+    fn stale_hosts_empty_config() {
+        let config_str = "";
+        let config = parse_str(config_str);
+        assert!(config.stale_hosts().is_empty());
+    }
+
+    #[test]
+    fn stale_hosts_no_stale() {
+        let config_str = "Host web\n  HostName 1.2.3.4\n\nHost db\n  HostName 5.6.7.8\n";
+        let config = parse_str(config_str);
+        assert!(config.stale_hosts().is_empty());
+    }
+
+    #[test]
+    fn clear_stale_preserves_other_purple_comments() {
+        let config_str = "\
+Host web
+  HostName 1.2.3.4
+  # purple:tags prod
+  # purple:provider do:123
+  # purple:askpass keychain
+  # purple:meta region=nyc3
+  # purple:stale 1711900000
+";
+        let mut config = parse_str(config_str);
+        config.clear_host_stale("web");
+        let entry = first_block(&config).to_host_entry();
+        assert_eq!(entry.stale, None);
+        assert!(entry.tags.contains(&"prod".to_string()));
+        assert_eq!(entry.provider, Some("do".to_string()));
+        assert_eq!(entry.askpass, Some("keychain".to_string()));
+        assert_eq!(entry.provider_meta[0].0, "region");
+    }
+
+    #[test]
+    fn set_stale_preserves_other_purple_comments() {
+        let config_str = "\
+Host web
+  HostName 1.2.3.4
+  # purple:tags prod
+  # purple:provider do:123
+  # purple:askpass keychain
+  # purple:meta region=nyc3
+";
+        let mut config = parse_str(config_str);
+        config.set_host_stale("web", 1711900000);
+        let entry = first_block(&config).to_host_entry();
+        assert_eq!(entry.stale, Some(1711900000));
+        assert!(entry.tags.contains(&"prod".to_string()));
+        assert_eq!(entry.provider, Some("do".to_string()));
+        assert_eq!(entry.askpass, Some("keychain".to_string()));
+        assert_eq!(entry.provider_meta[0].0, "region");
+    }
+
+    #[test]
+    fn stale_multiple_comments_first_wins() {
+        let config_str = "\
+Host web
+  HostName 1.2.3.4
+  # purple:stale 1000
+  # purple:stale 2000
+";
+        let config = parse_str(config_str);
+        assert_eq!(first_block(&config).stale(), Some(1000));
+    }
+
+    #[test]
+    fn set_stale_removes_multiple_stale_comments() {
+        let config_str = "\
+Host web
+  HostName 1.2.3.4
+  # purple:stale 1000
+  # purple:stale 2000
+";
+        let mut config = parse_str(config_str);
+        first_block_mut(&mut config).set_stale(3000);
+        assert_eq!(first_block(&config).stale(), Some(3000));
+        let output = config.serialize();
+        assert_eq!(output.matches("purple:stale").count(), 1);
+    }
+
+    #[test]
+    fn stale_absent_in_host_entry() {
+        let config_str = "Host web\n  HostName 1.2.3.4\n";
+        let config = parse_str(config_str);
+        assert_eq!(first_block(&config).to_host_entry().stale, None);
+    }
+
+    #[test]
+    fn set_stale_four_space_indent() {
+        let config_str = "Host web\n    HostName 1.2.3.4\n";
+        let mut config = parse_str(config_str);
+        first_block_mut(&mut config).set_stale(1711900000);
+        assert!(config.serialize().contains("    # purple:stale 1711900000"));
+    }
+
+    #[test]
+    fn clear_stale_removes_bare_comment() {
+        let config_str = "Host web\n  HostName 1.2.3.4\n  # purple:stale\n";
+        let mut config = parse_str(config_str);
+        first_block_mut(&mut config).clear_stale();
+        assert!(!config.serialize().contains("purple:stale"));
+    }
+
+    // ── SSH config integrity tests for stale operations ──────────────
+
+    #[test]
+    fn stale_preserves_blank_line_between_hosts() {
+        let config_str = "\
+Host web
+  HostName 1.2.3.4
+
+Host db
+  HostName 5.6.7.8
+";
+        let mut config = parse_str(config_str);
+        config.set_host_stale("web", 1711900000);
+        let output = config.serialize();
+        // There must still be a blank line between hosts
+        assert!(
+            output.contains("# purple:stale 1711900000\n\nHost db"),
+            "blank line between hosts lost after set_stale:\n{}",
+            output
+        );
+    }
+
+    #[test]
+    fn stale_preserves_blank_line_before_group_header() {
+        let config_str = "\
+Host do-web
+  HostName 1.2.3.4
+  # purple:provider digitalocean:111
+
+# purple:group Hetzner
+
+Host hz-cache
+  HostName 9.10.11.12
+  # purple:provider hetzner:333
+";
+        let mut config = parse_str(config_str);
+        config.set_host_stale("do-web", 1711900000);
+        let output = config.serialize();
+        // There must still be a blank line before the Hetzner group header
+        assert!(
+            output.contains("\n\n# purple:group Hetzner"),
+            "blank line before group header lost after set_stale:\n{}",
+            output
+        );
+    }
+
+    #[test]
+    fn stale_set_and_clear_is_byte_identical() {
+        let config_str = "\
+Host manual
+  HostName 10.0.0.1
+  User admin
+
+# purple:group DigitalOcean
+
+Host do-web
+  HostName 1.2.3.4
+  User root
+  # purple:provider digitalocean:111
+  # purple:tags prod
+
+Host do-db
+  HostName 5.6.7.8
+  User root
+  # purple:provider digitalocean:222
+  # purple:meta region=nyc3
+
+# purple:group Hetzner
+
+Host hz-cache
+  HostName 9.10.11.12
+  User root
+  # purple:provider hetzner:333
+";
+        let original = config_str.to_string();
+        let mut config = parse_str(config_str);
+
+        // Mark stale
+        config.set_host_stale("do-db", 1711900000);
+        let after_stale = config.serialize();
+        assert_ne!(after_stale, original, "stale should change the config");
+
+        // Clear stale
+        config.clear_host_stale("do-db");
+        let after_clear = config.serialize();
+        assert_eq!(
+            after_clear, original,
+            "clearing stale must restore byte-identical config"
+        );
+    }
+
+    #[test]
+    fn stale_does_not_accumulate_blank_lines() {
+        let config_str = "Host web\n  HostName 1.2.3.4\n\nHost db\n  HostName 5.6.7.8\n";
+        let mut config = parse_str(config_str);
+
+        // Set and clear stale 10 times
+        for _ in 0..10 {
+            config.set_host_stale("web", 1711900000);
+            config.clear_host_stale("web");
+        }
+
+        let output = config.serialize();
+        assert_eq!(
+            output, config_str,
+            "repeated set/clear must not accumulate blank lines"
+        );
+    }
+
+    #[test]
+    fn stale_preserves_all_directives_and_comments() {
+        let config_str = "\
+Host complex
+  HostName 1.2.3.4
+  User deploy
+  Port 2222
+  IdentityFile ~/.ssh/id_ed25519
+  ProxyJump bastion
+  LocalForward 8080 localhost:80
+  # purple:provider digitalocean:999
+  # purple:tags prod,us-east
+  # purple:provider_tags web-tier
+  # purple:askpass keychain
+  # purple:meta region=nyc3,plan=s-1vcpu-1gb
+  # This is a user comment
+";
+        let mut config = parse_str(config_str);
+        let entry_before = first_block(&config).to_host_entry();
+
+        config.set_host_stale("complex", 1711900000);
+        let entry_after = first_block(&config).to_host_entry();
+
+        // Every field must survive stale marking
+        assert_eq!(entry_after.hostname, entry_before.hostname);
+        assert_eq!(entry_after.user, entry_before.user);
+        assert_eq!(entry_after.port, entry_before.port);
+        assert_eq!(entry_after.identity_file, entry_before.identity_file);
+        assert_eq!(entry_after.proxy_jump, entry_before.proxy_jump);
+        assert_eq!(entry_after.tags, entry_before.tags);
+        assert_eq!(entry_after.provider_tags, entry_before.provider_tags);
+        assert_eq!(entry_after.provider, entry_before.provider);
+        assert_eq!(entry_after.askpass, entry_before.askpass);
+        assert_eq!(entry_after.provider_meta, entry_before.provider_meta);
+        assert_eq!(entry_after.tunnel_count, entry_before.tunnel_count);
+        assert_eq!(entry_after.stale, Some(1711900000));
+
+        // Clear stale and verify everything still intact
+        config.clear_host_stale("complex");
+        let entry_cleared = first_block(&config).to_host_entry();
+        assert_eq!(entry_cleared.stale, None);
+        assert_eq!(entry_cleared.hostname, entry_before.hostname);
+        assert_eq!(entry_cleared.tags, entry_before.tags);
+        assert_eq!(entry_cleared.provider, entry_before.provider);
+        assert_eq!(entry_cleared.askpass, entry_before.askpass);
+        assert_eq!(entry_cleared.provider_meta, entry_before.provider_meta);
+
+        // User comment must survive
+        assert!(config.serialize().contains("# This is a user comment"));
+    }
+
+    #[test]
+    fn stale_on_last_host_preserves_trailing_newline() {
+        let config_str = "Host web\n  HostName 1.2.3.4\n";
+        let mut config = parse_str(config_str);
+        config.set_host_stale("web", 1711900000);
+        let output = config.serialize();
+        assert!(output.ends_with('\n'), "config must end with newline");
+
+        config.clear_host_stale("web");
+        let output2 = config.serialize();
+        assert_eq!(output2, config_str);
+    }
+
+    #[test]
+    fn stale_with_crlf_preserves_line_endings() {
+        let config_str = "Host web\r\n  HostName 1.2.3.4\r\n";
+        let config = SshConfigFile {
+            elements: SshConfigFile::parse_content(config_str),
+            path: std::path::PathBuf::from("/tmp/test"),
+            crlf: true,
+            bom: false,
+        };
+        let mut config = config;
+        config.set_host_stale("web", 1711900000);
+        let output = config.serialize();
+        // All lines must use CRLF
+        for line in output.split('\n') {
+            if !line.is_empty() {
+                assert!(
+                    line.ends_with('\r'),
+                    "CRLF lost after set_stale. Line: {:?}",
+                    line
+                );
+            }
+        }
+
+        config.clear_host_stale("web");
+        assert_eq!(config.serialize(), config_str);
     }
 }

@@ -65,25 +65,51 @@ pub fn render_provider_list(frame: &mut Frame, app: &mut App) {
                     }
                 }
 
+                // Stale count for this provider
+                let stale_count = app
+                    .hosts
+                    .iter()
+                    .filter(|h| h.stale.is_some() && h.provider.as_deref() == Some(name.as_str()))
+                    .count();
+
                 // Sync detail on same line
-                let sync_detail = if app.syncing_providers.contains_key(name.as_str()) {
-                    Some("syncing...".to_string())
-                } else if let Some(record) = app.sync_history.get(name.as_str()) {
-                    let ago = ConnectionHistory::format_time_ago(record.timestamp);
-                    if ago.is_empty() {
-                        Some(record.message.clone())
-                    } else {
-                        // format_time_ago returns compact "5m"; add "ago" here for readability
-                        Some(format!("{}, {} ago", record.message, ago))
-                    }
-                } else {
-                    None
-                };
-                if let Some(detail) = sync_detail {
+                if app.syncing_providers.contains_key(name.as_str()) {
                     let max = content_width.saturating_sub(used + 2);
                     if max > 1 {
                         spans.push(Span::styled(
-                            format!("  {}", super::truncate(&detail, max)),
+                            format!("  {}", super::truncate("syncing...", max)),
+                            theme::muted(),
+                        ));
+                    }
+                } else if let Some(record) = app.sync_history.get(name.as_str()) {
+                    let ago = ConnectionHistory::format_time_ago(record.timestamp);
+                    // Build segments: "N servers" [", N stale"] [", Xm ago"]
+                    let prefix = format!("  {}", record.message);
+                    let stale_text = if stale_count > 0 {
+                        format!(", {} stale", stale_count)
+                    } else {
+                        String::new()
+                    };
+                    let ago_text = if ago.is_empty() {
+                        String::new()
+                    } else {
+                        format!(", {} ago", ago)
+                    };
+                    let max = content_width.saturating_sub(used);
+                    let total_len = prefix.len() + stale_text.len() + ago_text.len();
+                    if max > 1 && total_len <= max {
+                        spans.push(Span::styled(prefix, theme::muted()));
+                        if stale_count > 0 {
+                            spans.push(Span::styled(stale_text, theme::error()));
+                        }
+                        if !ago_text.is_empty() {
+                            spans.push(Span::styled(ago_text, theme::muted()));
+                        }
+                    } else if max > 1 {
+                        // Fallback: truncate combined string
+                        let combined = format!("{}{}{}", prefix, stale_text, ago_text);
+                        spans.push(Span::styled(
+                            super::truncate(&combined, max),
                             theme::muted(),
                         ));
                     }
@@ -120,24 +146,43 @@ pub fn render_provider_list(frame: &mut Frame, app: &mut App) {
             app,
         );
     } else {
-        super::render_footer_with_status(
-            frame,
-            chunks[1],
-            vec![
-                Span::styled(" Enter", theme::primary_action()),
-                Span::styled(" configure ", theme::muted()),
-                Span::styled("\u{2502} ", theme::muted()),
-                Span::styled("s", theme::accent_bold()),
-                Span::styled(" sync ", theme::muted()),
-                Span::styled("\u{2502} ", theme::muted()),
-                Span::styled("d", theme::accent_bold()),
-                Span::styled(" remove ", theme::muted()),
-                Span::styled("\u{2502} ", theme::muted()),
-                Span::styled("Esc", theme::accent_bold()),
-                Span::styled(" back", theme::muted()),
-            ],
-            app,
-        );
+        // Count stale hosts for selected provider
+        let selected_stale_count: usize = app
+            .ui
+            .provider_list_state
+            .selected()
+            .and_then(|idx| sorted_names.get(idx))
+            .map(|name| {
+                app.hosts
+                    .iter()
+                    .filter(|h| h.stale.is_some() && h.provider.as_deref() == Some(name.as_str()))
+                    .count()
+            })
+            .unwrap_or(0);
+
+        let mut footer = vec![
+            Span::styled(" Enter", theme::primary_action()),
+            Span::styled(" configure ", theme::muted()),
+            Span::styled("\u{2502} ", theme::muted()),
+            Span::styled("s", theme::accent_bold()),
+            Span::styled(" sync ", theme::muted()),
+            Span::styled("\u{2502} ", theme::muted()),
+            Span::styled("d", theme::accent_bold()),
+            Span::styled(" remove ", theme::muted()),
+        ];
+        if selected_stale_count > 0 {
+            footer.push(Span::styled("\u{2502} ", theme::muted()));
+            footer.push(Span::styled("X", theme::accent_bold()));
+            footer.push(Span::styled(
+                format!(" purge {} stale ", selected_stale_count),
+                theme::muted(),
+            ));
+        }
+        footer.push(Span::styled("\u{2502} ", theme::muted()));
+        footer.push(Span::styled("Esc", theme::accent_bold()));
+        footer.push(Span::styled(" back", theme::muted()));
+
+        super::render_footer_with_status(frame, chunks[1], footer, app);
     }
 }
 

@@ -7,7 +7,7 @@ use super::theme;
 use crate::app::App;
 
 pub fn render(frame: &mut Frame, _app: &App, alias: &str) {
-    let area = super::centered_rect_fixed(48, 7, frame.area());
+    let area = super::centered_rect_fixed(52, 7, frame.area());
 
     // Clear background
     frame.render_widget(Clear, area);
@@ -105,6 +105,81 @@ pub fn render_confirm_import(frame: &mut Frame, _app: &App, count: usize) {
             Span::styled(" no", theme::muted()),
         ]),
     ];
+
+    let paragraph = Paragraph::new(text).block(block);
+    frame.render_widget(paragraph, area);
+}
+
+pub fn render_confirm_purge_stale(
+    frame: &mut Frame,
+    _app: &App,
+    aliases: &[String],
+    provider: &Option<String>,
+) {
+    let count = aliases.len();
+    // Show up to 6 host names, then "+N more hosts" (only when N >= 1)
+    let max_shown = 6;
+    let mut host_lines: Vec<Line> = aliases
+        .iter()
+        .take(max_shown)
+        .map(|a| {
+            let truncated = super::truncate(a, 46);
+            Line::from(Span::styled(format!("  {}", truncated), theme::muted()))
+        })
+        .collect();
+    if count > max_shown {
+        let remaining = count - max_shown;
+        host_lines.push(Line::from(Span::styled(
+            format!(
+                "  +{} more host{}",
+                remaining,
+                if remaining == 1 { "" } else { "s" }
+            ),
+            theme::muted(),
+        )));
+    }
+
+    // height: 2 border + 1 blank + 1 question + host_lines + 1 blank + 1 footer
+    let inner_height = 4 + host_lines.len();
+    let height = (inner_height + 2) as u16;
+    let area = super::centered_rect_fixed(52, height, frame.area());
+
+    frame.render_widget(Clear, area);
+
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .title(Span::styled(" Purge Stale ", theme::danger()))
+        .border_style(theme::border_danger());
+
+    let main_line = if let Some(prov) = provider {
+        let display = crate::providers::provider_display_name(prov);
+        format!(
+            "  Remove {} stale {} host{}?",
+            count,
+            display,
+            if count == 1 { "" } else { "s" },
+        )
+    } else {
+        format!(
+            "  Remove {} stale host{}?",
+            count,
+            if count == 1 { "" } else { "s" },
+        )
+    };
+
+    let mut text = vec![
+        Line::from(""),
+        Line::from(Span::styled(main_line, theme::bold())),
+    ];
+    text.extend(host_lines);
+    text.push(Line::from(""));
+    text.push(Line::from(vec![
+        Span::styled("    y", theme::danger()),
+        Span::styled(" yes ", theme::muted()),
+        Span::styled("\u{2502} ", theme::muted()),
+        Span::styled("Esc", theme::accent_bold()),
+        Span::styled(" no", theme::muted()),
+    ]));
 
     let paragraph = Paragraph::new(text).block(block);
     frame.render_widget(paragraph, area);
@@ -416,5 +491,52 @@ mod tests {
             if 34 == 1 { "" } else { "s" },
         );
         assert_eq!(msg, "Found 34 hosts in known_hosts.");
+    }
+
+    #[test]
+    fn test_purge_stale_pluralization_single_no_provider() {
+        let count = 1;
+        let msg = format!(
+            "  Remove {} stale host{}?",
+            count,
+            if count == 1 { "" } else { "s" },
+        );
+        assert_eq!(msg, "  Remove 1 stale host?");
+    }
+
+    #[test]
+    fn test_purge_stale_pluralization_multiple_no_provider() {
+        let count = 7;
+        let msg = format!(
+            "  Remove {} stale host{}?",
+            count,
+            if count == 1 { "" } else { "s" },
+        );
+        assert_eq!(msg, "  Remove 7 stale hosts?");
+    }
+
+    #[test]
+    fn test_purge_stale_pluralization_with_provider() {
+        let display = "DigitalOcean";
+        let count = 3;
+        let msg = format!(
+            "  Remove {} stale {} host{}?",
+            count,
+            display,
+            if count == 1 { "" } else { "s" },
+        );
+        assert_eq!(msg, "  Remove 3 stale DigitalOcean hosts?");
+    }
+
+    #[test]
+    fn test_purge_stale_pluralization_single_with_provider() {
+        let display = "Vultr";
+        let msg = format!(
+            "  Remove {} stale {} host{}?",
+            1,
+            display,
+            if 1 == 1 { "" } else { "s" },
+        );
+        assert_eq!(msg, "  Remove 1 stale Vultr host?");
     }
 }

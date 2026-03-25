@@ -146,6 +146,14 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 confirm_dialog::render_confirm_import(frame, app, count)
             });
         }
+        Screen::ConfirmPurgeStale { aliases, provider } => {
+            let aliases = aliases.clone();
+            let provider = provider.clone();
+            host_list::render(frame, app);
+            render_overlay(app, |app| {
+                confirm_dialog::render_confirm_purge_stale(frame, app, &aliases, &provider)
+            });
+        }
         Screen::Welcome {
             has_backup,
             host_count,

@@ -1917,3 +1917,83 @@ Host *.compute.amazonaws.com *.compute.internal
 fn roundtrip_config_kubernetes() {
     assert_roundtrip(CONFIG_KUBERNETES);
 }
+
+// ============================================================================
+// CONFIG 41: Purple stale annotations mixed with other comments
+// Edge cases: stale timestamp comment interleaved with provider, meta, tags,
+//   askpass and regular SSH directives. Verifies round-trip fidelity of
+//   the stale annotation alongside every other purple comment type
+// ============================================================================
+
+const CONFIG_STALE_ANNOTATIONS: &str = "\
+# Cloud infrastructure hosts
+
+Host aws-web-01
+  HostName 54.23.100.12
+  User ec2-user
+  IdentityFile ~/.ssh/aws.pem
+  # purple:provider aws:i-0abc123def456
+  # purple:tags prod,us-east,web
+  # purple:provider_tags web-tier,auto-scaling
+  # purple:meta region=us-east-1,instance=t3.medium,os=al2023,status=running
+  # purple:askpass keychain
+  # purple:stale 1700000000
+  LocalForward 8080 localhost:80
+  ServerAliveInterval 60
+
+Host do-db-01
+  HostName 104.236.32.1
+  User root
+  Port 2222
+  # purple:provider digitalocean:12345678
+  # purple:tags staging,database
+  # purple:meta region=nyc3,size=s-2vcpu-4gb,image=ubuntu-22-04,status=active
+
+Host hetzner-cache
+  HostName 116.203.0.1
+  User deploy
+  # purple:provider hetzner:srv-789
+  # purple:provider_tags cache,eu-west
+  # purple:meta location=fsn1,type=cx21,image=debian-12,status=running
+  # purple:stale 1695000000
+  # purple:askpass op://Infra/hetzner-cache/password
+
+Host manual-bastion
+  HostName 10.0.0.1
+  User admin
+  # purple:tags bastion,internal
+  # purple:askpass pass:infra/bastion
+
+Host *
+  ServerAliveInterval 60
+  ServerAliveCountMax 3
+  AddKeysToAgent yes
+";
+
+#[test]
+fn roundtrip_config_stale_annotations() {
+    assert_roundtrip(CONFIG_STALE_ANNOTATIONS);
+
+    // Also verify stale is correctly parsed
+    let config = parse_str(CONFIG_STALE_ANNOTATIONS);
+    let entries = config.host_entries();
+
+    let aws = entries.iter().find(|e| e.alias == "aws-web-01").unwrap();
+    assert_eq!(aws.stale, Some(1700000000));
+    assert_eq!(aws.provider.as_deref(), Some("aws"));
+    assert_eq!(aws.askpass.as_deref(), Some("keychain"));
+    assert!(aws.tags.contains(&"prod".to_string()));
+
+    let hetzner = entries.iter().find(|e| e.alias == "hetzner-cache").unwrap();
+    assert_eq!(hetzner.stale, Some(1695000000));
+    assert_eq!(hetzner.provider.as_deref(), Some("hetzner"));
+
+    let db = entries.iter().find(|e| e.alias == "do-db-01").unwrap();
+    assert_eq!(db.stale, None);
+
+    let bastion = entries
+        .iter()
+        .find(|e| e.alias == "manual-bastion")
+        .unwrap();
+    assert_eq!(bastion.stale, None);
+}

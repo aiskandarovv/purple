@@ -3879,7 +3879,15 @@ fn sync_adds_host_to_empty_config() {
         "1.2.3.4".to_string(),
         vec!["prod".to_string()],
     )];
-    let result = sync_provider(&mut config, &provider, &remote, &section, false, false);
+    let result = sync_provider(
+        &mut config,
+        &provider,
+        &remote,
+        &section,
+        false,
+        false,
+        false,
+    );
     assert_eq!(result.added, 1);
 
     let output = config.serialize();
@@ -3914,7 +3922,15 @@ fn sync_preserves_existing_hosts() {
         "5.6.7.8".to_string(),
         Vec::new(),
     )];
-    sync_provider(&mut config, &provider, &remote, &section, false, false);
+    sync_provider(
+        &mut config,
+        &provider,
+        &remote,
+        &section,
+        false,
+        false,
+        false,
+    );
 
     let output = config.serialize();
     assert!(output.contains("Host manual-host"), "manual host preserved");
@@ -3941,7 +3957,15 @@ fn sync_updates_ip_preserves_formatting() {
         "9.8.7.6".to_string(),
         Vec::new(),
     )];
-    let result = sync_provider(&mut config, &provider, &remote, &section, false, false);
+    let result = sync_provider(
+        &mut config,
+        &provider,
+        &remote,
+        &section,
+        false,
+        false,
+        false,
+    );
     assert_eq!(result.updated, 1);
 
     let output = config.serialize();
@@ -3978,7 +4002,15 @@ Host do-db-1
         "1.2.3.4".to_string(),
         Vec::new(),
     )];
-    let result = sync_provider(&mut config, &provider, &remote, &section, true, false);
+    let result = sync_provider(
+        &mut config,
+        &provider,
+        &remote,
+        &section,
+        true,
+        false,
+        false,
+    );
     assert_eq!(result.removed, 1);
     assert_eq!(result.unchanged, 1);
 
@@ -4008,7 +4040,15 @@ Host do-web-1
         "1.2.3.4".to_string(),
         vec!["prod".to_string(), "us-east".to_string()],
     )];
-    let result = sync_provider(&mut config, &provider, &remote, &section, false, false);
+    let result = sync_provider(
+        &mut config,
+        &provider,
+        &remote,
+        &section,
+        false,
+        false,
+        false,
+    );
     assert_eq!(result.updated, 1); // new tag "us-east" added
 
     let output = config.serialize();
@@ -4038,7 +4078,15 @@ Host do-web-1
         "1.2.3.4".to_string(),
         vec!["staging".to_string()],
     )];
-    let result = sync_provider(&mut config, &provider, &remote, &section, false, false);
+    let result = sync_provider(
+        &mut config,
+        &provider,
+        &remote,
+        &section,
+        false,
+        false,
+        false,
+    );
     assert_eq!(result.updated, 1);
 
     let output = config.serialize();
@@ -4073,7 +4121,15 @@ Host do-old-name
         "1.2.3.4".to_string(),
         Vec::new(),
     )];
-    let result = sync_provider(&mut config, &provider, &remote, &section, false, false);
+    let result = sync_provider(
+        &mut config,
+        &provider,
+        &remote,
+        &section,
+        false,
+        false,
+        false,
+    );
     assert_eq!(result.renames.len(), 1);
     assert_eq!(
         result.renames[0],
@@ -4104,7 +4160,15 @@ fn sync_with_identity_file() {
         "1.2.3.4".to_string(),
         Vec::new(),
     )];
-    sync_provider(&mut config, &provider, &remote, &section, false, false);
+    sync_provider(
+        &mut config,
+        &provider,
+        &remote,
+        &section,
+        false,
+        false,
+        false,
+    );
 
     let output = config.serialize();
     assert!(
@@ -4140,6 +4204,7 @@ fn sync_two_providers_coexist() {
         &do_section,
         false,
         false,
+        false,
     );
 
     let hz_remote = vec![ProviderHost::new(
@@ -4153,6 +4218,7 @@ fn sync_two_providers_coexist() {
         &hetzner_provider,
         &hz_remote,
         &hetzner_section,
+        false,
         false,
         false,
     );
@@ -4170,7 +4236,15 @@ fn sync_two_providers_coexist() {
     );
 
     // Remove DO hosts, Hetzner should survive
-    let result = sync_provider(&mut config, &do_provider, &[], &do_section, true, false);
+    let result = sync_provider(
+        &mut config,
+        &do_provider,
+        &[],
+        &do_section,
+        true,
+        false,
+        false,
+    );
     assert_eq!(result.removed, 1);
     let output = config.serialize();
     assert!(!output.contains("Host do-do-web"), "DO host removed");
@@ -4198,7 +4272,15 @@ Host do-web-1
         "".to_string(),
         Vec::new(),
     )];
-    let result = sync_provider(&mut config, &provider, &remote, &section, true, false);
+    let result = sync_provider(
+        &mut config,
+        &provider,
+        &remote,
+        &section,
+        true,
+        false,
+        false,
+    );
     assert_eq!(result.removed, 0, "should not remove stopped VMs");
     assert_eq!(result.unchanged, 1);
 
@@ -4230,7 +4312,15 @@ Host do-web-1
         "9.8.7.6".to_string(),
         Vec::new(),
     )];
-    sync_provider(&mut config, &provider, &remote, &section, false, false);
+    sync_provider(
+        &mut config,
+        &provider,
+        &remote,
+        &section,
+        false,
+        false,
+        false,
+    );
 
     let output = config.serialize();
     assert!(
@@ -4264,7 +4354,15 @@ Host do-web-1
         "9.8.7.6".to_string(),
         Vec::new(),
     )];
-    sync_provider(&mut config, &provider, &remote, &section, false, false);
+    sync_provider(
+        &mut config,
+        &provider,
+        &remote,
+        &section,
+        false,
+        false,
+        false,
+    );
 
     let output = config.serialize();
     assert!(
@@ -4289,7 +4387,15 @@ fn sync_alias_dedup_in_serialized_output() {
         "1.2.3.4".to_string(),
         Vec::new(),
     )];
-    sync_provider(&mut config, &provider, &remote, &section, false, false);
+    sync_provider(
+        &mut config,
+        &provider,
+        &remote,
+        &section,
+        false,
+        false,
+        false,
+    );
 
     let output = config.serialize();
     assert!(output.contains("Host do-web\n"), "manual host preserved");
@@ -4313,7 +4419,15 @@ fn sync_group_header_in_output() {
         "1.2.3.4".to_string(),
         Vec::new(),
     )];
-    sync_provider(&mut config, &provider, &remote, &section, false, false);
+    sync_provider(
+        &mut config,
+        &provider,
+        &remote,
+        &section,
+        false,
+        false,
+        false,
+    );
 
     let output = config.serialize();
     assert!(
@@ -4336,12 +4450,20 @@ fn sync_group_header_removed_after_all_deleted() {
         "1.2.3.4".to_string(),
         Vec::new(),
     )];
-    sync_provider(&mut config, &provider, &remote, &section, false, false);
+    sync_provider(
+        &mut config,
+        &provider,
+        &remote,
+        &section,
+        false,
+        false,
+        false,
+    );
     let output = config.serialize();
     assert!(output.contains("# purple:group DigitalOcean"));
 
     // Remove all
-    sync_provider(&mut config, &provider, &[], &section, true, false);
+    sync_provider(&mut config, &provider, &[], &section, true, false, false);
     let output = config.serialize();
     assert!(
         !output.contains("# purple:group DigitalOcean"),
@@ -4363,7 +4485,15 @@ fn sync_multiple_tags_serialized_comma_separated() {
         "1.2.3.4".to_string(),
         vec!["prod".to_string(), "us-east".to_string(), "web".to_string()],
     )];
-    sync_provider(&mut config, &provider, &remote, &section, false, false);
+    sync_provider(
+        &mut config,
+        &provider,
+        &remote,
+        &section,
+        false,
+        false,
+        false,
+    );
 
     let output = config.serialize();
     assert!(
@@ -4393,7 +4523,15 @@ Host do-web-1
         "1.2.3.4".to_string(),
         Vec::new(),
     )];
-    sync_provider(&mut config, &provider, &remote, &section, false, false);
+    sync_provider(
+        &mut config,
+        &provider,
+        &remote,
+        &section,
+        false,
+        false,
+        false,
+    );
 
     let output = config.serialize();
     assert!(output.contains("Host ocean-web-1"), "alias uses new prefix");
@@ -4422,7 +4560,15 @@ Host do-web-1
         "9.8.7.6".to_string(),
         Vec::new(),
     )];
-    sync_provider(&mut config, &provider, &remote, &section, false, false);
+    sync_provider(
+        &mut config,
+        &provider,
+        &remote,
+        &section,
+        false,
+        false,
+        false,
+    );
 
     let output = config.serialize();
     assert!(output.contains("HostName 9.8.7.6"), "IP updated");
@@ -4452,7 +4598,15 @@ fn sync_dry_run_serialized_unchanged() {
         "9.9.9.9".to_string(),
         Vec::new(),
     )];
-    let result = sync_provider(&mut config, &provider, &remote, &section, false, true);
+    let result = sync_provider(
+        &mut config,
+        &provider,
+        &remote,
+        &section,
+        false,
+        false,
+        true,
+    );
     assert_eq!(result.updated, 1);
 
     let output = config.serialize();
@@ -4481,7 +4635,15 @@ fn sync_large_batch_serialized() {
             )
         })
         .collect();
-    let result = sync_provider(&mut config, &provider, &remote, &section, false, false);
+    let result = sync_provider(
+        &mut config,
+        &provider,
+        &remote,
+        &section,
+        false,
+        false,
+        false,
+    );
     assert_eq!(result.added, 20);
 
     let output = config.serialize();
@@ -4558,7 +4720,15 @@ fn sync_adds_metadata_to_config() {
             ("plan".to_string(), "s-1vcpu-1gb".to_string()),
         ],
     }];
-    sync_provider(&mut config, &provider, &remote, &section, false, false);
+    sync_provider(
+        &mut config,
+        &provider,
+        &remote,
+        &section,
+        false,
+        false,
+        false,
+    );
     let output = config.serialize();
     assert!(
         output.contains("# purple:meta region=nyc3,plan=s-1vcpu-1gb"),
@@ -4603,7 +4773,15 @@ fn sync_gcp_adds_host_with_metadata_and_tags() {
             ("status".to_string(), "RUNNING".to_string()),
         ],
     }];
-    let result = sync_provider(&mut config, &provider, &remote, &section, false, false);
+    let result = sync_provider(
+        &mut config,
+        &provider,
+        &remote,
+        &section,
+        false,
+        false,
+        false,
+    );
     assert_eq!(result.added, 1);
 
     let output = config.serialize();
@@ -4663,7 +4841,15 @@ Host gcp-web-1
             ("machine".to_string(), "e2-micro".to_string()),
         ],
     }];
-    let result = sync_provider(&mut config, &provider, &remote, &section, false, false);
+    let result = sync_provider(
+        &mut config,
+        &provider,
+        &remote,
+        &section,
+        false,
+        false,
+        false,
+    );
     assert_eq!(result.updated, 1);
 
     let output = config.serialize();
@@ -4800,7 +4986,15 @@ Host gamma
             Vec::new(),
         ),
     ];
-    sync_provider(&mut config, &provider, &remote, &section, false, false);
+    sync_provider(
+        &mut config,
+        &provider,
+        &remote,
+        &section,
+        false,
+        false,
+        false,
+    );
 
     // Verify manual hosts retain exactly their original directives
     assert_host_directives(
@@ -4913,7 +5107,7 @@ Host gamma
     };
 
     // Sync with empty remote list and --remove to remove the provider host
-    sync_provider(&mut config, &provider, &[], &section, true, false);
+    sync_provider(&mut config, &provider, &[], &section, true, false, false);
 
     assert_host_directives(
         &config,
@@ -5023,7 +5217,15 @@ Host do-worker-1
             vec!["cache".to_string()],
         ),
     ];
-    let result = sync_provider(&mut config, &provider, &remote, &section, true, false);
+    let result = sync_provider(
+        &mut config,
+        &provider,
+        &remote,
+        &section,
+        true,
+        false,
+        false,
+    );
     assert_eq!(result.added, 2, "should add cache-1 and cache-2");
     assert_eq!(
         result.updated, 2,
@@ -5165,7 +5367,15 @@ Host db-primary
             Vec::new(),
         ),
     ];
-    sync_provider(&mut config, &provider, &remote, &section, false, false);
+    sync_provider(
+        &mut config,
+        &provider,
+        &remote,
+        &section,
+        false,
+        false,
+        false,
+    );
 
     let entries = config.host_entries();
 
@@ -5328,7 +5538,15 @@ Host manual-db
     ];
 
     // --- First sync: adds 2 provider hosts ---
-    let result1 = sync_provider(&mut config, &provider, &remote, &section, false, false);
+    let result1 = sync_provider(
+        &mut config,
+        &provider,
+        &remote,
+        &section,
+        false,
+        false,
+        false,
+    );
     assert_eq!(result1.added, 2, "first sync should add 2 hosts");
     assert_eq!(result1.removed, 0);
     assert_eq!(result1.updated, 0);
@@ -5342,7 +5560,15 @@ Host manual-db
     let output_after_first_sync = config.serialize();
 
     // --- Second sync: same remote hosts, no changes ---
-    let result2 = sync_provider(&mut config, &provider, &remote, &section, false, false);
+    let result2 = sync_provider(
+        &mut config,
+        &provider,
+        &remote,
+        &section,
+        false,
+        false,
+        false,
+    );
     assert_eq!(result2.added, 0, "second sync should add 0 hosts");
     assert_eq!(result2.removed, 0, "second sync should remove 0 hosts");
     assert_eq!(
@@ -5500,7 +5726,15 @@ Host do-web-1
         "9.8.7.6".to_string(),
         Vec::new(),
     )];
-    sync_provider(&mut config, &provider, &remote, &section, false, false);
+    sync_provider(
+        &mut config,
+        &provider,
+        &remote,
+        &section,
+        false,
+        false,
+        false,
+    );
     let output = config.serialize();
     assert!(
         output.contains("HostName 9.8.7.6 # nyc3 region"),
@@ -10508,4 +10742,87 @@ Match host 10.10.*
     // Verify find_hosts_by_provider
     let do_hosts = config.find_hosts_by_provider("digitalocean");
     assert_eq!(do_hosts.len(), 2);
+}
+
+// =========================================================================
+// Stale annotation round-trip
+// =========================================================================
+
+#[test]
+fn sync_stale_roundtrip() {
+    // 1. Sync-add a host with metadata
+    let mut config = parse_str("");
+    let section = test_section("digitalocean", "do");
+    let provider = TestProvider {
+        name: "digitalocean",
+        label: "do",
+    };
+    let remote = vec![ProviderHost {
+        server_id: "999".to_string(),
+        name: "stale-test".to_string(),
+        ip: "10.0.0.99".to_string(),
+        tags: vec!["prod".to_string()],
+        metadata: vec![
+            ("region".to_string(), "ams3".to_string()),
+            ("status".to_string(), "active".to_string()),
+        ],
+    }];
+    sync_provider(
+        &mut config,
+        &provider,
+        &remote,
+        &section,
+        false,
+        false,
+        false,
+    );
+    assert_eq!(config.host_entries().len(), 1);
+
+    // 2. Mark stale (simulates host disappearing from provider)
+    config.set_host_stale("do-stale-test", 1700000000);
+    let entries = config.host_entries();
+    assert_eq!(entries[0].stale, Some(1700000000));
+
+    // 3. Serialize -> reparse -> verify stale + all annotations survive
+    let output = config.serialize();
+    assert!(
+        output.contains("# purple:stale 1700000000"),
+        "stale comment must appear in serialized output"
+    );
+
+    let config2 = parse_str(&output);
+    let entries2 = config2.host_entries();
+    assert_eq!(entries2.len(), 1);
+    let e = &entries2[0];
+    assert_eq!(e.alias, "do-stale-test");
+    assert_eq!(e.stale, Some(1700000000));
+    assert_eq!(e.provider.as_deref(), Some("digitalocean"));
+    assert!(e.tags.is_empty(), "user tags should be empty");
+    assert!(
+        e.provider_tags.contains(&"prod".to_string()),
+        "provider tags preserved"
+    );
+    assert!(
+        e.provider_meta
+            .iter()
+            .any(|(k, v)| k == "region" && v == "ams3"),
+        "metadata preserved"
+    );
+
+    // 4. Second round-trip must be idempotent
+    let output2 = config2.serialize();
+    assert_eq_visible(&output, &output2);
+
+    // 5. Clear stale, verify it disappears on round-trip
+    let mut config3 = config2;
+    config3.clear_host_stale("do-stale-test");
+    let output3 = config3.serialize();
+    assert!(
+        !output3.contains("purple:stale"),
+        "stale comment must be gone after clear"
+    );
+    let config4 = parse_str(&output3);
+    assert_eq!(config4.host_entries()[0].stale, None);
+    let output4 = config4.serialize();
+    assert_eq_visible(&output3, &output4);
 }

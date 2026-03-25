@@ -1,3 +1,24 @@
+## 2.11.0
+
+- Soft-delete for disappeared provider hosts
+- Hosts that vanish from cloud sync are marked stale instead of silently kept or hard-deleted. Stale hosts appear dimmed in the host list and sort to the bottom
+- Purge stale hosts with X. Confirmation dialog shows host names (up to 6) before deletion
+- Per-provider purge from the provider list (X key scoped to the selected provider)
+- Provider list shows per-provider stale count in red with X key hint in footer
+- Detail panel shows "Stale" field with relative timestamp in red
+- Virtual "stale" tag for filtering (tag:stale fuzzy, tag=stale exact, appears in tag picker)
+- Stale connection warning on Enter, edit, delete, clone, tunnels, snippets and file browser
+- Editing a stale host clears the stale marker on save
+- Stale hosts automatically un-stale when they reappear in the next provider sync (including stopped VMs with empty IP)
+- Partial sync failures suppress stale marking to prevent false positives
+- Active tunnels cleaned up on purge (after successful config write)
+- CLI: `purple sync` prints "Marked N stale." per provider
+- Footer separators between every action (consistency fix across all screens)
+- Delete confirmation dialog widened to 52 columns (consistent with other dialogs)
+- Detail panel route visualization uses display width instead of byte length for Unicode correctness
+- Fix missing blank line when adding a provider host before another provider's group header
+- 143 new tests covering stale marking, clearing, purge, sort, filter, config integrity and round-trip fidelity (4111 total)
+
 ## 2.10.1
 
 - Sparkline now shows your full connection history

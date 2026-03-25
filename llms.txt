@@ -115,6 +115,8 @@ Provider-specific details:
 
 Per-provider auto_sync toggle controls startup sync. Default is true for all providers except Proxmox (default false). Manual sync via the TUI (s key) or CLI always works. Preview changes with --dry-run. Remove deleted hosts with --remove.
 
+Soft-delete for disappeared hosts: when a provider sync no longer returns a host, it is marked stale with a # purple:stale timestamp comment instead of being silently kept or hard-deleted. Stale hosts appear dimmed in the host list and sort to the bottom. Purge stale hosts with X (shows host names in the confirmation dialog). Per-provider purge from the provider list. Stale hosts automatically clear when they reappear in the next sync. Partial sync failures suppress stale marking to prevent false positives. Editing a stale host clears the stale marker on save. Virtual "stale" tag for filtering (tag:stale fuzzy, tag=stale exact).
+
 ## Password management
 
 purple can retrieve SSH passwords automatically on connect. Set a password source per host via the TUI form or a global default in ~/.purple/preferences. purple acts as its own SSH_ASKPASS program.
@@ -157,7 +159,7 @@ Consecutive blank lines are collapsed to one. Hosts from Include files are displ
 - Language: Rust
 - Platforms: macOS and Linux
 - Binary name: purple (crate name: purple-ssh)
-- Tests: 3900+ (unit + integration + mockito HTTP)
+- Tests: 4100+ (unit + integration + mockito HTTP)
 - No async runtime. Single binary, no daemon
 - Atomic writes via temp file + chmod 600 + rename
 - Uses system ssh binary with -F <config_path>

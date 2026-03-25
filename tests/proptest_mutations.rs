@@ -70,6 +70,7 @@ fn assert_no_directive_leak(config: &SshConfigFile) {
             "Tunnel count mismatch for '{}'",
             a.alias
         );
+        assert_eq!(a.stale, b.stale, "Stale mismatch for '{}'", a.alias);
     }
 }
 
@@ -182,6 +183,10 @@ enum Action {
         key: String,
         value: String,
     },
+    SetStale {
+        timestamp: u64,
+    },
+    ClearStale,
     RepairGroupComments,
     RemoveOrphanedHeaders,
 }
@@ -233,6 +238,10 @@ fn action_strategy() -> impl Strategy<Value = Action> {
         forward_strategy().prop_map(|(key, value)| Action::AddForward { key, value }),
         // RemoveForward
         forward_strategy().prop_map(|(key, value)| Action::RemoveForward { key, value }),
+        // SetStale
+        (1_600_000_000u64..=1_900_000_000).prop_map(|ts| Action::SetStale { timestamp: ts }),
+        // ClearStale
+        Just(Action::ClearStale),
         // Repair
         Just(Action::RepairGroupComments),
         Just(Action::RemoveOrphanedHeaders),
@@ -317,6 +326,16 @@ fn apply_action(config: &mut SshConfigFile, action: &Action) {
                 config.remove_forward(alias, key, value);
             }
         }
+        Action::SetStale { timestamp } => {
+            if let Some(alias) = &first_alias {
+                config.set_host_stale(alias, *timestamp);
+            }
+        }
+        Action::ClearStale => {
+            if let Some(alias) = &first_alias {
+                config.clear_host_stale(alias);
+            }
+        }
         Action::RepairGroupComments => {
             config.repair_absorbed_group_comments();
         }
@@ -377,6 +396,7 @@ Host gamma
   User root
   RemoteForward 9090 localhost:9090
   # purple:provider hetzner:srv-456
+  # purple:stale 1700000000
   # purple:askpass op://Servers/gamma/password
 
 Host *
@@ -439,6 +459,17 @@ proptest! {
         // 4. Set meta
         config.set_host_meta(&alias, &meta);
         assert_idempotent(&config);
+
+        // 4b. Set stale, verify, clear, verify
+        config.set_host_stale(&alias, 1700000000);
+        assert_idempotent(&config);
+        let entry = config.host_entries().into_iter().find(|e| e.alias == alias).unwrap();
+        prop_assert!(entry.stale.is_some(), "stale should be Some after set");
+
+        config.clear_host_stale(&alias);
+        assert_idempotent(&config);
+        let entry = config.host_entries().into_iter().find(|e| e.alias == alias).unwrap();
+        prop_assert!(entry.stale.is_none(), "stale should be None after clear");
 
         // 5. Set askpass
         config.set_host_askpass(&alias, &askpass);
@@ -666,8 +697,13 @@ Host target
             config.set_host_tags("target", &tag_sets[i]);
             config.set_host_askpass("target", &askpass_values[i]);
             config.set_host_meta("target", &meta_sets[i]);
+            config.set_host_stale("target", i as u64);
             assert_idempotent(&config);
         }
+
+        // Clear stale after the loop
+        config.clear_host_stale("target");
+        assert_idempotent(&config);
 
         // Verify final state
         let entries = config.host_entries();

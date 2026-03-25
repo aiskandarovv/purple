@@ -621,7 +621,7 @@ fn run_tui(mut app: App) -> Result<()> {
                     .unwrap_or_default()
                     .as_secs();
                 let display_name = providers::provider_display_name(&provider);
-                let (_msg, is_err, total) = app.apply_sync_result(&provider, hosts);
+                let (_msg, is_err, total) = app.apply_sync_result(&provider, hosts, false);
                 if is_err {
                     app.sync_history.insert(
                         provider.clone(),
@@ -658,7 +658,7 @@ fn run_tui(mut app: App) -> Result<()> {
                     .unwrap_or_default()
                     .as_secs();
                 let display_name = providers::provider_display_name(provider.as_str());
-                let (msg, is_err, synced) = app.apply_sync_result(&provider, hosts);
+                let (msg, is_err, synced) = app.apply_sync_result(&provider, hosts, true);
                 if is_err {
                     app.sync_history.insert(
                         provider.clone(),
@@ -1266,6 +1266,7 @@ fn handle_sync(
             &hosts,
             section,
             effective_remove,
+            suppress_remove, // suppress stale marking when partial failures occurred
             dry_run,
         );
         let prefix = if dry_run { "  Would have: " } else { "  " };
@@ -1276,7 +1277,10 @@ fn handle_sync(
         if result.removed > 0 {
             println!("  Removed {}.", result.removed);
         }
-        if result.added > 0 || result.updated > 0 || result.removed > 0 {
+        if result.stale > 0 {
+            println!("  Marked {} stale.", result.stale);
+        }
+        if result.added > 0 || result.updated > 0 || result.removed > 0 || result.stale > 0 {
             any_changes = true;
         }
     }
