@@ -58,7 +58,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             host_list::render(frame, app);
             render_overlay(app, |app| confirm_dialog::render(frame, app, &alias));
         }
-        Screen::Help => {
+        Screen::Help { .. } => {
             host_list::render(frame, app);
             render_overlay(app, |app| help::render(frame, app));
         }

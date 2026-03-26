@@ -2513,7 +2513,7 @@ mod tests {
         );
         let (tx, _rx) = std::sync::mpsc::channel();
         let _ = crate::handler::handle_key_event(&mut app, key, &tx);
-        assert!(matches!(app.screen, app::Screen::Help));
+        assert!(matches!(app.screen, app::Screen::Help { .. }));
     }
 
     #[test]

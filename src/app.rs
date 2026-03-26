@@ -114,7 +114,9 @@ pub enum Screen {
     ConfirmDelete {
         alias: String,
     },
-    Help,
+    Help {
+        return_screen: Box<Screen>,
+    },
     KeyList,
     KeyDetail {
         index: usize,

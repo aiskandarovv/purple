@@ -96,7 +96,7 @@ pub fn handle_key_event(
         }
         Screen::AddHost | Screen::EditHost { .. } => handle_form(app, key),
         Screen::ConfirmDelete { .. } => handle_confirm_delete(app, key),
-        Screen::Help => handle_help(app, key),
+        Screen::Help { .. } => handle_help(app, key),
         Screen::KeyList => handle_key_list(app, key),
         Screen::KeyDetail { .. } => handle_key_detail(app, key),
         Screen::HostDetail { .. } => handle_host_detail(app, key),
@@ -148,7 +148,9 @@ pub fn handle_key_event(
         } => {
             let known_hosts_count = *known_hosts_count;
             if key.code == KeyCode::Char('?') {
-                app.screen = Screen::Help;
+                app.screen = Screen::Help {
+                    return_screen: Box::new(Screen::HostList),
+                };
             } else if key.code == KeyCode::Char('I') && known_hosts_count > 0 {
                 app.screen = Screen::HostList;
                 execute_known_hosts_import(app);
@@ -812,7 +814,9 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
             }
         }
         KeyCode::Char('?') => {
-            app.screen = Screen::Help;
+            app.screen = Screen::Help {
+                return_screen: Box::new(Screen::HostList),
+            };
         }
         _ => {}
     }
@@ -1216,7 +1220,11 @@ fn handle_help(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => {
             app.ui.help_scroll = 0;
-            app.screen = Screen::HostList;
+            let return_screen = match std::mem::replace(&mut app.screen, Screen::HostList) {
+                Screen::Help { return_screen } => *return_screen,
+                _ => Screen::HostList,
+            };
+            app.screen = return_screen;
         }
         KeyCode::Char('j') | KeyCode::Down => {
             app.ui.help_scroll = app.ui.help_scroll.saturating_add(1);
