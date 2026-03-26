@@ -1115,7 +1115,7 @@ fn render_search_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) 
 fn footer_spans(
     detail_active: bool,
     multi_count: usize,
-    group_by_provider: bool,
+    _group_by_provider: bool,
     stale_count: usize,
 ) -> Vec<Span<'static>> {
     let view_label = if detail_active {
@@ -1142,11 +1142,26 @@ fn footer_spans(
         Span::styled("d", theme::accent_bold()),
         Span::styled(" del ", theme::muted()),
         Span::styled("\u{2502} ", theme::muted()),
+        Span::styled("r", theme::accent_bold()),
+        Span::styled(" run ", theme::muted()),
+        Span::styled("\u{2502} ", theme::muted()),
+        Span::styled("f", theme::accent_bold()),
+        Span::styled(" files ", theme::muted()),
+        Span::styled("\u{2502} ", theme::muted()),
+        Span::styled("T", theme::accent_bold()),
+        Span::styled(" tunnels ", theme::muted()),
+        Span::styled("\u{2502} ", theme::muted()),
+        Span::styled("C", theme::accent_bold()),
+        Span::styled(" containers ", theme::muted()),
+        Span::styled("\u{2502} ", theme::muted()),
+        Span::styled("S", theme::accent_bold()),
+        Span::styled(" sync ", theme::muted()),
+        Span::styled("\u{2502} ", theme::muted()),
         Span::styled("v", theme::accent_bold()),
         Span::styled(view_label, theme::muted()),
         Span::styled("\u{2502} ", theme::muted()),
         Span::styled("?", theme::accent_bold()),
-        Span::styled(" help ", theme::muted()),
+        Span::styled(" more ", theme::muted()),
     ];
     if multi_count > 0 {
         spans.push(Span::styled("\u{2502} ", theme::muted()));
@@ -1154,12 +1169,6 @@ fn footer_spans(
             format!("{} selected ", multi_count),
             theme::accent_bold(),
         ));
-        spans.push(Span::styled("r", theme::accent_bold()));
-        spans.push(Span::styled(" run ", theme::muted()));
-    }
-    if group_by_provider {
-        spans.push(Span::styled("\u{2502} ", theme::muted()));
-        spans.push(Span::styled("grouped ", theme::muted()));
     }
     if stale_count > 0 {
         spans.push(Span::styled("\u{2502} ", theme::muted()));
@@ -1403,12 +1412,13 @@ mod tests {
     }
 
     #[test]
-    fn test_footer_spans_with_grouping() {
+    fn test_footer_spans_with_grouping_no_indicator() {
+        // "grouped" indicator was removed (redundant with status bar)
         let spans = footer_spans(false, 0, true, 0);
         let text: String = spans.iter().map(|s| s.content.to_string()).collect();
         assert!(
-            text.contains("grouped"),
-            "Footer should contain 'grouped' when group_by_provider=true, got: {}",
+            !text.contains("grouped"),
+            "Footer should NOT contain 'grouped' indicator, got: {}",
             text
         );
     }

@@ -1,4 +1,5 @@
 // Library re-exports for integration tests.
+pub mod containers;
 pub mod file_browser;
 pub mod fs_util;
 pub mod providers;

@@ -135,6 +135,7 @@ fn middle_column() -> Vec<Line<'static>> {
         help_line(" r         ", "run snippet on host(s)"),
         help_line(" R         ", "run on all visible"),
         help_line(" f         ", "remote file explorer"),
+        help_line(" C         ", "containers"),
         help_line(" T         ", "tunnels for host"),
         help_line(" S         ", "cloud providers"),
         help_line(" I         ", "import known_hosts"),

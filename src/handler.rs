@@ -142,6 +142,7 @@ pub fn handle_key_event(
             }
         }
         Screen::FileBrowser { .. } => handle_file_browser(app, key, events_tx),
+        Screen::Containers { .. } => handle_containers(app, key, events_tx)?,
         Screen::Welcome {
             known_hosts_count, ..
         } => {
@@ -755,6 +756,59 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
                         fb_send(tx),
                     );
                 });
+            }
+        }
+        KeyCode::Char('C') => {
+            if let Some(host) = app.selected_host() {
+                let stale_hint = if host.stale.is_some() {
+                    Some(stale_provider_hint(host))
+                } else {
+                    None
+                };
+                let alias = host.alias.clone();
+                let askpass = host.askpass.clone();
+                if let Some(hint) = stale_hint {
+                    app.set_status(format!("Stale host.{}", hint), true);
+                }
+                let (cached_runtime, cached_containers) =
+                    if let Some(entry) = app.container_cache.get(&alias) {
+                        (Some(entry.runtime), entry.containers.clone())
+                    } else {
+                        (None, Vec::new())
+                    };
+                let mut list_state = ratatui::widgets::ListState::default();
+                if !cached_containers.is_empty() {
+                    list_state.select(Some(0));
+                }
+                app.container_state = Some(crate::app::ContainerState {
+                    alias: alias.clone(),
+                    askpass: askpass.clone(),
+                    runtime: cached_runtime,
+                    containers: cached_containers,
+                    list_state,
+                    loading: true,
+                    error: None,
+                    action_in_progress: None,
+                    confirm_action: None,
+                });
+                app.screen = Screen::Containers {
+                    alias: alias.clone(),
+                };
+                let has_tunnel = app.active_tunnels.contains_key(&alias);
+                let config_path = app.reload.config_path.clone();
+                let bw = app.bw_session.clone();
+                let tx = events_tx.clone();
+                crate::containers::spawn_container_listing(
+                    alias,
+                    config_path,
+                    askpass,
+                    bw,
+                    has_tunnel,
+                    cached_runtime,
+                    move |a, result| {
+                        let _ = tx.send(AppEvent::ContainerListing { alias: a, result });
+                    },
+                );
             }
         }
         KeyCode::Char('?') => {
@@ -3273,6 +3327,202 @@ fn fb_send(
             entries,
         });
     }
+}
+
+fn handle_containers(
+    app: &mut App,
+    key: KeyEvent,
+    events_tx: &mpsc::Sender<AppEvent>,
+) -> Result<()> {
+    // Block all keys except y/Y and Esc/q when a confirmation is pending
+    if let Some(ref state) = app.container_state {
+        if state.confirm_action.is_some() {
+            match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Esc | KeyCode::Char('q') => {}
+                _ => return Ok(()),
+            }
+        }
+    }
+
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => {
+            if let Some(ref mut state) = app.container_state {
+                if state.confirm_action.is_some() {
+                    // Cancel pending confirmation, stay in overlay
+                    state.confirm_action = None;
+                    return Ok(());
+                }
+            }
+            app.container_state = None;
+            app.screen = Screen::HostList;
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            if let Some(ref mut state) = app.container_state {
+                let len = state.containers.len();
+                if len > 0 {
+                    let i = state.list_state.selected().unwrap_or(0);
+                    state
+                        .list_state
+                        .select(Some(if i == 0 { len - 1 } else { i - 1 }));
+                }
+            }
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if let Some(ref mut state) = app.container_state {
+                let len = state.containers.len();
+                if len > 0 {
+                    let i = state.list_state.selected().unwrap_or(0);
+                    state
+                        .list_state
+                        .select(Some(if i + 1 >= len { 0 } else { i + 1 }));
+                }
+            }
+        }
+        KeyCode::PageDown => {
+            if let Some(ref mut state) = app.container_state {
+                let len = state.containers.len();
+                if len > 0 {
+                    let i = state.list_state.selected().unwrap_or(0);
+                    state.list_state.select(Some((i + 10).min(len - 1)));
+                }
+            }
+        }
+        KeyCode::PageUp => {
+            if let Some(ref mut state) = app.container_state {
+                let len = state.containers.len();
+                if len > 0 {
+                    let i = state.list_state.selected().unwrap_or(0);
+                    state.list_state.select(Some(i.saturating_sub(10)));
+                }
+            }
+        }
+        KeyCode::Char('s') => {
+            container_action(app, events_tx, crate::containers::ContainerAction::Start);
+        }
+        KeyCode::Char('x') => {
+            // Stop requires confirmation
+            if let Some(ref mut state) = app.container_state {
+                if state.action_in_progress.is_some() || state.confirm_action.is_some() {
+                    return Ok(());
+                }
+                if let Some(idx) = state.list_state.selected() {
+                    if let Some(container) = state.containers.get(idx) {
+                        state.confirm_action = Some((
+                            crate::containers::ContainerAction::Stop,
+                            container.names.clone(),
+                            container.id.clone(),
+                        ));
+                    }
+                }
+            }
+        }
+        KeyCode::Char('r') => {
+            // Restart requires confirmation
+            if let Some(ref mut state) = app.container_state {
+                if state.action_in_progress.is_some() || state.confirm_action.is_some() {
+                    return Ok(());
+                }
+                if let Some(idx) = state.list_state.selected() {
+                    if let Some(container) = state.containers.get(idx) {
+                        state.confirm_action = Some((
+                            crate::containers::ContainerAction::Restart,
+                            container.names.clone(),
+                            container.id.clone(),
+                        ));
+                    }
+                }
+            }
+        }
+        KeyCode::Char('y') | KeyCode::Char('Y') => {
+            // Confirm pending action
+            if let Some(ref mut state) = app.container_state {
+                if let Some((action, _name, _id)) = state.confirm_action.take() {
+                    container_action(app, events_tx, action);
+                }
+            }
+        }
+        KeyCode::Char('R') => {
+            // Refresh container list
+            if let Some(ref mut state) = app.container_state {
+                if state.action_in_progress.is_some() {
+                    return Ok(());
+                }
+                state.loading = true;
+                state.error = None;
+                let alias = state.alias.clone();
+                let askpass = state.askpass.clone();
+                let has_tunnel = app.active_tunnels.contains_key(&alias);
+                let cached_runtime = state.runtime;
+                let config_path = app.reload.config_path.clone();
+                let bw = app.bw_session.clone();
+                let tx = events_tx.clone();
+                crate::containers::spawn_container_listing(
+                    alias,
+                    config_path,
+                    askpass,
+                    bw,
+                    has_tunnel,
+                    cached_runtime,
+                    move |a, result| {
+                        let _ = tx.send(AppEvent::ContainerListing { alias: a, result });
+                    },
+                );
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn container_action(
+    app: &mut App,
+    events_tx: &mpsc::Sender<AppEvent>,
+    action: crate::containers::ContainerAction,
+) {
+    let Some(ref mut state) = app.container_state else {
+        return;
+    };
+    if state.action_in_progress.is_some() {
+        return;
+    }
+    let Some(idx) = state.list_state.selected() else {
+        return;
+    };
+    let Some(container) = state.containers.get(idx) else {
+        return;
+    };
+    if crate::containers::validate_container_id(&container.id).is_err() {
+        return;
+    }
+    let Some(runtime) = state.runtime else {
+        return;
+    };
+    let container_id = container.id.clone();
+    let container_name = container.names.clone();
+    state.action_in_progress = Some(format!("{} {}...", action.as_str(), container_name));
+    let alias = state.alias.clone();
+    let askpass = state.askpass.clone();
+    let has_tunnel = app.active_tunnels.contains_key(&alias);
+    let config_path = app.reload.config_path.clone();
+    let bw = app.bw_session.clone();
+    let tx = events_tx.clone();
+    crate::containers::spawn_container_action(
+        alias,
+        config_path,
+        runtime,
+        action,
+        container_id,
+        askpass,
+        bw,
+        has_tunnel,
+        move |a, act, result| {
+            let _ = tx.send(AppEvent::ContainerActionComplete {
+                alias: a,
+                action: act,
+                result,
+            });
+        },
+    );
 }
 
 fn handle_file_browser(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEvent>) {
@@ -7590,5 +7840,598 @@ Host gamma
         // Host should still exist (purge was cancelled)
         assert_eq!(app.hosts.len(), 1);
         assert_eq!(app.hosts[0].alias, "do-web");
+    }
+
+    // =========================================================================
+    // Container handler tests
+    // =========================================================================
+
+    fn make_container_state(
+        alias: &str,
+        containers: Vec<crate::containers::ContainerInfo>,
+    ) -> crate::app::ContainerState {
+        let mut list_state = ratatui::widgets::ListState::default();
+        if !containers.is_empty() {
+            list_state.select(Some(0));
+        }
+        crate::app::ContainerState {
+            alias: alias.to_string(),
+            askpass: None,
+            runtime: Some(crate::containers::ContainerRuntime::Docker),
+            containers,
+            list_state,
+            loading: false,
+            error: None,
+            action_in_progress: None,
+            confirm_action: None,
+        }
+    }
+
+    fn make_container(id: &str, name: &str, state: &str) -> crate::containers::ContainerInfo {
+        crate::containers::ContainerInfo {
+            id: id.to_string(),
+            names: name.to_string(),
+            image: "test:latest".to_string(),
+            state: state.to_string(),
+            status: "Up".to_string(),
+            ports: "".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_shift_c_opens_containers() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('C')), &tx);
+        assert!(
+            matches!(app.screen, Screen::Containers { .. }),
+            "expected Containers screen, got: {:?}",
+            app.screen
+        );
+        assert!(
+            app.container_state.is_some(),
+            "container_state should be Some after Shift+C"
+        );
+    }
+
+    #[test]
+    fn test_shift_c_no_host_noop() {
+        let mut app = make_app("");
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('C')), &tx);
+        assert!(
+            matches!(app.screen, Screen::HostList),
+            "expected HostList when no hosts, got: {:?}",
+            app.screen
+        );
+        assert!(app.container_state.is_none());
+    }
+
+    #[test]
+    fn test_shift_c_loads_cache() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.container_cache.insert(
+            "web".to_string(),
+            crate::containers::ContainerCacheEntry {
+                timestamp: 100,
+                runtime: crate::containers::ContainerRuntime::Docker,
+                containers: vec![make_container("abc", "nginx", "running")],
+            },
+        );
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('C')), &tx);
+        let state = app.container_state.as_ref().unwrap();
+        assert_eq!(state.containers.len(), 1);
+        assert_eq!(state.containers[0].id, "abc");
+        assert_eq!(
+            state.runtime,
+            Some(crate::containers::ContainerRuntime::Docker)
+        );
+    }
+
+    #[test]
+    fn test_shift_c_no_cache_empty() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('C')), &tx);
+        let state = app.container_state.as_ref().unwrap();
+        assert!(state.containers.is_empty());
+        assert!(state.runtime.is_none());
+    }
+
+    #[test]
+    fn test_containers_esc_closes() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Containers {
+            alias: "web".to_string(),
+        };
+        app.container_state = Some(make_container_state("web", vec![]));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        assert!(matches!(app.screen, Screen::HostList));
+        assert!(app.container_state.is_none());
+    }
+
+    #[test]
+    fn test_containers_q_closes() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Containers {
+            alias: "web".to_string(),
+        };
+        app.container_state = Some(make_container_state("web", vec![]));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('q')), &tx);
+        assert!(matches!(app.screen, Screen::HostList));
+        assert!(app.container_state.is_none());
+    }
+
+    #[test]
+    fn test_containers_j_moves_down() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Containers {
+            alias: "web".to_string(),
+        };
+        let containers = vec![
+            make_container("a", "web", "running"),
+            make_container("b", "db", "running"),
+            make_container("c", "cache", "exited"),
+        ];
+        app.container_state = Some(make_container_state("web", containers));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
+        let sel = app.container_state.as_ref().unwrap().list_state.selected();
+        assert_eq!(sel, Some(1));
+    }
+
+    #[test]
+    fn test_containers_k_moves_up() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Containers {
+            alias: "web".to_string(),
+        };
+        let containers = vec![
+            make_container("a", "web", "running"),
+            make_container("b", "db", "running"),
+        ];
+        let mut state = make_container_state("web", containers);
+        state.list_state.select(Some(1));
+        app.container_state = Some(state);
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('k')), &tx);
+        let sel = app.container_state.as_ref().unwrap().list_state.selected();
+        assert_eq!(sel, Some(0));
+    }
+
+    #[test]
+    fn test_containers_j_wraps() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Containers {
+            alias: "web".to_string(),
+        };
+        let containers = vec![
+            make_container("a", "web", "running"),
+            make_container("b", "db", "running"),
+        ];
+        let mut state = make_container_state("web", containers);
+        state.list_state.select(Some(1)); // at last
+        app.container_state = Some(state);
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
+        let sel = app.container_state.as_ref().unwrap().list_state.selected();
+        assert_eq!(sel, Some(0), "j at last item should wrap to 0");
+    }
+
+    #[test]
+    fn test_containers_k_wraps() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Containers {
+            alias: "web".to_string(),
+        };
+        let containers = vec![
+            make_container("a", "web", "running"),
+            make_container("b", "db", "running"),
+        ];
+        app.container_state = Some(make_container_state("web", containers));
+        // selection starts at 0
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('k')), &tx);
+        let sel = app.container_state.as_ref().unwrap().list_state.selected();
+        assert_eq!(sel, Some(1), "k at first item should wrap to last");
+    }
+
+    #[test]
+    fn test_containers_j_empty_noop() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Containers {
+            alias: "web".to_string(),
+        };
+        app.container_state = Some(make_container_state("web", vec![]));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
+        let sel = app.container_state.as_ref().unwrap().list_state.selected();
+        assert_eq!(sel, None);
+    }
+
+    #[test]
+    fn test_containers_k_empty_noop() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Containers {
+            alias: "web".to_string(),
+        };
+        app.container_state = Some(make_container_state("web", vec![]));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('k')), &tx);
+        let sel = app.container_state.as_ref().unwrap().list_state.selected();
+        assert_eq!(sel, None);
+    }
+
+    #[test]
+    fn test_containers_page_down() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Containers {
+            alias: "web".to_string(),
+        };
+        let containers: Vec<_> = (0..20)
+            .map(|i| make_container(&format!("c{i}"), &format!("svc{i}"), "running"))
+            .collect();
+        app.container_state = Some(make_container_state("web", containers));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::PageDown), &tx);
+        let sel = app.container_state.as_ref().unwrap().list_state.selected();
+        assert_eq!(sel, Some(10));
+    }
+
+    #[test]
+    fn test_containers_page_up() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Containers {
+            alias: "web".to_string(),
+        };
+        let containers: Vec<_> = (0..20)
+            .map(|i| make_container(&format!("c{i}"), &format!("svc{i}"), "running"))
+            .collect();
+        let mut state = make_container_state("web", containers);
+        state.list_state.select(Some(15));
+        app.container_state = Some(state);
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::PageUp), &tx);
+        let sel = app.container_state.as_ref().unwrap().list_state.selected();
+        assert_eq!(sel, Some(5));
+    }
+
+    #[test]
+    fn test_containers_s_sets_action_in_progress() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Containers {
+            alias: "web".to_string(),
+        };
+        app.container_state = Some(make_container_state(
+            "web",
+            vec![make_container("abc123", "nginx", "exited")],
+        ));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('s')), &tx);
+        let state = app.container_state.as_ref().unwrap();
+        assert!(
+            state.action_in_progress.is_some(),
+            "action_in_progress should be set after s"
+        );
+        assert!(
+            state.action_in_progress.as_ref().unwrap().contains("start"),
+            "action should contain 'start'"
+        );
+    }
+
+    #[test]
+    fn test_containers_x_shows_confirmation() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Containers {
+            alias: "web".to_string(),
+        };
+        app.container_state = Some(make_container_state(
+            "web",
+            vec![make_container("abc123", "nginx", "running")],
+        ));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('x')), &tx);
+        let state = app.container_state.as_ref().unwrap();
+        assert!(state.confirm_action.is_some());
+        let (action, name, _id) = state.confirm_action.as_ref().unwrap();
+        assert_eq!(*action, crate::containers::ContainerAction::Stop);
+        assert_eq!(name, "nginx");
+    }
+
+    #[test]
+    fn test_containers_r_shows_confirmation() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Containers {
+            alias: "web".to_string(),
+        };
+        app.container_state = Some(make_container_state(
+            "web",
+            vec![make_container("abc123", "nginx", "running")],
+        ));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('r')), &tx);
+        let state = app.container_state.as_ref().unwrap();
+        assert!(state.confirm_action.is_some());
+        let (action, name, _id) = state.confirm_action.as_ref().unwrap();
+        assert_eq!(*action, crate::containers::ContainerAction::Restart);
+        assert_eq!(name, "nginx");
+    }
+
+    #[test]
+    fn test_containers_y_confirms_action() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Containers {
+            alias: "web".to_string(),
+        };
+        let mut state =
+            make_container_state("web", vec![make_container("abc123", "nginx", "running")]);
+        state.confirm_action = Some((
+            crate::containers::ContainerAction::Stop,
+            "nginx".to_string(),
+            "abc123".to_string(),
+        ));
+        app.container_state = Some(state);
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('y')), &tx);
+        let state = app.container_state.as_ref().unwrap();
+        assert!(state.confirm_action.is_none());
+        assert!(state.action_in_progress.is_some());
+    }
+
+    #[test]
+    fn test_containers_esc_cancels_confirmation() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Containers {
+            alias: "web".to_string(),
+        };
+        let mut state =
+            make_container_state("web", vec![make_container("abc123", "nginx", "running")]);
+        state.confirm_action = Some((
+            crate::containers::ContainerAction::Stop,
+            "nginx".to_string(),
+            "abc123".to_string(),
+        ));
+        app.container_state = Some(state);
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        // Should cancel confirmation but stay in overlay
+        assert!(app.container_state.is_some());
+        assert!(
+            app.container_state
+                .as_ref()
+                .unwrap()
+                .confirm_action
+                .is_none()
+        );
+        assert!(matches!(app.screen, Screen::Containers { .. }));
+    }
+
+    #[test]
+    fn test_containers_action_blocked_when_in_progress() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Containers {
+            alias: "web".to_string(),
+        };
+        let mut state =
+            make_container_state("web", vec![make_container("abc123", "nginx", "running")]);
+        state.action_in_progress = Some("stop nginx...".to_string());
+        app.container_state = Some(state);
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('s')), &tx);
+        // action_in_progress should remain the same (not changed to start)
+        let state = app.container_state.as_ref().unwrap();
+        assert_eq!(state.action_in_progress.as_deref(), Some("stop nginx..."));
+    }
+
+    #[test]
+    fn test_containers_action_no_selection_noop() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Containers {
+            alias: "web".to_string(),
+        };
+        let mut state = make_container_state("web", vec![]);
+        state.list_state.select(None);
+        app.container_state = Some(state);
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('s')), &tx);
+        assert!(
+            app.container_state
+                .as_ref()
+                .unwrap()
+                .action_in_progress
+                .is_none(),
+            "no action should start without selection"
+        );
+    }
+
+    #[test]
+    fn test_containers_action_no_runtime_noop() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Containers {
+            alias: "web".to_string(),
+        };
+        let mut state =
+            make_container_state("web", vec![make_container("abc123", "nginx", "running")]);
+        state.runtime = None;
+        app.container_state = Some(state);
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('s')), &tx);
+        assert!(
+            app.container_state
+                .as_ref()
+                .unwrap()
+                .action_in_progress
+                .is_none(),
+            "no action should start without runtime"
+        );
+    }
+
+    #[test]
+    fn test_containers_r_uppercase_refreshes() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Containers {
+            alias: "web".to_string(),
+        };
+        app.container_state = Some(make_container_state(
+            "web",
+            vec![make_container("abc123", "nginx", "running")],
+        ));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('R')), &tx);
+        assert!(
+            app.container_state.as_ref().unwrap().loading,
+            "loading should be true after R"
+        );
+    }
+
+    #[test]
+    fn test_containers_r_uppercase_blocked_when_in_progress() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Containers {
+            alias: "web".to_string(),
+        };
+        let mut state =
+            make_container_state("web", vec![make_container("abc123", "nginx", "running")]);
+        state.action_in_progress = Some("restart nginx...".to_string());
+        app.container_state = Some(state);
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('R')), &tx);
+        assert!(
+            !app.container_state.as_ref().unwrap().loading,
+            "loading should remain false when action is in progress"
+        );
+    }
+
+    #[test]
+    fn test_containers_unknown_key_noop() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Containers {
+            alias: "web".to_string(),
+        };
+        let containers = vec![make_container("abc123", "nginx", "running")];
+        app.container_state = Some(make_container_state("web", containers.clone()));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('z')), &tx);
+        assert!(matches!(app.screen, Screen::Containers { .. }));
+        let state = app.container_state.as_ref().unwrap();
+        assert_eq!(state.list_state.selected(), Some(0));
+        assert!(state.action_in_progress.is_none());
+        assert!(!state.loading);
+    }
+
+    #[test]
+    fn test_containers_y_noop_without_pending() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Containers {
+            alias: "web".to_string(),
+        };
+        app.container_state = Some(make_container_state(
+            "web",
+            vec![make_container("abc123", "nginx", "running")],
+        ));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('y')), &tx);
+        let state = app.container_state.as_ref().unwrap();
+        assert!(
+            state.action_in_progress.is_none(),
+            "no action should start when confirm_action is None"
+        );
+        assert!(
+            state.confirm_action.is_none(),
+            "confirm_action should remain None"
+        );
+    }
+
+    #[test]
+    fn test_containers_x_blocked_when_action_in_progress() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Containers {
+            alias: "web".to_string(),
+        };
+        let mut state =
+            make_container_state("web", vec![make_container("abc123", "nginx", "running")]);
+        state.action_in_progress = Some("stop nginx...".to_string());
+        app.container_state = Some(state);
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('x')), &tx);
+        let state = app.container_state.as_ref().unwrap();
+        assert!(
+            state.confirm_action.is_none(),
+            "x should not open confirmation when action is in progress"
+        );
+    }
+
+    #[test]
+    fn test_containers_r_blocked_when_action_in_progress() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Containers {
+            alias: "web".to_string(),
+        };
+        let mut state =
+            make_container_state("web", vec![make_container("abc123", "nginx", "running")]);
+        state.action_in_progress = Some("stop nginx...".to_string());
+        app.container_state = Some(state);
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('r')), &tx);
+        let state = app.container_state.as_ref().unwrap();
+        assert!(
+            state.confirm_action.is_none(),
+            "r should not open confirmation when action is in progress"
+        );
+    }
+
+    #[test]
+    fn test_containers_x_blocked_when_confirm_pending() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Containers {
+            alias: "web".to_string(),
+        };
+        let mut state =
+            make_container_state("web", vec![make_container("abc123", "nginx", "running")]);
+        state.confirm_action = Some((
+            crate::containers::ContainerAction::Stop,
+            "nginx".to_string(),
+            "abc123".to_string(),
+        ));
+        app.container_state = Some(state);
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('x')), &tx);
+        let state = app.container_state.as_ref().unwrap();
+        let (action, name, _id) = state.confirm_action.as_ref().unwrap();
+        assert_eq!(
+            *action,
+            crate::containers::ContainerAction::Stop,
+            "confirm_action should remain the original Stop"
+        );
+        assert_eq!(name, "nginx");
+    }
+
+    #[test]
+    fn test_containers_r_blocked_when_confirm_pending() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Containers {
+            alias: "web".to_string(),
+        };
+        let mut state =
+            make_container_state("web", vec![make_container("abc123", "nginx", "running")]);
+        state.confirm_action = Some((
+            crate::containers::ContainerAction::Stop,
+            "nginx".to_string(),
+            "abc123".to_string(),
+        ));
+        app.container_state = Some(state);
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('r')), &tx);
+        let state = app.container_state.as_ref().unwrap();
+        let (action, name, _id) = state.confirm_action.as_ref().unwrap();
+        assert_eq!(
+            *action,
+            crate::containers::ContainerAction::Stop,
+            "confirm_action should remain the original Stop, not change to Restart"
+        );
+        assert_eq!(name, "nginx");
     }
 }

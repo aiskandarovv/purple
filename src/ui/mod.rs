@@ -1,4 +1,5 @@
 mod confirm_dialog;
+pub(crate) mod containers;
 mod detail_panel;
 mod file_browser;
 mod help;
@@ -145,6 +146,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             render_overlay(app, |app| {
                 confirm_dialog::render_confirm_import(frame, app, count)
             });
+        }
+        Screen::Containers { .. } => {
+            host_list::render(frame, app);
+            render_overlay(app, |app| containers::render(frame, app));
         }
         Screen::ConfirmPurgeStale { aliases, provider } => {
             let aliases = aliases.clone();

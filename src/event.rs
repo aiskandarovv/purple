@@ -61,6 +61,21 @@ pub enum AppEvent {
         completed: usize,
         total: usize,
     },
+    ContainerListing {
+        alias: String,
+        result: Result<
+            (
+                crate::containers::ContainerRuntime,
+                Vec<crate::containers::ContainerInfo>,
+            ),
+            crate::containers::ContainerError,
+        >,
+    },
+    ContainerActionComplete {
+        alias: String,
+        action: crate::containers::ContainerAction,
+        result: Result<(), String>,
+    },
     PollError,
 }
 
@@ -171,7 +186,9 @@ impl EventHandler {
                 | AppEvent::ScpComplete { .. }
                 | AppEvent::SnippetHostDone { .. }
                 | AppEvent::SnippetAllDone { .. }
-                | AppEvent::SnippetProgress { .. } => preserved.push(event),
+                | AppEvent::SnippetProgress { .. }
+                | AppEvent::ContainerListing { .. }
+                | AppEvent::ContainerActionComplete { .. } => preserved.push(event),
                 _ => {}
             }
         }

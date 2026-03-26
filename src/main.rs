@@ -2,6 +2,7 @@ mod app;
 mod askpass;
 mod clipboard;
 mod connection;
+mod containers;
 mod event;
 mod file_browser;
 mod fs_util;
@@ -877,6 +878,111 @@ fn run_tui(mut app: App) -> Result<()> {
                         state.all_done = true;
                     }
                 }
+            }
+            AppEvent::ContainerListing { alias, result } => {
+                // Always update cache, even if overlay is closed
+                match &result {
+                    Ok((runtime, containers)) => {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
+                        app.container_cache.insert(
+                            alias.clone(),
+                            crate::containers::ContainerCacheEntry {
+                                timestamp: now,
+                                runtime: *runtime,
+                                containers: containers.clone(),
+                            },
+                        );
+                        crate::containers::save_container_cache(&app.container_cache);
+                    }
+                    Err(e) => {
+                        // Preserve runtime even on error
+                        if let Some(rt) = e.runtime {
+                            if let Some(entry) = app.container_cache.get_mut(&alias) {
+                                entry.runtime = rt;
+                            }
+                        }
+                    }
+                }
+                // Update overlay state if open
+                if let Some(ref mut state) = app.container_state {
+                    if state.alias == alias {
+                        match result {
+                            Ok((runtime, containers)) => {
+                                state.runtime = Some(runtime);
+                                state.containers = containers;
+                                state.loading = false;
+                                state.error = None;
+                                if let Some(sel) = state.list_state.selected() {
+                                    if sel >= state.containers.len() && !state.containers.is_empty()
+                                    {
+                                        state.list_state.select(Some(0));
+                                    }
+                                } else if !state.containers.is_empty() {
+                                    state.list_state.select(Some(0));
+                                }
+                            }
+                            Err(e) => {
+                                if let Some(rt) = e.runtime {
+                                    state.runtime = Some(rt);
+                                }
+                                state.loading = false;
+                                state.error = Some(e.message);
+                            }
+                        }
+                    }
+                }
+                askpass::cleanup_marker(&alias);
+            }
+            AppEvent::ContainerActionComplete {
+                alias,
+                action,
+                result,
+            } => {
+                // Check if overlay matches and extract refresh info before set_status
+                let should_refresh = if let Some(ref mut state) = app.container_state {
+                    if state.alias == alias {
+                        state.action_in_progress = None;
+                        match result {
+                            Ok(()) => {
+                                state.loading = true;
+                                Some((state.alias.clone(), state.askpass.clone(), state.runtime))
+                            }
+                            Err(e) => {
+                                state.error = Some(e);
+                                None
+                            }
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                if let Some((refresh_alias, askpass, cached_runtime)) = should_refresh {
+                    app.set_status(format!("Container {} complete.", action.as_str()), false);
+                    let has_tunnel = app.active_tunnels.contains_key(&refresh_alias);
+                    let config_path = app.reload.config_path.clone();
+                    let bw = app.bw_session.clone();
+                    let tx = events_tx.clone();
+                    crate::containers::spawn_container_listing(
+                        refresh_alias,
+                        config_path,
+                        askpass,
+                        bw,
+                        has_tunnel,
+                        cached_runtime,
+                        move |a, r| {
+                            let _ = tx.send(AppEvent::ContainerListing {
+                                alias: a,
+                                result: r,
+                            });
+                        },
+                    );
+                }
+                askpass::cleanup_marker(&alias);
             }
             AppEvent::PollError => {
                 app.running = false;

@@ -1,3 +1,10 @@
+## 2.12.0
+
+- Container management over SSH. Works with Docker and Podman
+- Press `C` on any host to see all containers. Start, stop and restart without leaving purple
+- Auto-detects Docker or Podman on the remote host. No agent. No web UI. No extra ports
+- Cached container data shown in the detail panel after first fetch
+
 ## 2.11.1
 
 - Consistent footer spacing across all overlay screens

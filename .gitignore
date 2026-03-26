@@ -10,16 +10,6 @@
 .Trashes
 Icon?
 
-# Claude Code
-CLAUDE.md
-.claude/
-
-# Strategy
-PLAN.md
-
-# Codex
-.codex/
-
 # VHS
 demo.tape
 
@@ -42,3 +32,8 @@ proptest-regressions/
 # Environment
 .env
 .env.*
+
+# Claude Code
+CLAUDE.md
+.claude/
+docs/

@@ -328,7 +328,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         }
         if rules.len() > 5 {
             lines.push(Line::from(Span::styled(
-                format!("(and {} more...)", rules.len() - 5),
+                format!("(and {} more. T to manage)", rules.len() - 5),
                 theme::muted(),
             )));
         }
@@ -343,6 +343,62 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             format!("{} available (r to run)", snippet_count),
             theme::muted(),
         )));
+    }
+
+    // Containers section (only shown when cache data exists)
+    if let Some(cache_entry) = app.container_cache.get(&host.alias) {
+        lines.push(Line::from(""));
+        lines.push(section_header("Containers"));
+        let running = cache_entry
+            .containers
+            .iter()
+            .filter(|c| c.state == "running")
+            .count();
+        let total = cache_entry.containers.len();
+        push_field(
+            &mut lines,
+            "Total",
+            &format!("{} running / {} total", running, total),
+            max_value_width,
+        );
+        push_field(
+            &mut lines,
+            "Runtime",
+            cache_entry.runtime.as_str(),
+            max_value_width,
+        );
+        push_field(
+            &mut lines,
+            "Last checked",
+            &crate::containers::format_relative_time(cache_entry.timestamp),
+            max_value_width,
+        );
+        for container in cache_entry.containers.iter().take(5) {
+            let (icon, icon_style) = match container.state.as_str() {
+                "running" => ("\u{2713}", theme::success()),
+                "exited" | "dead" => ("\u{2717}", theme::error()),
+                _ => ("\u{25cf}", theme::bold()),
+            };
+            let name = crate::containers::truncate_str(
+                &container.names,
+                max_value_width.saturating_sub(2),
+            );
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("{:>width$}", "", width = LABEL_WIDTH),
+                    theme::muted(),
+                ),
+                Span::styled(icon, icon_style),
+                Span::styled(" ", theme::muted()),
+                Span::styled(name, theme::bold()),
+            ]));
+        }
+        if total > 5 {
+            lines.push(Line::from(Span::styled(
+                format!("(and {} more. C to manage)", total - 5),
+                theme::muted(),
+            )));
+        }
     }
 
     // Source section (for included hosts)

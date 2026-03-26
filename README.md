@@ -1,8 +1,8 @@
-<h1 align="center">purple.<br>Terminal SSH client with file transfer<br>and cloud sync.</h1>
+<h1 align="center">purple.<br>Terminal SSH client with container management,<br>file transfer and cloud sync.</h1>
 
 <p align="center">
   <strong>Stop scrolling through your SSH config. Start searching it.</strong><br>
-  Find any server instantly, connect with Enter, transfer files visually and sync from 11 cloud providers. One TUI that edits your <code>~/.ssh/config</code> directly.
+  Find any server instantly, connect with Enter, manage Docker and Podman containers, transfer files visually and sync from 11 cloud providers. One TUI that edits your <code>~/.ssh/config</code> directly.
 </p>
 
 <p align="center">
@@ -13,12 +13,12 @@
   <a href="https://getpurple.sh"><img src="https://img.shields.io/badge/Website-getpurple.sh-9333ea.svg" alt="purple website"></a>
 </p>
 
-<p align="center"><img src="demo.gif" alt="purple terminal SSH client demo: searching hosts, transferring files, connecting via SSH and syncing cloud providers" width="800"></p>
+<p align="center"><img src="demo.gif" alt="purple terminal SSH client demo: searching hosts, managing Docker containers, transferring files, connecting via SSH and syncing cloud providers" width="800"></p>
 <p align="center"><em>Searching hosts, connecting via SSH, browsing remote files and syncing cloud providers. All from the terminal.</em></p>
 
 ## What is purple?
 
-purple is a free, open-source terminal SSH client and SSH config manager that turns your `~/.ssh/config` into a searchable, visual interface. Find any host instantly, connect with Enter, browse remote files side by side and sync servers from eleven cloud providers. One TUI. No context switching.
+purple is a free, open-source terminal SSH client and SSH config manager that turns your `~/.ssh/config` into a searchable, visual interface. Find any host instantly, connect with Enter, manage Docker and Podman containers, browse remote files side by side and sync servers from eleven cloud providers. One TUI. No context switching.
 
 It reads your existing config, lets you search, filter, tag and connect with a single keystroke, and writes changes back without touching your comments or unknown directives. Transfer files visually, run commands across servers and handle SSH passwords automatically. Free, open-source, runs on macOS and Linux.
 
@@ -67,6 +67,12 @@ Downloads the latest release from GitHub, verifies the checksum and replaces the
 ### Search and connect
 
 Find any host in under a second, no matter how large your config. Instant fuzzy search across aliases, hostnames, users, tags and providers. Navigate with `j`/`k`, connect with `Enter`. Frecency sorting surfaces your most-used and most-recent hosts.
+
+### Docker and Podman containers
+
+Press `C` on any host to see all containers over SSH. Start, stop and restart without leaving purple. Auto-detects Docker or Podman. No agent to install on the remote host. No web UI. No extra ports. Container data is cached and shown in the detail panel after first fetch.
+
+Unlike Portainer or Dockge, purple manages containers through your existing SSH connection. Unlike Lazydocker, it works on remote servers without installing anything on each host.
 
 ### Tags
 
@@ -168,7 +174,7 @@ Browse your SSH keys with metadata (type, bits, fingerprint, comment) and see wh
 - **Automatic backups** Every write creates a timestamped backup (keeps the last 5)
 - **Host key reset** Detects changed host keys after a server reinstall and offers to remove the old key and reconnect
 - **Auto-reload** Detects external config changes and reloads automatically
-- **Detail panel** Split-pane view showing connection info, activity sparkline, tags, provider metadata, tunnels and snippets alongside the host list. Toggle with `v`
+- **Detail panel** Split-pane view showing connection info, activity sparkline, tags, provider metadata, tunnels, snippets and cached container data alongside the host list. Toggle with `v`
 - **Minimal UI** Monochrome with subtle color for status messages. Works in any terminal, any font. Respects [NO_COLOR](https://no-color.org/)
 - **Shell completions** Bash, zsh and fish via `purple --completions`
 
@@ -243,6 +249,7 @@ purple --completions zsh            # Shell completions
 | `r`         | Run snippet on host(s)           |
 | `R`         | Run snippet on all visible       |
 | `f`         | Remote file explorer (scp)       |
+| `C`         | Containers (Docker / Podman)     |
 | `T`         | Manage host tunnels              |
 | `X`         | Purge stale hosts                |
 | `K`         | SSH key list                     |
@@ -342,6 +349,8 @@ Most SSH tools read your config but don't write it, sync one cloud but not ten, 
 **It runs commands across hosts.** Save command snippets and execute them on one host, a selection or all hosts at once. Sequential or parallel. No Ansible, no Fabric, no extra tools.
 
 **It manages SSH passwords.** Store passwords in your OS keychain or pull them from 1Password, Bitwarden, pass, HashiCorp Vault or a custom command. Purple handles SSH_ASKPASS automatically.
+
+**It manages containers over SSH.** Press `C` on any host to see Docker or Podman containers. Start, stop and restart from the TUI. No agent, no web UI, no extra ports to open. Works through ProxyJump chains and password-protected hosts.
 
 **It transfers files visually.** Open a split-screen file explorer on any host, browse remote directories alongside local ones and copy files with a keystroke. No scp paths to remember, no separate tool to open.
 
@@ -534,6 +543,12 @@ Source value: my-script %a %h
 
 ## FAQ
 
+**Can I manage Docker or Podman containers with purple?**
+Yes. Press `C` on any host to see all containers over SSH. Start, stop and restart without leaving the TUI. Purple auto-detects whether the host runs Docker or Podman. No agent to install, no web UI to host, no ports to open. Cached container data appears in the detail panel after first fetch.
+
+**Does the container view require root or special permissions?**
+No. Purple runs `docker ps` or `podman ps` over SSH as the configured SSH user. If that user can run Docker or Podman commands (e.g. is in the `docker` group), no additional setup is needed. Nothing is installed on the remote host.
+
 **Can I transfer files with purple?**
 Yes. Press `f` on any host to open the remote file explorer. It shows local files on the left and the remote server on the right. Navigate directories, select files and copy them between machines with `Enter`. Works through ProxyJump chains, password sources and active tunnels.
 
@@ -570,7 +585,7 @@ Found a bug or have a feature request? [Open an issue on GitHub](https://github.
 
 ## Built with
 
-Written in Rust. 4200+ tests (unit, integration, property-based and HTTP mocking). Zero clippy warnings. No async runtime. Single binary. Works in any terminal emulator that supports ANSI escape codes including iTerm2, Terminal.app, Alacritty, kitty, WezTerm, Warp and Windows Terminal (via WSL).
+Written in Rust. 4400+ tests (unit, integration, property-based and HTTP mocking). Zero clippy warnings. No async runtime. Single binary. Works in any terminal emulator that supports ANSI escape codes including iTerm2, Terminal.app, Alacritty, kitty, WezTerm, Warp and Windows Terminal (via WSL).
 
 <p align="center">
   <a href="LICENSE">MIT License</a>

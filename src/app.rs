@@ -158,6 +158,9 @@ pub enum Screen {
     FileBrowser {
         alias: String,
     },
+    Containers {
+        alias: String,
+    },
     ConfirmImport {
         count: usize,
     },
@@ -1158,6 +1161,20 @@ pub struct UiSelection {
     pub detail_scroll: u16,
 }
 
+/// State for the Containers overlay.
+pub struct ContainerState {
+    pub alias: String,
+    pub askpass: Option<String>,
+    pub runtime: Option<crate::containers::ContainerRuntime>,
+    pub containers: Vec<crate::containers::ContainerInfo>,
+    pub list_state: ratatui::widgets::ListState,
+    pub loading: bool,
+    pub error: Option<String>,
+    pub action_in_progress: Option<String>,
+    /// Pending confirmation for stop/restart actions: (action, container_name, container_id).
+    pub confirm_action: Option<(crate::containers::ContainerAction, String, String)>,
+}
+
 /// Search mode state.
 pub struct SearchState {
     pub query: Option<String>,
@@ -1322,6 +1339,10 @@ pub struct App {
     pub file_browser: Option<crate::file_browser::FileBrowserState>,
     pub file_browser_paths: HashMap<String, (PathBuf, String)>,
 
+    // Containers
+    pub container_state: Option<ContainerState>,
+    pub container_cache: HashMap<String, crate::containers::ContainerCacheEntry>,
+
     // First-run hints
     pub known_hosts_count: usize,
 
@@ -1434,6 +1455,8 @@ impl App {
             bw_session: None,
             file_browser: None,
             file_browser_paths: HashMap::new(),
+            container_state: None,
+            container_cache: crate::containers::load_container_cache(),
             known_hosts_count: 0,
             form_baseline: None,
             tunnel_form_baseline: None,
@@ -2149,6 +2172,7 @@ impl App {
                 | Screen::SnippetOutput { .. }
                 | Screen::SnippetParamForm { .. }
                 | Screen::FileBrowser { .. }
+                | Screen::Containers { .. }
                 | Screen::ConfirmDelete { .. }
                 | Screen::ConfirmHostKeyReset { .. }
                 | Screen::ConfirmPurgeStale { .. }
