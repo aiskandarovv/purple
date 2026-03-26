@@ -59,6 +59,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             render_overlay(app, |app| confirm_dialog::render(frame, app, &alias));
         }
         Screen::Help { .. } => {
+            // Always render host_list as the base layer. Help can be opened from
+            // other screens (file browser, snippets, etc.) but rendering the
+            // originating screen would require it to be the active Screen variant.
+            // The help overlay covers most of the area so the base is barely visible.
             host_list::render(frame, app);
             render_overlay(app, |app| help::render(frame, app));
         }

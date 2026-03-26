@@ -1,3 +1,13 @@
+## 2.13.0
+
+- Context-sensitive help. Press `?` on any screen to see its shortcuts
+- Help works in host list, file browser, snippets, containers, tunnels, providers, SSH keys, tag picker and host detail
+- Improved visual hierarchy. Section headers are bold, descriptions are dim, keys are right-aligned
+- Host list help reorganized into task-based groups: Navigate, View, Forms, Manage Hosts, Connect and Run, Tools
+- Smaller help overlays for sub-screens. No duplicate headers, compact sizing
+- Missing shortcuts added across all screens (q/Esc, PgDn/PgUp, j/k)
+- Help accessible through confirmation guards and search mode
+
 ## 2.12.0
 
 - Container management over SSH. Works with Docker and Podman

@@ -3028,35 +3028,28 @@ mod tests {
 
     #[test]
     fn cheat_sheet_contains_import_entry() {
-        // The help.rs middle_column() should contain " I         " with "import known_hosts"
-        // We verify by checking the source directly would be fragile, so we
-        // verify the middle_column function output contains the entry
-        // (middle_column is not pub, so we test by reading the source)
+        // The help.rs host_list_columns() should contain "I" key with "import known_hosts"
         let source = include_str!("ui/help.rs");
         assert!(
-            source.contains(r#"" I         ""#),
+            source.contains(r#"help_line("I", "import known_hosts")"#),
             "cheat sheet should have I key"
-        );
-        assert!(
-            source.contains(r#""import known_hosts""#),
-            "cheat sheet should describe I"
         );
     }
 
     #[test]
-    fn cheat_sheet_i_between_s_and_k() {
+    fn cheat_sheet_i_after_s_and_k() {
         let source = include_str!("ui/help.rs");
+        let k_pos = source
+            .find(r#"help_line("K","#)
+            .expect("K should be in cheat sheet");
         let s_pos = source
-            .find(r#"" S         ""#)
+            .find(r#"help_line("S","#)
             .expect("S should be in cheat sheet");
         let i_pos = source
-            .find(r#"" I         ""#)
+            .find(r#"help_line("I","#)
             .expect("I should be in cheat sheet");
-        let k_pos = source
-            .find(r#"" K         ""#)
-            .expect("K should be in cheat sheet");
+        assert!(k_pos < s_pos, "K should come before S");
         assert!(s_pos < i_pos, "S should come before I");
-        assert!(i_pos < k_pos, "I should come before K");
     }
 
     // =========================================================================

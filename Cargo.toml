@@ -1,6 +1,6 @@
 [package]
 name = "purple-ssh"
-version = "2.12.0"
+version = "2.13.0"
 edition = "2024"
 description = "Terminal SSH client and host manager. Search, connect, transfer files and sync from 11 cloud providers. Edits ~/.ssh/config with round-trip fidelity."
 license = "MIT"

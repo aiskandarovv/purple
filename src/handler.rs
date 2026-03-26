@@ -814,8 +814,9 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
             }
         }
         KeyCode::Char('?') => {
+            let old = std::mem::replace(&mut app.screen, Screen::HostList);
             app.screen = Screen::Help {
-                return_screen: Box::new(Screen::HostList),
+                return_screen: Box::new(old),
             };
         }
         _ => {}
@@ -1247,6 +1248,12 @@ fn handle_key_list(app: &mut App, key: KeyEvent) {
         KeyCode::Char('q') | KeyCode::Esc | KeyCode::Char('K') => {
             app.screen = Screen::HostList;
         }
+        KeyCode::Char('?') => {
+            let old = std::mem::replace(&mut app.screen, Screen::HostList);
+            app.screen = Screen::Help {
+                return_screen: Box::new(old),
+            };
+        }
         KeyCode::Char('j') | KeyCode::Down => {
             app.select_next_key();
         }
@@ -1274,6 +1281,12 @@ fn handle_key_detail(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') => {
             app.screen = Screen::KeyList;
+        }
+        KeyCode::Char('?') => {
+            let old = std::mem::replace(&mut app.screen, Screen::HostList);
+            app.screen = Screen::Help {
+                return_screen: Box::new(old),
+            };
         }
         _ => {}
     }
@@ -1396,6 +1409,12 @@ fn handle_host_detail(app: &mut App, key: KeyEvent) {
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('i') => {
             app.screen = Screen::HostList;
         }
+        KeyCode::Char('?') => {
+            let old = std::mem::replace(&mut app.screen, Screen::HostList);
+            app.screen = Screen::Help {
+                return_screen: Box::new(old),
+            };
+        }
         KeyCode::Char('e') => {
             if let Some(host) = app.hosts.get(index) {
                 if let Some(ref source) = host.source_file {
@@ -1468,6 +1487,12 @@ fn handle_tag_picker_screen(app: &mut App, key: KeyEvent) {
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('#') => {
             app.screen = Screen::HostList;
         }
+        KeyCode::Char('?') => {
+            let old = std::mem::replace(&mut app.screen, Screen::HostList);
+            app.screen = Screen::Help {
+                return_screen: Box::new(old),
+            };
+        }
         KeyCode::Char('j') | KeyCode::Down => {
             app.select_next_tag();
         }
@@ -1497,7 +1522,7 @@ fn handle_tag_picker_screen(app: &mut App, key: KeyEvent) {
 
 fn handle_provider_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEvent>) {
     // Handle pending provider delete confirmation first
-    if app.pending_provider_delete.is_some() {
+    if app.pending_provider_delete.is_some() && key.code != KeyCode::Char('?') {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
                 let name = app.pending_provider_delete.take().unwrap();
@@ -1645,6 +1670,12 @@ fn handle_provider_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<A
                     }
                 }
             }
+        }
+        KeyCode::Char('?') => {
+            let old = std::mem::replace(&mut app.screen, Screen::HostList);
+            app.screen = Screen::Help {
+                return_screen: Box::new(old),
+            };
         }
         KeyCode::Char('X') => {
             if let Some(index) = app.ui.provider_list_state.selected() {
@@ -2301,7 +2332,7 @@ fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
     };
 
     // Handle pending tunnel delete confirmation first
-    if app.pending_tunnel_delete.is_some() {
+    if app.pending_tunnel_delete.is_some() && key.code != KeyCode::Char('?') {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
                 let sel = app.pending_tunnel_delete.take().unwrap();
@@ -2437,6 +2468,12 @@ fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
                     }
                 }
             }
+        }
+        KeyCode::Char('?') => {
+            let old = std::mem::replace(&mut app.screen, Screen::HostList);
+            app.screen = Screen::Help {
+                return_screen: Box::new(old),
+            };
         }
         _ => {}
     }
@@ -2626,6 +2663,15 @@ fn handle_snippet_picker(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<
         _ => return,
     };
 
+    // Allow ? to open help even during search
+    if key.code == KeyCode::Char('?') {
+        let old = std::mem::replace(&mut app.screen, Screen::HostList);
+        app.screen = Screen::Help {
+            return_screen: Box::new(old),
+        };
+        return;
+    }
+
     // Search mode dispatch
     if app.ui.snippet_search.is_some() {
         handle_snippet_picker_search(app, key, &target_aliases, events_tx);
@@ -2633,7 +2679,7 @@ fn handle_snippet_picker(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<
     }
 
     // Handle pending snippet delete confirmation
-    if app.pending_snippet_delete.is_some() {
+    if app.pending_snippet_delete.is_some() && key.code != KeyCode::Char('?') {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
                 let sel = app.pending_snippet_delete.take().unwrap();
@@ -2944,6 +2990,12 @@ fn handle_snippet_output(app: &mut App, key: KeyEvent) {
                     Err(e) => app.set_status(format!("Copy failed: {}", e), true),
                 }
             }
+        }
+        KeyCode::Char('?') => {
+            let old = std::mem::replace(&mut app.screen, Screen::HostList);
+            app.screen = Screen::Help {
+                return_screen: Box::new(old),
+            };
         }
         _ => {}
     }
@@ -3346,7 +3398,11 @@ fn handle_containers(
     if let Some(ref state) = app.container_state {
         if state.confirm_action.is_some() {
             match key.code {
-                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Esc | KeyCode::Char('q') => {}
+                KeyCode::Char('y')
+                | KeyCode::Char('Y')
+                | KeyCode::Esc
+                | KeyCode::Char('q')
+                | KeyCode::Char('?') => {}
                 _ => return Ok(()),
             }
         }
@@ -3477,6 +3533,12 @@ fn handle_containers(
                 );
             }
         }
+        KeyCode::Char('?') => {
+            let old = std::mem::replace(&mut app.screen, Screen::HostList);
+            app.screen = Screen::Help {
+                return_screen: Box::new(old),
+            };
+        }
         _ => {}
     }
     Ok(())
@@ -3547,7 +3609,7 @@ fn handle_file_browser(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<Ap
     }
 
     // Dismiss transfer error dialog
-    if fb.transfer_error.is_some() {
+    if fb.transfer_error.is_some() && key.code != KeyCode::Char('?') {
         match key.code {
             KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
                 fb.transfer_error = None;
@@ -3558,7 +3620,7 @@ fn handle_file_browser(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<Ap
     }
 
     // If confirm dialog is showing, handle that first
-    if fb.confirm_copy.is_some() {
+    if fb.confirm_copy.is_some() && key.code != KeyCode::Char('?') {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
                 let req = fb.confirm_copy.take().unwrap();
@@ -4081,6 +4143,12 @@ fn handle_file_browser(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<Ap
             crate::file_browser::sort_entries(&mut fb.remote_entries, fb.sort);
             fb.local_list_state.select(Some(0));
             fb.remote_list_state.select(Some(0));
+        }
+        KeyCode::Char('?') => {
+            let old = std::mem::replace(&mut app.screen, Screen::HostList);
+            app.screen = Screen::Help {
+                return_screen: Box::new(old),
+            };
         }
         _ => {}
     }
@@ -8441,5 +8509,493 @@ Host gamma
             "confirm_action should remain the original Stop, not change to Restart"
         );
         assert_eq!(name, "nginx");
+    }
+
+    // --- Help key (?) tests for all overlay screens ---
+
+    #[test]
+    fn test_file_browser_question_opens_help() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::FileBrowser {
+            alias: "web".to_string(),
+        };
+        app.file_browser = Some(crate::file_browser::FileBrowserState {
+            alias: "web".to_string(),
+            askpass: None,
+            active_pane: crate::file_browser::BrowserPane::Local,
+            local_path: std::path::PathBuf::from("/tmp"),
+            local_entries: Vec::new(),
+            local_list_state: ratatui::widgets::ListState::default(),
+            local_selected: std::collections::HashSet::new(),
+            local_error: None,
+            remote_path: "/home".to_string(),
+            remote_entries: Vec::new(),
+            remote_list_state: ratatui::widgets::ListState::default(),
+            remote_selected: std::collections::HashSet::new(),
+            remote_error: None,
+            remote_loading: false,
+            show_hidden: false,
+            sort: crate::file_browser::BrowserSort::Name,
+            confirm_copy: None,
+            transferring: None,
+            transfer_error: None,
+            connection_recorded: false,
+        });
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('?')), &tx);
+        match &app.screen {
+            Screen::Help { return_screen } => {
+                assert!(matches!(**return_screen, Screen::FileBrowser { .. }));
+            }
+            other => panic!("Expected Help screen, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_file_browser_help_esc_returns() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Help {
+            return_screen: Box::new(Screen::FileBrowser {
+                alias: "web".to_string(),
+            }),
+        };
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        assert!(matches!(app.screen, Screen::FileBrowser { .. }));
+    }
+
+    #[test]
+    fn test_snippet_picker_question_opens_help() {
+        let mut app = make_snippet_app();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('?')), &tx);
+        match &app.screen {
+            Screen::Help { return_screen } => {
+                assert!(matches!(**return_screen, Screen::SnippetPicker { .. }));
+            }
+            other => panic!("Expected Help screen, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_snippet_picker_help_esc_returns() {
+        let mut app = make_snippet_app();
+        app.screen = Screen::Help {
+            return_screen: Box::new(Screen::SnippetPicker {
+                target_aliases: vec!["myserver".to_string()],
+            }),
+        };
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        assert!(matches!(app.screen, Screen::SnippetPicker { .. }));
+    }
+
+    #[test]
+    fn test_snippet_output_question_opens_help() {
+        let mut app = make_snippet_app();
+        // First enter snippet output by pressing Enter
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert!(matches!(app.screen, Screen::SnippetOutput { .. }));
+
+        // Now press ? to open help
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('?')), &tx);
+        match &app.screen {
+            Screen::Help { return_screen } => {
+                assert!(matches!(**return_screen, Screen::SnippetOutput { .. }));
+            }
+            other => panic!("Expected Help screen, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_snippet_output_help_esc_returns() {
+        let mut app = make_snippet_app();
+        app.screen = Screen::Help {
+            return_screen: Box::new(Screen::SnippetOutput {
+                snippet_name: "check-disk".to_string(),
+                target_aliases: vec!["myserver".to_string()],
+            }),
+        };
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        assert!(matches!(app.screen, Screen::SnippetOutput { .. }));
+    }
+
+    #[test]
+    fn test_containers_question_opens_help() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Containers {
+            alias: "web".to_string(),
+        };
+        app.container_state = Some(make_container_state("web", vec![]));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('?')), &tx);
+        match &app.screen {
+            Screen::Help { return_screen } => {
+                assert!(matches!(**return_screen, Screen::Containers { .. }));
+            }
+            other => panic!("Expected Help screen, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_containers_help_esc_returns() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Help {
+            return_screen: Box::new(Screen::Containers {
+                alias: "web".to_string(),
+            }),
+        };
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        assert!(matches!(app.screen, Screen::Containers { .. }));
+    }
+
+    #[test]
+    fn test_tunnel_list_question_opens_help() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::TunnelList {
+            alias: "web".to_string(),
+        };
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('?')), &tx);
+        match &app.screen {
+            Screen::Help { return_screen } => {
+                assert!(matches!(**return_screen, Screen::TunnelList { .. }));
+            }
+            other => panic!("Expected Help screen, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_tunnel_list_help_esc_returns() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Help {
+            return_screen: Box::new(Screen::TunnelList {
+                alias: "web".to_string(),
+            }),
+        };
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        assert!(matches!(app.screen, Screen::TunnelList { .. }));
+    }
+
+    // --- Direct ? from HostList ---
+
+    #[test]
+    fn test_host_list_question_opens_help() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('?')), &tx);
+        match &app.screen {
+            Screen::Help { return_screen } => {
+                assert!(matches!(**return_screen, Screen::HostList));
+            }
+            other => panic!("Expected Help screen, got {:?}", other),
+        }
+    }
+
+    // --- ? guard bypass tests ---
+
+    #[test]
+    fn test_tunnel_delete_confirmation_question_opens_help() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::TunnelList {
+            alias: "web".to_string(),
+        };
+        app.pending_tunnel_delete = Some(0);
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('?')), &tx);
+        match &app.screen {
+            Screen::Help { return_screen } => {
+                assert!(matches!(**return_screen, Screen::TunnelList { .. }));
+            }
+            other => panic!("Expected Help screen, got {:?}", other),
+        }
+        assert_eq!(
+            app.pending_tunnel_delete,
+            Some(0),
+            "pending_tunnel_delete should be preserved"
+        );
+    }
+
+    #[test]
+    fn test_container_confirm_action_question_opens_help() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Containers {
+            alias: "web".to_string(),
+        };
+        let mut state =
+            make_container_state("web", vec![make_container("abc123", "nginx", "running")]);
+        state.confirm_action = Some((
+            crate::containers::ContainerAction::Stop,
+            "nginx".to_string(),
+            "abc123".to_string(),
+        ));
+        app.container_state = Some(state);
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('?')), &tx);
+        match &app.screen {
+            Screen::Help { return_screen } => {
+                assert!(matches!(**return_screen, Screen::Containers { .. }));
+            }
+            other => panic!("Expected Help screen, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_snippet_picker_pending_delete_question_opens_help() {
+        let mut app = make_snippet_app();
+        app.pending_snippet_delete = Some(0);
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('?')), &tx);
+        match &app.screen {
+            Screen::Help { return_screen } => {
+                assert!(matches!(**return_screen, Screen::SnippetPicker { .. }));
+            }
+            other => panic!("Expected Help screen, got {:?}", other),
+        }
+    }
+
+    // --- Help scroll tests ---
+
+    #[test]
+    fn test_help_j_increments_scroll() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Help {
+            return_screen: Box::new(Screen::HostList),
+        };
+        app.ui.help_scroll = 0;
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
+        assert_eq!(app.ui.help_scroll, 1);
+    }
+
+    #[test]
+    fn test_help_k_does_not_underflow() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Help {
+            return_screen: Box::new(Screen::HostList),
+        };
+        app.ui.help_scroll = 0;
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('k')), &tx);
+        assert_eq!(app.ui.help_scroll, 0);
+    }
+
+    #[test]
+    fn test_help_page_down_increments_by_ten() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Help {
+            return_screen: Box::new(Screen::HostList),
+        };
+        app.ui.help_scroll = 0;
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::PageDown), &tx);
+        assert_eq!(app.ui.help_scroll, 10);
+    }
+
+    #[test]
+    fn test_help_page_up_does_not_underflow() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Help {
+            return_screen: Box::new(Screen::HostList),
+        };
+        app.ui.help_scroll = 0;
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::PageUp), &tx);
+        assert_eq!(app.ui.help_scroll, 0);
+    }
+
+    #[test]
+    fn test_help_scroll_reset_on_close() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Help {
+            return_screen: Box::new(Screen::HostList),
+        };
+        app.ui.help_scroll = 7;
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        assert_eq!(app.ui.help_scroll, 0);
+        assert!(matches!(app.screen, Screen::HostList));
+    }
+
+    // --- Help close via q and ? ---
+
+    #[test]
+    fn test_help_q_closes_and_returns() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Help {
+            return_screen: Box::new(Screen::TunnelList {
+                alias: "web".to_string(),
+            }),
+        };
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('q')), &tx);
+        assert!(matches!(app.screen, Screen::TunnelList { .. }));
+        assert_eq!(app.ui.help_scroll, 0);
+    }
+
+    #[test]
+    fn test_help_question_again_closes_and_returns() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Help {
+            return_screen: Box::new(Screen::Containers {
+                alias: "web".to_string(),
+            }),
+        };
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('?')), &tx);
+        assert!(matches!(app.screen, Screen::Containers { .. }));
+        assert_eq!(app.ui.help_scroll, 0);
+    }
+
+    // --- Return screen field preservation ---
+
+    #[test]
+    fn test_file_browser_help_return_preserves_alias() {
+        let mut app = make_app("Host myserver\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Help {
+            return_screen: Box::new(Screen::FileBrowser {
+                alias: "myserver".to_string(),
+            }),
+        };
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        match &app.screen {
+            Screen::FileBrowser { alias } => {
+                assert_eq!(alias, "myserver");
+            }
+            other => panic!("Expected FileBrowser, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_snippet_output_help_return_preserves_fields() {
+        let mut app = make_app("Host a\n  HostName 1.2.3.4\nHost b\n  HostName 5.6.7.8\n");
+        app.screen = Screen::Help {
+            return_screen: Box::new(Screen::SnippetOutput {
+                snippet_name: "check-disk".to_string(),
+                target_aliases: vec!["a".to_string(), "b".to_string()],
+            }),
+        };
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        match &app.screen {
+            Screen::SnippetOutput {
+                snippet_name,
+                target_aliases,
+            } => {
+                assert_eq!(snippet_name, "check-disk");
+                assert_eq!(target_aliases, &vec!["a".to_string(), "b".to_string()]);
+            }
+            other => panic!("Expected SnippetOutput, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_tunnel_list_help_return_preserves_alias() {
+        let mut app = make_app("Host myserver\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Help {
+            return_screen: Box::new(Screen::TunnelList {
+                alias: "myserver".to_string(),
+            }),
+        };
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        match &app.screen {
+            Screen::TunnelList { alias } => {
+                assert_eq!(alias, "myserver");
+            }
+            other => panic!("Expected TunnelList, got {:?}", other),
+        }
+    }
+
+    // --- Non-help screens ignore ? ---
+
+    #[test]
+    fn test_confirm_delete_question_does_not_open_help() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::ConfirmDelete {
+            alias: "web".to_string(),
+        };
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('?')), &tx);
+        assert!(
+            matches!(app.screen, Screen::ConfirmDelete { .. }),
+            "Expected ConfirmDelete screen, got {:?}",
+            app.screen
+        );
+    }
+
+    #[test]
+    fn test_tag_picker_question_opens_help() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::TagPicker;
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('?')), &tx);
+        match &app.screen {
+            Screen::Help { return_screen } => {
+                assert!(matches!(**return_screen, Screen::TagPicker));
+            }
+            other => panic!("expected Help, got {:?}", std::mem::discriminant(other)),
+        }
+    }
+
+    #[test]
+    fn test_key_list_question_opens_help() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::KeyList;
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('?')), &tx);
+        match &app.screen {
+            Screen::Help { return_screen } => {
+                assert!(matches!(**return_screen, Screen::KeyList));
+            }
+            other => panic!("expected Help, got {:?}", std::mem::discriminant(other)),
+        }
+    }
+
+    #[test]
+    fn test_key_detail_question_opens_help() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::KeyDetail { index: 0 };
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('?')), &tx);
+        match &app.screen {
+            Screen::Help { return_screen } => {
+                assert!(matches!(**return_screen, Screen::KeyDetail { .. }));
+            }
+            other => panic!("expected Help, got {:?}", std::mem::discriminant(other)),
+        }
+    }
+
+    #[test]
+    fn test_host_detail_question_opens_help() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::HostDetail { index: 0 };
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('?')), &tx);
+        match &app.screen {
+            Screen::Help { return_screen } => {
+                assert!(matches!(**return_screen, Screen::HostDetail { .. }));
+            }
+            other => panic!("expected Help, got {:?}", std::mem::discriminant(other)),
+        }
+    }
+
+    #[test]
+    fn test_providers_question_opens_help() {
+        let mut app = make_app("Host web\n  HostName 1.2.3.4\n");
+        app.screen = Screen::Providers;
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('?')), &tx);
+        match &app.screen {
+            Screen::Help { return_screen } => {
+                assert!(matches!(**return_screen, Screen::Providers));
+            }
+            other => panic!("expected Help, got {:?}", std::mem::discriminant(other)),
+        }
     }
 }
