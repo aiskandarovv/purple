@@ -311,7 +311,7 @@ A: Yes. purple uses the Bitwarden CLI (bw) for Bitwarden password sources. If yo
 
 ## Status
 
-- Current version: 2.14.1 (March 2026)
+- Current version: 2.14.2 (March 2026)
 - Release cadence: approximately bi-weekly
 - Test suite: 4700+ tests (unit, integration, property-based and HTTP mocking)
 - CI: fmt, clippy, test on macOS and Linux, cargo-deny, MSRV 1.86 check

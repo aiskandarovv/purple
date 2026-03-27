@@ -1,3 +1,8 @@
+## 2.14.2
+
+- Add fuzz-equivalent property tests for SSH config parser
+- Arbitrary Unicode and raw byte inputs now verify idempotency and mutation safety (delete, undo, update, swap, add) in CI
+
 ## 2.14.1
 
 - Fix Oracle Cloud group header cleanup. Orphaned headers were not removed when all Oracle hosts disappeared
@@ -140,7 +145,7 @@
 - Multi-level undo for host deletion (up to 50 levels)
 - Welcome screen with one-time backup of original SSH config to ~/.purple/config.original
 - Advisory file locking prevents concurrent write corruption
-- New hosts insert before trailing Host * blocks to preserve SSH first-match-wins ordering
+- New hosts insert before trailing Host \* blocks to preserve SSH first-match-wins ordering
 - Inline comments preserved when updating directives
 - UpCloud boot disk preferred over first storage device for image metadata
 - Scaleway pagination via response body instead of X-Total-Count header

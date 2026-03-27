@@ -1,6 +1,6 @@
 [package]
 name = "purple-ssh"
-version = "2.14.1"
+version = "2.14.2"
 edition = "2024"
 description = "Search your SSH config instantly, connect to any host with one keystroke and sync servers from 12 cloud providers. Visual file transfer, Docker/Podman container management over SSH, password management and command snippets. Edits ~/.ssh/config with round-trip fidelity."
 license = "MIT"

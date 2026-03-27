@@ -560,6 +560,146 @@ proptest! {
 }
 
 // ---------------------------------------------------------------------------
+// Property: arbitrary input — full fuzz-equivalent (idempotency + mutations)
+// ---------------------------------------------------------------------------
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(2000))]
+
+    /// Mirrors the cargo-fuzz harness: parse, serialize, verify idempotency,
+    /// then exercise mutations (delete, undo, update, swap, add) on arbitrary
+    /// Unicode input. Runs in CI unlike cargo-fuzz.
+    #[test]
+    fn arbitrary_input_idempotent_with_mutations(content in "\\PC{0,500}") {
+        let config = parse_str(&content);
+        let serialized = config.serialize();
+
+        // Idempotency: serialize(reparse(serialized)) == serialized
+        let reparsed = parse_str(&serialized);
+        let reserialized = reparsed.serialize();
+        prop_assert!(
+            serialized == reserialized,
+            "Idempotency broken on arbitrary input (len {} vs {})",
+            serialized.len(),
+            reserialized.len(),
+        );
+
+        // Mutation smoke tests (must not panic)
+        let entries = config.host_entries();
+        if !entries.is_empty() {
+            let alias = entries[0].alias.clone();
+
+            // Delete
+            let mut config_del = config.clone();
+            config_del.delete_host(&alias);
+            let _ = config_del.serialize();
+
+            // Delete undoable + undo
+            let mut config_undo = config.clone();
+            if let Some((element, position)) = config_undo.delete_host_undoable(&alias) {
+                config_undo.insert_host_at(element, position);
+                let _ = config_undo.serialize();
+            }
+
+            // Update
+            let mut config_upd = config.clone();
+            config_upd.update_host(
+                &alias,
+                &HostEntry {
+                    alias: alias.clone(),
+                    hostname: "10.0.0.1".to_string(),
+                    user: "fuzz".to_string(),
+                    port: 22,
+                    ..Default::default()
+                },
+            );
+            let s = config_upd.serialize();
+            let r = parse_str(&s);
+            prop_assert!(s == r.serialize(), "Idempotency broken after update");
+
+            // Swap (if 2+ hosts)
+            if entries.len() >= 2 {
+                let mut config_swap = config.clone();
+                config_swap.swap_hosts(&entries[0].alias, &entries[1].alias);
+                let s = config_swap.serialize();
+                let r = parse_str(&s);
+                prop_assert!(s == r.serialize(), "Idempotency broken after swap");
+            }
+        }
+
+        // Add host
+        let mut config_add = config.clone();
+        config_add.add_host(&HostEntry {
+            alias: "proptest-new-host".to_string(),
+            hostname: "10.0.0.99".to_string(),
+            user: "tester".to_string(),
+            port: 22,
+            ..Default::default()
+        });
+        let s = config_add.serialize();
+        let r = parse_str(&s);
+        prop_assert!(s == r.serialize(), "Idempotency broken after add");
+    }
+
+    /// Same as above but starting from raw bytes (catches encoding edge cases).
+    #[test]
+    fn arbitrary_bytes_idempotent_with_mutations(bytes in prop::collection::vec(any::<u8>(), 0..1000)) {
+        let Ok(content) = String::from_utf8(bytes) else {
+            return Ok(());
+        };
+
+        let config = parse_str(&content);
+        let serialized = config.serialize();
+
+        // Idempotency
+        let reparsed = parse_str(&serialized);
+        let reserialized = reparsed.serialize();
+        prop_assert!(
+            serialized == reserialized,
+            "Idempotency broken on raw bytes input (len {} vs {})",
+            serialized.len(),
+            reserialized.len(),
+        );
+
+        // Mutations
+        let entries = config.host_entries();
+        if !entries.is_empty() {
+            let alias = entries[0].alias.clone();
+
+            let mut config_del = config.clone();
+            config_del.delete_host(&alias);
+            let s = config_del.serialize();
+            prop_assert!(s == parse_str(&s).serialize());
+
+            let mut config_upd = config.clone();
+            config_upd.update_host(
+                &alias,
+                &HostEntry {
+                    alias: alias.clone(),
+                    hostname: "10.0.0.1".to_string(),
+                    user: "fuzz".to_string(),
+                    port: 22,
+                    ..Default::default()
+                },
+            );
+            let s = config_upd.serialize();
+            prop_assert!(s == parse_str(&s).serialize());
+        }
+
+        let mut config_add = config.clone();
+        config_add.add_host(&HostEntry {
+            alias: "proptest-new-host".to_string(),
+            hostname: "10.0.0.99".to_string(),
+            user: "tester".to_string(),
+            port: 22,
+            ..Default::default()
+        });
+        let s = config_add.serialize();
+        prop_assert!(s == parse_str(&s).serialize());
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Property: swap_hosts is reversible
 // ---------------------------------------------------------------------------
 
