@@ -1521,7 +1521,8 @@ purple does not use a proprietary database. All host configuration lives in ~/.s
 - GitHub: https://github.com/erickochen/purple
 - Crate: https://crates.io/crates/purple-ssh
 - Security: https://github.com/erickochen/purple/blob/master/SECURITY.md
-- License: MIT`;
+- License: MIT
+`;
 
 BunnySDK.net.http.serve(async (request: Request): Promise<Response> => {
   const url = new URL(request.url);
