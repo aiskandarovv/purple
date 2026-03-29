@@ -1015,7 +1015,7 @@ footer a:hover { color: var(--accent); }
 
   <section id="rust">
     <h2>Built with Rust</h2>
-    <p>Starts instantly. No dependencies to install. No daemon running in the background. Won't corrupt your config. Single binary. MIT licensed. 4800+ tests.</p>
+    <p>Starts instantly. No dependencies to install. No daemon running in the background. Won't corrupt your config. Single binary. MIT licensed. 5000+ tests.</p>
   </section>
 
   <hr class="divider">
@@ -1385,7 +1385,7 @@ Consecutive blank lines are collapsed to one. Hosts from Include files are displ
 - Language: Rust
 - Platforms: macOS and Linux
 - Binary name: purple (crate name: purple-ssh)
-- Tests: 4800+ (unit + integration + property-based + mockito HTTP)
+- Tests: 5000+ (unit + integration + property-based + mockito HTTP)
 - No async runtime. Single binary, no daemon
 - Atomic writes via temp file + chmod 600 + rename
 - Uses system ssh binary with -F <config_path>
@@ -1500,7 +1500,7 @@ A: Yes. purple uses the Bitwarden CLI (bw) for Bitwarden password sources. If yo
 
 - Current version: 2.18.0 (March 2026)
 - Release cadence: approximately bi-weekly
-- Test suite: 4800+ tests (unit, integration, property-based and HTTP mocking)
+- Test suite: 5000+ tests (unit, integration, property-based and HTTP mocking)
 - CI: fmt, clippy, test on macOS and Linux, cargo-deny, MSRV 1.86 check
 - Dependencies actively maintained
 

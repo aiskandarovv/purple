@@ -30,7 +30,7 @@ From one terminal interface you can:
 - **Retrieve SSH passwords** automatically (OS Keychain, 1Password, Bitwarden, pass, HashiCorp Vault or a custom command)
 - **Integrate with AI agents** via MCP (Model Context Protocol). Claude Code, Cursor and other AI assistants can query hosts, run commands and manage containers
 
-Written in Rust. Single binary, no daemon, no runtime required. 4800+ tests. MIT license.
+Written in Rust. Single binary, no daemon, no runtime required. 5000+ tests. MIT license.
 
 ## Install
 
@@ -205,7 +205,7 @@ Found a bug or have a feature request? [Open an issue on GitHub](https://github.
 
 ## Built with
 
-Written in Rust. 4800+ tests (unit, integration, property-based and HTTP mocking). Zero clippy warnings. No async runtime. Works in any terminal emulator that supports ANSI escape codes including iTerm2, Terminal.app, Alacritty, kitty, WezTerm, Warp and Windows Terminal (via WSL).
+Written in Rust. 5000+ tests (unit, integration, property-based and HTTP mocking). Zero clippy warnings. No async runtime. Works in any terminal emulator that supports ANSI escape codes including iTerm2, Terminal.app, Alacritty, kitty, WezTerm, Warp and Windows Terminal (via WSL).
 
 <p align="center">
   <a href="LICENSE">MIT License</a>
