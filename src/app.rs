@@ -545,6 +545,16 @@ impl ProviderFormField {
         ProviderFormField::AutoSync,
     ];
 
+    const OVH_FIELDS: &[ProviderFormField] = &[
+        ProviderFormField::Token,
+        ProviderFormField::Project,
+        ProviderFormField::Regions,
+        ProviderFormField::AliasPrefix,
+        ProviderFormField::User,
+        ProviderFormField::IdentityFile,
+        ProviderFormField::AutoSync,
+    ];
+
     pub fn fields_for(provider: &str) -> &'static [ProviderFormField] {
         match provider {
             "proxmox" => Self::PROXMOX_FIELDS,
@@ -553,6 +563,7 @@ impl ProviderFormField {
             "gcp" => Self::GCP_FIELDS,
             "azure" => Self::AZURE_FIELDS,
             "oracle" => Self::ORACLE_FIELDS,
+            "ovh" => Self::OVH_FIELDS,
             _ => Self::CLOUD_FIELDS,
         }
     }
@@ -4251,6 +4262,18 @@ Host vultr-app
     }
 
     #[test]
+    fn test_provider_form_field_ovh_fields() {
+        let fields = ProviderFormField::fields_for("ovh");
+        assert_eq!(*fields.last().unwrap(), ProviderFormField::AutoSync);
+        assert!(fields.contains(&ProviderFormField::Token));
+        assert!(fields.contains(&ProviderFormField::Project));
+        assert!(fields.contains(&ProviderFormField::Regions));
+        assert!(fields.contains(&ProviderFormField::AliasPrefix));
+        assert!(!fields.contains(&ProviderFormField::Url));
+        assert!(!fields.contains(&ProviderFormField::VerifyTls));
+    }
+
+    #[test]
     fn test_provider_form_field_auto_sync_is_last_in_all_field_lists() {
         let cloud = ProviderFormField::fields_for("digitalocean");
         assert_eq!(*cloud.last().unwrap(), ProviderFormField::AutoSync);
@@ -4276,6 +4299,13 @@ Host vultr-app
         assert!(!azure.contains(&ProviderFormField::Profile));
         assert!(!azure.contains(&ProviderFormField::Url));
         assert!(!azure.contains(&ProviderFormField::VerifyTls));
+
+        let ovh = ProviderFormField::fields_for("ovh");
+        assert_eq!(*ovh.last().unwrap(), ProviderFormField::AutoSync);
+        assert!(ovh.contains(&ProviderFormField::Token));
+        assert!(ovh.contains(&ProviderFormField::Project));
+        assert!(ovh.contains(&ProviderFormField::Regions));
+        assert!(!ovh.contains(&ProviderFormField::Url));
     }
 
     #[test]

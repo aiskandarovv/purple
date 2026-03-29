@@ -1832,7 +1832,7 @@ fn handle_provider_form(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<A
             } else if f == crate::app::ProviderFormField::Regions
                 && matches!(
                     provider_name.as_str(),
-                    "aws" | "scaleway" | "gcp" | "oracle"
+                    "aws" | "scaleway" | "gcp" | "oracle" | "ovh"
                 )
             {
                 app.ui.show_region_picker = true;
@@ -1913,6 +1913,10 @@ pub(crate) fn zone_data_for(provider: &str) -> (ZoneList, ZoneGroups) {
             crate::providers::oracle::OCI_REGIONS,
             crate::providers::oracle::OCI_REGION_GROUPS,
         ),
+        "ovh" => (
+            crate::providers::ovh::OVH_ENDPOINTS,
+            crate::providers::ovh::OVH_ENDPOINT_GROUPS,
+        ),
         _ => unreachable!(
             "zone_data_for called for unsupported provider: {}",
             provider
@@ -1939,12 +1943,41 @@ fn handle_region_picker(app: &mut App, key: KeyEvent) {
 
     let zone_label = if matches!(provider_name.as_str(), "scaleway" | "gcp") {
         "zone"
+    } else if provider_name == "ovh" {
+        "endpoint"
     } else {
         "region"
     };
 
     match key.code {
-        KeyCode::Esc | KeyCode::Enter => {
+        KeyCode::Esc => {
+            app.provider_form.regions = rebuild_regions_string(&selected, &provider_name);
+            app.provider_form.sync_cursor_to_end();
+            app.ui.show_region_picker = false;
+            let count = selected.len();
+            if count > 0 {
+                app.set_status(
+                    format!(
+                        "{} {}{} selected.",
+                        count,
+                        zone_label,
+                        if count == 1 { "" } else { "s" }
+                    ),
+                    false,
+                );
+            }
+        }
+        KeyCode::Enter => {
+            // For single-select providers (OVH): Enter on an item selects it
+            // exclusively and closes. For multi-select: Enter confirms current
+            // selection (same as Esc).
+            if provider_name == "ovh" {
+                let cursor = app.ui.region_picker_cursor;
+                if let Some(Some(code)) = rows.get(cursor) {
+                    selected.clear();
+                    selected.insert(code.to_string());
+                }
+            }
             app.provider_form.regions = rebuild_regions_string(&selected, &provider_name);
             app.provider_form.sync_cursor_to_end();
             app.ui.show_region_picker = false;
@@ -4845,6 +4878,174 @@ mod tests {
         let (tx, _rx) = mpsc::channel();
         let _ = handle_key_event(&mut app, key(KeyCode::Char('a')), &tx);
         assert_eq!(app.provider_form.regions, "a");
+    }
+
+    fn make_ovh_form_app() -> App {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        app.screen = Screen::ProviderForm {
+            provider: "ovh".to_string(),
+        };
+        app.provider_form = ProviderFormFields {
+            url: String::new(),
+            token: "ak:as:ck".to_string(),
+            profile: String::new(),
+            project: "proj-123".to_string(),
+            compartment: String::new(),
+            regions: String::new(),
+            alias_prefix: "ovh".to_string(),
+            user: "ubuntu".to_string(),
+            identity_file: String::new(),
+            verify_tls: true,
+            auto_sync: true,
+            focused_field: ProviderFormField::Token,
+            cursor_pos: 0,
+        };
+        app
+    }
+
+    #[test]
+    fn test_ovh_enter_on_regions_opens_picker() {
+        let mut app = make_ovh_form_app();
+        app.provider_form.focused_field = ProviderFormField::Regions;
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert!(
+            app.ui.show_region_picker,
+            "Enter on OVH Regions should open picker"
+        );
+        assert_eq!(app.ui.region_picker_cursor, 0);
+    }
+
+    #[test]
+    fn test_ovh_picker_select_eu() {
+        let mut app = make_ovh_form_app();
+        app.provider_form.focused_field = ProviderFormField::Regions;
+        app.ui.show_region_picker = true;
+        app.ui.region_picker_cursor = 0;
+
+        // Cursor starts on group header "API Endpoint" (row 0).
+        // Row 1 = "eu", Row 2 = "ca", Row 3 = "us"
+        // Move down to "eu" (row 1)
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
+        assert_eq!(app.ui.region_picker_cursor, 1);
+
+        // Press Space to select "eu"
+        let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
+        assert_eq!(app.provider_form.regions, "eu");
+
+        // Press Enter to confirm
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert!(!app.ui.show_region_picker);
+        assert_eq!(app.provider_form.regions, "eu");
+    }
+
+    #[test]
+    fn test_ovh_picker_select_us() {
+        let mut app = make_ovh_form_app();
+        app.ui.show_region_picker = true;
+        app.ui.region_picker_cursor = 0;
+        app.screen = Screen::ProviderForm {
+            provider: "ovh".to_string(),
+        };
+
+        // Move to "us" (row 3: header=0, eu=1, ca=2, us=3)
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
+        assert_eq!(app.ui.region_picker_cursor, 3);
+
+        let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
+        assert_eq!(app.provider_form.regions, "us");
+
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert!(!app.ui.show_region_picker);
+        assert_eq!(app.provider_form.regions, "us");
+    }
+
+    #[test]
+    fn test_ovh_picker_space_on_header_toggles_all() {
+        let mut app = make_ovh_form_app();
+        app.ui.show_region_picker = true;
+        app.ui.region_picker_cursor = 0; // Group header
+        app.screen = Screen::ProviderForm {
+            provider: "ovh".to_string(),
+        };
+
+        let (tx, _rx) = mpsc::channel();
+        // Space on header selects all endpoints
+        let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
+        // All three should be selected (order preserved by OVH_ENDPOINTS)
+        assert_eq!(app.provider_form.regions, "eu,ca,us");
+
+        // Space again on header deselects all
+        let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
+        assert_eq!(app.provider_form.regions, "");
+    }
+
+    #[test]
+    fn test_ovh_endpoint_picker_rows() {
+        let rows = region_picker_rows("ovh");
+        assert_eq!(rows.len(), 4); // 1 header + 3 endpoints
+        assert_eq!(rows[0], None); // group header
+        assert_eq!(rows[1], Some("eu"));
+        assert_eq!(rows[2], Some("ca"));
+        assert_eq!(rows[3], Some("us"));
+    }
+
+    #[test]
+    fn test_ovh_picker_enter_selects_and_closes() {
+        // OVH is single-select: Enter on an item should select it and close
+        let mut app = make_ovh_form_app();
+        app.ui.show_region_picker = true;
+        app.ui.region_picker_cursor = 0;
+        app.screen = Screen::ProviderForm {
+            provider: "ovh".to_string(),
+        };
+
+        let (tx, _rx) = mpsc::channel();
+        // Move to "ca" (row 2)
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
+        assert_eq!(app.ui.region_picker_cursor, 2);
+
+        // Enter directly (no Space needed) selects "ca" and closes
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert!(!app.ui.show_region_picker);
+        assert_eq!(app.provider_form.regions, "ca");
+    }
+
+    #[test]
+    fn test_ovh_picker_enter_on_header_closes_without_select() {
+        let mut app = make_ovh_form_app();
+        app.ui.show_region_picker = true;
+        app.ui.region_picker_cursor = 0; // group header
+        app.screen = Screen::ProviderForm {
+            provider: "ovh".to_string(),
+        };
+
+        let (tx, _rx) = mpsc::channel();
+        // Enter on header: no item to select, just closes
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert!(!app.ui.show_region_picker);
+        assert_eq!(app.provider_form.regions, "");
+    }
+
+    #[test]
+    fn test_ovh_picker_enter_replaces_previous_selection() {
+        let mut app = make_ovh_form_app();
+        app.provider_form.regions = "eu".to_string(); // previously selected EU
+        app.ui.show_region_picker = true;
+        app.ui.region_picker_cursor = 3; // "us"
+        app.screen = Screen::ProviderForm {
+            provider: "ovh".to_string(),
+        };
+
+        let (tx, _rx) = mpsc::channel();
+        // Enter on "us" should replace "eu" with "us" (single-select)
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert_eq!(app.provider_form.regions, "us");
     }
 
     #[test]

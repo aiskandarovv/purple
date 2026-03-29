@@ -6,6 +6,7 @@ pub mod gcp;
 mod hetzner;
 mod linode;
 pub mod oracle;
+pub mod ovh;
 mod proxmox;
 pub mod scaleway;
 pub mod sync;
@@ -114,6 +115,7 @@ pub const PROVIDER_NAMES: &[&str] = &[
     "azure",
     "tailscale",
     "oracle",
+    "ovh",
 ];
 
 /// Get a provider implementation by name.
@@ -144,6 +146,10 @@ pub fn get_provider(name: &str) -> Option<Box<dyn Provider>> {
         "oracle" => Some(Box::new(oracle::Oracle {
             regions: Vec::new(),
             compartment: String::new(),
+        })),
+        "ovh" => Some(Box::new(ovh::Ovh {
+            project: String::new(),
+            endpoint: String::new(),
         })),
         _ => None,
     }
@@ -204,6 +210,10 @@ pub fn get_provider_with_config(
                 .collect(),
             compartment: section.compartment.clone(),
         })),
+        "ovh" => Some(Box::new(ovh::Ovh {
+            project: section.project.clone(),
+            endpoint: section.regions.clone(),
+        })),
         _ => get_provider(name),
     }
 }
@@ -223,6 +233,7 @@ pub fn provider_display_name(name: &str) -> &str {
         "azure" => "Azure",
         "tailscale" => "Tailscale",
         "oracle" => "Oracle Cloud",
+        "ovh" => "OVHcloud",
         other => other,
     }
 }
@@ -622,6 +633,7 @@ mod tests {
         assert_eq!(provider_display_name("azure"), "Azure");
         assert_eq!(provider_display_name("tailscale"), "Tailscale");
         assert_eq!(provider_display_name("oracle"), "Oracle Cloud");
+        assert_eq!(provider_display_name("ovh"), "OVHcloud");
     }
 
     #[test]
@@ -639,7 +651,7 @@ mod tests {
 
     #[test]
     fn test_provider_names_count() {
-        assert_eq!(PROVIDER_NAMES.len(), 12);
+        assert_eq!(PROVIDER_NAMES.len(), 13);
     }
 
     #[test]
@@ -656,6 +668,7 @@ mod tests {
         assert!(PROVIDER_NAMES.contains(&"azure"));
         assert!(PROVIDER_NAMES.contains(&"tailscale"));
         assert!(PROVIDER_NAMES.contains(&"oracle"));
+        assert!(PROVIDER_NAMES.contains(&"ovh"));
     }
 
     // =========================================================================
@@ -894,6 +907,7 @@ mod tests {
         assert_eq!(provider_display_name("azure"), "Azure");
         assert_eq!(provider_display_name("tailscale"), "Tailscale");
         assert_eq!(provider_display_name("oracle"), "Oracle Cloud");
+        assert_eq!(provider_display_name("ovh"), "OVHcloud");
     }
 
     #[test]
@@ -932,8 +946,8 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn test_provider_names_has_all_twelve() {
-        assert_eq!(PROVIDER_NAMES.len(), 12);
+    fn test_provider_names_has_all_thirteen() {
+        assert_eq!(PROVIDER_NAMES.len(), 13);
         assert!(PROVIDER_NAMES.contains(&"digitalocean"));
         assert!(PROVIDER_NAMES.contains(&"proxmox"));
         assert!(PROVIDER_NAMES.contains(&"aws"));
@@ -941,6 +955,7 @@ mod tests {
         assert!(PROVIDER_NAMES.contains(&"azure"));
         assert!(PROVIDER_NAMES.contains(&"tailscale"));
         assert!(PROVIDER_NAMES.contains(&"oracle"));
+        assert!(PROVIDER_NAMES.contains(&"ovh"));
     }
 
     // =========================================================================

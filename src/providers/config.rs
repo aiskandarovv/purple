@@ -857,6 +857,8 @@ verify_tls=false
             "gcp",
             "azure",
             "tailscale",
+            "oracle",
+            "ovh",
         ] {
             let content = format!("[{}]\ntoken=abc\n", provider);
             let config = ProviderConfig::parse(&content);

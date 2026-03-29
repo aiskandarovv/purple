@@ -1,3 +1,12 @@
+## 2.17.0
+
+- OVHcloud Public Cloud provider. 13 cloud providers now supported
+- Custom OVH API signature authentication (SHA-1 signing with application key, secret and consumer key)
+- EU, CA and US API endpoint picker (defaults to EU)
+- Syncs instance name, IP, region, flavor type, OS image and status as provider metadata
+- Public IPv4 preferred, falls back to public IPv6 then private IPv4. CIDR suffixes stripped automatically
+- HTTPS enforced on all OVH API calls. Project ID validated before any network request
+
 ## 2.16.0
 
 - Smooth animations for overlays, detail panel and welcome screen

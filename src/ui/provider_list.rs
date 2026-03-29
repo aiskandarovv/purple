@@ -228,11 +228,11 @@ pub fn render_provider_form(frame: &mut Frame, app: &mut App, provider_name: &st
         } else {
             theme::muted()
         };
-        let is_required = matches!(field, ProviderFormField::Url)
+        let is_required = (field == ProviderFormField::Url)
             || (field == ProviderFormField::Token
                 && provider_name != "aws"
                 && provider_name != "tailscale")
-            || (field == ProviderFormField::Project && provider_name == "gcp")
+            || (field == ProviderFormField::Project && matches!(provider_name, "gcp" | "ovh"))
             || (field == ProviderFormField::Compartment && provider_name == "oracle")
             || (field == ProviderFormField::Regions
                 && matches!(provider_name, "aws" | "scaleway" | "azure"));
@@ -241,6 +241,8 @@ pub fn render_provider_form(frame: &mut Frame, app: &mut App, provider_name: &st
                 "Zones"
             } else if field == ProviderFormField::Regions && provider_name == "azure" {
                 "Subscriptions"
+            } else if field == ProviderFormField::Regions && provider_name == "ovh" {
+                "Endpoint"
             } else {
                 field.label()
             };
@@ -314,15 +316,20 @@ fn placeholder_for(field: ProviderFormField, provider_name: &str) -> &'static st
             "azure" => "/path/to/service-principal.json (or access token)",
             "tailscale" => "API key (leave empty for local CLI)",
             "oracle" => "~/.oci/config",
+            "ovh" => "app_key:app_secret:consumer_key",
             _ => "your-api-token",
         },
         ProviderFormField::Profile => "Name from ~/.aws/credentials (or use Token)",
-        ProviderFormField::Project => "my-gcp-project-id",
+        ProviderFormField::Project => match provider_name {
+            "ovh" => "Public Cloud project ID",
+            _ => "my-gcp-project-id",
+        },
         ProviderFormField::Compartment => "ocid1.compartment.oc1..aaaa...",
         ProviderFormField::Regions => match provider_name {
             "gcp" => "Enter to select zones (empty = all)",
             "scaleway" => "Enter to select zones",
             "azure" => "comma-separated subscription IDs",
+            "ovh" => "Enter to select endpoint (default: EU)",
             _ => "Enter to select regions",
         },
         ProviderFormField::AliasPrefix => match provider_name {
@@ -338,6 +345,7 @@ fn placeholder_for(field: ProviderFormField, provider_name: &str) -> &'static st
             "azure" => "az",
             "tailscale" => "ts",
             "oracle" => "oci",
+            "ovh" => "ovh",
             _ => "prefix",
         },
         ProviderFormField::User => match provider_name {
@@ -345,6 +353,7 @@ fn placeholder_for(field: ProviderFormField, provider_name: &str) -> &'static st
             "gcp" => "ubuntu",
             "azure" => "azureuser",
             "oracle" => "opc",
+            "ovh" => "ubuntu",
             _ => "root",
         },
         ProviderFormField::IdentityFile => "Enter to pick a key",
@@ -421,7 +430,7 @@ fn render_field_content(
 
     let is_picker = matches!(field, ProviderFormField::IdentityFile)
         || (field == ProviderFormField::Regions
-            && matches!(provider_name, "aws" | "scaleway" | "gcp" | "oracle"));
+            && matches!(provider_name, "aws" | "scaleway" | "gcp" | "oracle" | "ovh"));
 
     let content = if value.is_empty() && is_focused && !is_picker {
         Line::from(Span::styled(
@@ -522,6 +531,8 @@ fn render_region_picker_overlay(frame: &mut Frame, app: &mut App) {
     let count = selected.len();
     let zone_label = if matches!(provider_name, "scaleway" | "gcp") {
         "Zones"
+    } else if provider_name == "ovh" {
+        "Endpoint"
     } else {
         "Regions"
     };
