@@ -5,14 +5,14 @@ use std::sync::mpsc;
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::app::{App, FormField, HostForm, ProviderFormFields, Screen, ViewMode};
+use crate::app::{App, DetailAnimation, FormField, HostForm, ProviderFormFields, Screen, ViewMode};
 use crate::clipboard;
 use crate::event::AppEvent;
 use crate::ping;
 use crate::preferences;
 use crate::providers;
 use crate::quick_add;
-use crate::ssh_config::model::ConfigElement;
+use crate::ssh_config::model::{ConfigElement, HostEntry};
 
 /// Create a sender that maps SnippetEvent to AppEvent.
 fn snippet_event_bridge(tx: &mpsc::Sender<AppEvent>) -> mpsc::Sender<crate::snippet::SnippetEvent> {
@@ -270,6 +270,31 @@ fn stale_provider_hint(host: &crate::ssh_config::model::HostEntry) -> String {
         .unwrap_or_default()
 }
 
+/// Open the edit form for `host`. Returns `true` if the form was opened,
+/// `false` if the host is from an include file (status message set instead).
+fn open_edit_form(app: &mut App, host: HostEntry) -> bool {
+    if let Some(ref source) = host.source_file {
+        app.set_status(
+            format!(
+                "{} lives in {}. Edit it there.",
+                host.alias,
+                source.display()
+            ),
+            true,
+        );
+        return false;
+    }
+    let stale_hint = host.stale.is_some().then(|| stale_provider_hint(&host));
+    app.form = HostForm::from_entry(&host);
+    if let Some(hint) = stale_hint {
+        app.set_status(format!("Stale host.{}", hint), true);
+    }
+    app.screen = Screen::EditHost { alias: host.alias };
+    app.capture_form_mtime();
+    app.capture_form_baseline();
+    true
+}
+
 fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEvent>) {
     // Handle tag input mode
     if app.tag_input.is_some() {
@@ -315,26 +340,8 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
             app.capture_form_baseline();
         }
         KeyCode::Char('e') => {
-            if let Some(host) = app.selected_host() {
-                if let Some(ref source) = host.source_file {
-                    let alias = host.alias.clone();
-                    let path = source.display();
-                    app.set_status(format!("{} lives in {}. Edit it there.", alias, path), true);
-                    return;
-                }
-                let stale_hint = if host.stale.is_some() {
-                    Some(stale_provider_hint(host))
-                } else {
-                    None
-                };
-                let alias = host.alias.clone();
-                app.form = HostForm::from_entry(host);
-                if let Some(hint) = stale_hint {
-                    app.set_status(format!("Stale host.{}", hint), true);
-                }
-                app.screen = Screen::EditHost { alias };
-                app.capture_form_mtime();
-                app.capture_form_baseline();
+            if let Some(host) = app.selected_host().cloned() {
+                open_edit_form(app, host);
             }
         }
         KeyCode::Char('d') => {
@@ -510,10 +517,25 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
             }
         }
         KeyCode::Char('v') => {
-            app.view_mode = match app.view_mode {
-                ViewMode::Compact => ViewMode::Detailed,
-                ViewMode::Detailed => ViewMode::Compact,
+            let opening = app.view_mode == ViewMode::Compact;
+            // Determine current progress if mid-animation
+            let start_progress = if let Some(p) = app.detail_anim_progress() {
+                p
+            } else if opening {
+                0.0
+            } else {
+                1.0
             };
+            app.view_mode = if opening {
+                ViewMode::Detailed
+            } else {
+                ViewMode::Compact
+            };
+            app.detail_anim = Some(DetailAnimation {
+                start: std::time::Instant::now(),
+                opening,
+                start_progress,
+            });
             app.ui.detail_scroll = 0;
             let _ = preferences::save_view_mode(app.view_mode);
         }
@@ -871,6 +893,11 @@ fn handle_host_list_search(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sende
                 } else {
                     app.multi_select.insert(idx);
                 }
+            }
+        }
+        KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            if let Some(host) = app.selected_host().cloned() {
+                open_edit_form(app, host);
             }
         }
         KeyCode::Char(c) => {
@@ -1416,26 +1443,8 @@ fn handle_host_detail(app: &mut App, key: KeyEvent) {
             };
         }
         KeyCode::Char('e') => {
-            if let Some(host) = app.hosts.get(index) {
-                if let Some(ref source) = host.source_file {
-                    let alias = host.alias.clone();
-                    let path = source.display();
-                    app.set_status(format!("{} lives in {}. Edit it there.", alias, path), true);
-                    return;
-                }
-                let stale_hint = if host.stale.is_some() {
-                    Some(stale_provider_hint(host))
-                } else {
-                    None
-                };
-                let alias = host.alias.clone();
-                app.form = HostForm::from_entry(host);
-                if let Some(hint) = stale_hint {
-                    app.set_status(format!("Stale host.{}", hint), true);
-                }
-                app.screen = Screen::EditHost { alias };
-                app.capture_form_mtime();
-                app.capture_form_baseline();
+            if let Some(host) = app.hosts.get(index).cloned() {
+                open_edit_form(app, host);
             }
         }
         KeyCode::Char('T') => {
@@ -5548,6 +5557,40 @@ mod tests {
         let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
         let pending = app.pending_connect.as_ref().unwrap();
         assert_eq!(pending.1, None);
+    }
+
+    // =========================================================================
+    // Ctrl+E edits selected host during search
+    // =========================================================================
+
+    #[test]
+    fn test_search_ctrl_e_opens_edit_form() {
+        let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n");
+        app.screen = Screen::HostList;
+        app.start_search();
+        app.ui.list_state.select(Some(0));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, ctrl_key('e'), &tx);
+        assert!(matches!(app.screen, Screen::EditHost { ref alias } if alias == "myserver"));
+        // Search query should be preserved so user returns to filtered list
+        assert!(app.search.query.is_some());
+    }
+
+    #[test]
+    fn test_search_ctrl_e_blocks_included_host() {
+        let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n");
+        // Simulate an included host by setting source_file
+        if let Some(host) = app.hosts.first_mut() {
+            host.source_file = Some(std::path::PathBuf::from("/etc/ssh/config.d/test"));
+        }
+        app.screen = Screen::HostList;
+        app.start_search();
+        app.ui.list_state.select(Some(0));
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, ctrl_key('e'), &tx);
+        // Should remain in search mode (not open edit form)
+        assert!(matches!(app.screen, Screen::HostList));
+        assert!(app.status.is_some());
     }
 
     // =========================================================================

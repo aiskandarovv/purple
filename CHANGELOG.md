@@ -1,3 +1,13 @@
+## 2.16.0
+
+- Smooth animations for overlays, detail panel and welcome screen
+- Overlay screens open and close with a zoom scale effect (150ms ease-out cubic, 350ms for welcome)
+- Detail panel slides open and closes with a smooth width transition. Pressing `v` mid-animation reverses direction seamlessly
+- Welcome screen redesigned with block-art logo (line-by-line reveal), typewriter text and larger dialog
+- `Ctrl+E` edits the selected host directly from search mode without leaving the search (thanks [@UnspecifiedId](https://www.reddit.com/user/UnspecifiedId/))
+- Form borders use purple accent color for host, provider, tunnel, snippet and parameter forms
+- Animation loop runs at ~60fps during transitions, returns to blocking event wait when idle
+
 ## 2.15.0
 
 - MCP server for AI agents

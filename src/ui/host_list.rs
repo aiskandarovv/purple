@@ -314,10 +314,33 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     };
 
     let content_area = chunks[0];
-    let use_detail = app.view_mode == ViewMode::Detailed && content_area.width >= DETAIL_MIN_WIDTH;
+    let target_detail =
+        app.view_mode == ViewMode::Detailed && content_area.width >= DETAIL_MIN_WIDTH;
+    let full_detail_width = if content_area.width >= 140 {
+        42u16
+    } else {
+        36u16
+    };
+
+    // Calculate detail width: animated or instant.
+    // Only animate when the terminal is wide enough for the detail panel.
+    let detail_width = if content_area.width >= DETAIL_MIN_WIDTH {
+        if let Some(progress) = app.detail_anim_progress() {
+            (progress * full_detail_width as f32).round() as u16
+        } else if target_detail {
+            full_detail_width
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+    let use_detail = detail_width > 0;
+
+    // Minimum width before we render detail content (border + 1 char padding)
+    const DETAIL_RENDER_MIN: u16 = 8;
 
     let (list_area, detail_area) = if use_detail {
-        let detail_width = if content_area.width >= 140 { 42 } else { 36 };
         let [left, right] =
             Layout::horizontal([Constraint::Fill(1), Constraint::Length(detail_width)])
                 .areas(content_area);
@@ -340,7 +363,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             frame,
             chunks[2],
             footer_spans(
-                use_detail,
+                target_detail,
                 app.multi_select.len(),
                 app.group_by_provider,
                 app.hosts.iter().filter(|h| h.stale.is_some()).count(),
@@ -350,7 +373,15 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 
     if let Some(detail) = detail_area {
-        super::detail_panel::render(frame, app, detail);
+        if detail.width >= DETAIL_RENDER_MIN {
+            super::detail_panel::render(frame, app, detail);
+        } else {
+            // During animation: render empty bordered area
+            let block = ratatui::widgets::Block::bordered()
+                .border_type(ratatui::widgets::BorderType::Rounded)
+                .border_style(theme::border());
+            frame.render_widget(block, detail);
+        }
     }
 }
 
@@ -1185,6 +1216,9 @@ fn search_footer_spans<'a>() -> Vec<Span<'a>> {
     vec![
         Span::styled(" Enter", theme::primary_action()),
         Span::styled(" connect ", theme::muted()),
+        Span::styled("\u{2502} ", theme::muted()),
+        Span::styled("Ctrl+E", theme::accent_bold()),
+        Span::styled(" edit ", theme::muted()),
         Span::styled("\u{2502} ", theme::muted()),
         Span::styled("Esc", theme::accent_bold()),
         Span::styled(" cancel ", theme::muted()),

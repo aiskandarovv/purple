@@ -45,7 +45,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
         .title(Span::styled(title, theme::brand()))
-        .border_style(theme::border());
+        .border_style(theme::accent());
 
     let inner = block.inner(block_area);
     frame.render_widget(block, block_area);
@@ -67,7 +67,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             divider_y,
             &label,
             label_style,
-            theme::border(),
+            theme::accent(),
         );
 
         let content_area = Rect::new(inner.x + 1, content_y, inner.width.saturating_sub(1), 1);

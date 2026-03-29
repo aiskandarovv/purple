@@ -599,11 +599,26 @@ fn run_tui(mut app: App) -> Result<()> {
     update::spawn_version_check(events_tx.clone());
 
     while app.running {
+        // Detect overlay transitions and snapshot animation progress before
+        // rendering, so the first frame of a new animation sees the correct
+        // progress instead of a stale None.
+        app.detect_overlay_transition();
+        app.tick_animations();
         terminal.draw(&mut app)?;
 
-        match events.next()? {
-            AppEvent::Key(key) => handler::handle_key_event(&mut app, key, &events_tx)?,
-            AppEvent::Tick => {
+        // During animation, use a short timeout for smooth frames (~60fps).
+        // Otherwise, block until the next event arrives.
+        let event = if app.is_animating() {
+            events.next_timeout(std::time::Duration::from_millis(16))?
+        } else {
+            Some(events.next()?)
+        };
+
+        match event {
+            Some(AppEvent::Key(key)) => {
+                handler::handle_key_event(&mut app, key, &events_tx)?;
+            }
+            Some(AppEvent::Tick) | None => {
                 app.tick_status();
                 // Throttle config file stat() to every 4 seconds
                 if last_config_check.elapsed() >= std::time::Duration::from_secs(4) {
@@ -616,7 +631,7 @@ fn run_tui(mut app: App) -> Result<()> {
                     app.set_status(msg, is_error);
                 }
             }
-            AppEvent::PingResult { alias, reachable } => {
+            Some(AppEvent::PingResult { alias, reachable }) => {
                 let status = if reachable {
                     app::PingStatus::Reachable
                 } else {
@@ -624,7 +639,7 @@ fn run_tui(mut app: App) -> Result<()> {
                 };
                 app.ping_status.insert(alias, status);
             }
-            AppEvent::SyncProgress { provider, message } => {
+            Some(AppEvent::SyncProgress { provider, message }) => {
                 // Only show per-provider progress if no providers have completed yet,
                 // otherwise the rolling summary is more useful.
                 if app.sync_done.is_empty() {
@@ -632,7 +647,7 @@ fn run_tui(mut app: App) -> Result<()> {
                     app.set_status(format!("{}: {}", name, message), false);
                 }
             }
-            AppEvent::SyncComplete { provider, hosts } => {
+            Some(AppEvent::SyncComplete { provider, hosts }) => {
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -664,12 +679,12 @@ fn run_tui(mut app: App) -> Result<()> {
                 app.sync_done.push(display_name.to_string());
                 set_sync_summary(&mut app);
             }
-            AppEvent::SyncPartial {
+            Some(AppEvent::SyncPartial {
                 provider,
                 hosts,
                 failures,
                 total,
-            } => {
+            }) => {
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -704,7 +719,7 @@ fn run_tui(mut app: App) -> Result<()> {
                 app.sync_done.push(display_name.to_string());
                 set_sync_summary(&mut app);
             }
-            AppEvent::SyncError { provider, message } => {
+            Some(AppEvent::SyncError { provider, message }) => {
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
@@ -723,15 +738,15 @@ fn run_tui(mut app: App) -> Result<()> {
                 app.sync_done.push(display_name.to_string());
                 set_sync_summary(&mut app);
             }
-            AppEvent::UpdateAvailable { version, headline } => {
+            Some(AppEvent::UpdateAvailable { version, headline }) => {
                 app.update_available = Some(version);
                 app.update_headline = headline;
             }
-            AppEvent::FileBrowserListing {
+            Some(AppEvent::FileBrowserListing {
                 alias,
                 path,
                 entries,
-            } => {
+            }) => {
                 let mut record_connection = false;
                 if let Some(ref mut fb) = app.file_browser {
                     if fb.alias == alias {
@@ -765,13 +780,14 @@ fn run_tui(mut app: App) -> Result<()> {
                     app.apply_sort();
                 }
                 // Force full redraw: ssh may have written to /dev/tty
+                app.overlay_buffer = None;
                 terminal.force_redraw();
             }
-            AppEvent::ScpComplete {
+            Some(AppEvent::ScpComplete {
                 alias,
                 success,
                 message,
-            } => {
+            }) => {
                 // Track whether we need to spawn a remote refresh (can't do it inside the fb borrow
                 // because spawn_remote_listing needs values from app too)
                 let mut refresh_remote: Option<(
@@ -853,15 +869,16 @@ fn run_tui(mut app: App) -> Result<()> {
                 }
                 askpass::cleanup_marker(&alias);
                 // Force full redraw: ssh may have written to /dev/tty
+                app.overlay_buffer = None;
                 terminal.force_redraw();
             }
-            AppEvent::SnippetHostDone {
+            Some(AppEvent::SnippetHostDone {
                 run_id,
                 alias,
                 stdout,
                 stderr,
                 exit_code,
-            } => {
+            }) => {
                 if let Some(ref mut state) = app.snippet_output {
                     if state.run_id == run_id {
                         state.results.push(app::SnippetHostOutput {
@@ -873,11 +890,11 @@ fn run_tui(mut app: App) -> Result<()> {
                     }
                 }
             }
-            AppEvent::SnippetProgress {
+            Some(AppEvent::SnippetProgress {
                 run_id,
                 completed,
                 total,
-            } => {
+            }) => {
                 if let Some(ref mut state) = app.snippet_output {
                     if state.run_id == run_id {
                         state.completed = completed;
@@ -885,14 +902,14 @@ fn run_tui(mut app: App) -> Result<()> {
                     }
                 }
             }
-            AppEvent::SnippetAllDone { run_id } => {
+            Some(AppEvent::SnippetAllDone { run_id }) => {
                 if let Some(ref mut state) = app.snippet_output {
                     if state.run_id == run_id {
                         state.all_done = true;
                     }
                 }
             }
-            AppEvent::ContainerListing { alias, result } => {
+            Some(AppEvent::ContainerListing { alias, result }) => {
                 // Always update cache, even if overlay is closed
                 match &result {
                     Ok((runtime, containers)) => {
@@ -949,11 +966,11 @@ fn run_tui(mut app: App) -> Result<()> {
                 }
                 askpass::cleanup_marker(&alias);
             }
-            AppEvent::ContainerActionComplete {
+            Some(AppEvent::ContainerActionComplete {
                 alias,
                 action,
                 result,
-            } => {
+            }) => {
                 // Check if overlay matches and extract refresh info before set_status
                 let should_refresh = if let Some(ref mut state) = app.container_state {
                     if state.alias == alias {
@@ -997,7 +1014,7 @@ fn run_tui(mut app: App) -> Result<()> {
                 }
                 askpass::cleanup_marker(&alias);
             }
-            AppEvent::PollError => {
+            Some(AppEvent::PollError) => {
                 app.running = false;
             }
         }

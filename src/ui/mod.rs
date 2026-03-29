@@ -48,15 +48,21 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // but not in overlay footers. render_overlay hides app.status while the
     // overlay renders so render_footer_with_status calls inside overlays ignore it.
     match &app.screen {
-        Screen::HostList => host_list::render(frame, app),
+        Screen::HostList => {
+            host_list::render(frame, app);
+            // Close animation: paint saved overlay buffer with shrinking clip
+            render_overlay_close(frame, app);
+        }
         Screen::AddHost | Screen::EditHost { .. } => {
             host_list::render(frame, app);
-            render_overlay(app, |app| host_form::render(frame, app));
+            render_overlay(frame, app, host_form::render);
         }
         Screen::ConfirmDelete { alias } => {
             let alias = alias.clone();
             host_list::render(frame, app);
-            render_overlay(app, |app| confirm_dialog::render(frame, app, &alias));
+            render_overlay(frame, app, |frame, app| {
+                confirm_dialog::render(frame, app, &alias)
+            });
         }
         Screen::Help { .. } => {
             // Always render host_list as the base layer. Help can be opened from
@@ -64,16 +70,16 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             // originating screen would require it to be the active Screen variant.
             // The help overlay covers most of the area so the base is barely visible.
             host_list::render(frame, app);
-            render_overlay(app, |app| help::render(frame, app));
+            render_overlay(frame, app, help::render);
         }
         Screen::KeyList => {
             host_list::render(frame, app);
-            render_overlay(app, |app| key_list::render(frame, app));
+            render_overlay(frame, app, key_list::render);
         }
         Screen::KeyDetail { index } => {
             let index = *index;
             host_list::render(frame, app);
-            render_overlay(app, |app| {
+            render_overlay(frame, app, |frame, app| {
                 key_list::render(frame, app);
                 key_detail::render(frame, app, index);
             });
@@ -81,43 +87,49 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         Screen::HostDetail { index } => {
             let index = *index;
             host_list::render(frame, app);
-            render_overlay(app, |app| host_detail::render(frame, app, index));
+            render_overlay(frame, app, |frame, app| {
+                host_detail::render(frame, app, index)
+            });
         }
         Screen::TagPicker => {
             host_list::render(frame, app);
-            render_overlay(app, |app| tag_picker::render(frame, app));
+            render_overlay(frame, app, tag_picker::render);
         }
         Screen::Providers => {
             host_list::render(frame, app);
-            render_overlay(app, |app| provider_list::render_provider_list(frame, app));
+            render_overlay(frame, app, |frame, app| {
+                provider_list::render_provider_list(frame, app)
+            });
         }
         Screen::ProviderForm { provider } => {
             let provider = provider.clone();
             host_list::render(frame, app);
-            render_overlay(app, |app| {
+            render_overlay(frame, app, |frame, app| {
                 provider_list::render_provider_form(frame, app, &provider)
             });
         }
         Screen::TunnelList { alias } => {
             let alias = alias.clone();
             host_list::render(frame, app);
-            render_overlay(app, |app| tunnel_list::render(frame, app, &alias));
+            render_overlay(frame, app, |frame, app| {
+                tunnel_list::render(frame, app, &alias)
+            });
         }
         Screen::TunnelForm { alias, .. } => {
             let alias = alias.clone();
             host_list::render(frame, app);
-            render_overlay(app, |app| {
+            render_overlay(frame, app, |frame, app| {
                 tunnel_list::render(frame, app, &alias);
                 tunnel_form::render(frame, app);
             });
         }
         Screen::SnippetPicker { .. } => {
             host_list::render(frame, app);
-            render_overlay(app, |app| snippet_picker::render(frame, app));
+            render_overlay(frame, app, snippet_picker::render);
         }
         Screen::SnippetForm { .. } => {
             host_list::render(frame, app);
-            render_overlay(app, |app| {
+            render_overlay(frame, app, |frame, app| {
                 snippet_picker::render(frame, app);
                 snippet_form::render(frame, app);
             });
@@ -125,21 +137,21 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         Screen::ConfirmHostKeyReset { hostname, .. } => {
             let hostname = hostname.clone();
             host_list::render(frame, app);
-            render_overlay(app, |app| {
+            render_overlay(frame, app, |frame, app| {
                 confirm_dialog::render_host_key_reset(frame, app, &hostname)
             });
         }
         Screen::FileBrowser { .. } => {
             host_list::render(frame, app);
-            render_overlay(app, |app| file_browser::render(frame, app));
+            render_overlay(frame, app, file_browser::render);
         }
         Screen::SnippetOutput { .. } => {
             host_list::render(frame, app);
-            render_overlay(app, |app| snippet_output::render(frame, app));
+            render_overlay(frame, app, snippet_output::render);
         }
         Screen::SnippetParamForm { .. } => {
             host_list::render(frame, app);
-            render_overlay(app, |app| {
+            render_overlay(frame, app, |frame, app| {
                 snippet_picker::render(frame, app);
                 snippet_param_form::render(frame, app);
             });
@@ -147,19 +159,19 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         Screen::ConfirmImport { count } => {
             let count = *count;
             host_list::render(frame, app);
-            render_overlay(app, |app| {
+            render_overlay(frame, app, |frame, app| {
                 confirm_dialog::render_confirm_import(frame, app, count)
             });
         }
         Screen::Containers { .. } => {
             host_list::render(frame, app);
-            render_overlay(app, |app| containers::render(frame, app));
+            render_overlay(frame, app, containers::render);
         }
         Screen::ConfirmPurgeStale { aliases, provider } => {
             let aliases = aliases.clone();
             let provider = provider.clone();
             host_list::render(frame, app);
-            render_overlay(app, |app| {
+            render_overlay(frame, app, |frame, app| {
                 confirm_dialog::render_confirm_purge_stale(frame, app, &aliases, &provider)
             });
         }
@@ -172,7 +184,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             let host_count = *host_count;
             let known_hosts_count = *known_hosts_count;
             host_list::render(frame, app);
-            render_overlay(app, |app| {
+            render_overlay(frame, app, |frame, app| {
                 confirm_dialog::render_welcome(
                     frame,
                     app,
@@ -185,11 +197,97 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 }
 
-/// Hide app.status while rendering an overlay so its footer won't show status.
-fn render_overlay(app: &mut App, f: impl FnOnce(&mut App)) {
+/// Render an overlay with animation support.
+///
+/// Hides app.status while rendering and applies vertical clip animation
+/// for smooth open transitions. Saves the buffer for close animation.
+fn render_overlay(frame: &mut Frame, app: &mut App, f: impl FnOnce(&mut Frame, &mut App)) {
     let status = app.status.take();
-    f(app);
+
+    // Save host list buffer before overlay renders (needed for open animation clip restore)
+    let progress = app.overlay_anim_progress();
+    let animating_open = progress.is_some();
+    let pre_overlay = if animating_open {
+        Some(frame.buffer_mut().clone())
+    } else {
+        None
+    };
+
+    f(frame, app);
+
+    // Save the overlay buffer for close animation only once: the first stable
+    // frame after the open animation completes. During the open animation the
+    // buffer is partially clipped and not suitable for replay. Re-saving every
+    // stable frame would waste ~440KB/frame on large terminals.
+    if !animating_open && app.overlay_buffer.is_none() {
+        app.overlay_buffer = Some(frame.buffer_mut().clone());
+    }
+
+    // Apply opening animation: clip overlay to a growing scaled region
+    if let (Some(progress), Some(saved)) = (progress, pre_overlay) {
+        if progress < 1.0 {
+            apply_scale_clip(frame, &saved, progress);
+        }
+    }
+
     app.status = status;
+}
+
+/// Render the close animation: paint saved overlay buffer with shrinking scale clip.
+fn render_overlay_close(frame: &mut Frame, app: &mut App) {
+    // Only run when a close animation is active
+    let is_closing = app.overlay_anim.as_ref().is_some_and(|a| !a.opening);
+    if !is_closing {
+        return;
+    }
+
+    let progress = match app.overlay_anim_progress() {
+        Some(p) => p,
+        None => return, // Animation expired; tick_animations handles cleanup
+    };
+
+    if let Some(ref saved) = app.overlay_buffer {
+        if progress > 0.0 {
+            let area = frame.area();
+            let (left, right, top, bottom) = scale_clip_rect(area, progress);
+
+            for y in top..bottom {
+                for x in left..right {
+                    if let Some(cell) = saved.cell((x, y)) {
+                        frame.buffer_mut()[(x, y)] = cell.clone();
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Clip the frame buffer to a scaled region centered on screen (zoom effect).
+/// Cells outside the clip are restored from `saved` (the pre-overlay host list).
+fn apply_scale_clip(frame: &mut Frame, saved: &ratatui::buffer::Buffer, progress: f32) {
+    let area = frame.area();
+    let (left, right, top, bottom) = scale_clip_rect(area, progress);
+
+    for y in area.y..area.y + area.height {
+        for x in area.x..area.x + area.width {
+            if y < top || y >= bottom || x < left || x >= right {
+                if let Some(cell) = saved.cell((x, y)) {
+                    frame.buffer_mut()[(x, y)] = cell.clone();
+                }
+            }
+        }
+    }
+}
+
+/// Calculate the visible rect for a scale/zoom animation centered on the area.
+fn scale_clip_rect(area: Rect, progress: f32) -> (u16, u16, u16, u16) {
+    let visible_w = (area.width as f32 * progress).ceil() as u16;
+    let visible_h = (area.height as f32 * progress).ceil() as u16;
+    let left = area.x + area.width.saturating_sub(visible_w) / 2;
+    let right = (left + visible_w).min(area.x + area.width);
+    let top = area.y + area.height.saturating_sub(visible_h) / 2;
+    let bottom = (top + visible_h).min(area.y + area.height);
+    (left, right, top, bottom)
 }
 
 /// Build a footer action span: key in accent_bold, label in muted.

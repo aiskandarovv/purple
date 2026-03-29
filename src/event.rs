@@ -160,6 +160,17 @@ impl EventHandler {
         Ok(self.rx.recv()?)
     }
 
+    /// Try to get the next event with a timeout.
+    pub fn next_timeout(&self, timeout: Duration) -> Result<Option<AppEvent>> {
+        match self.rx.recv_timeout(timeout) {
+            Ok(event) => Ok(Some(event)),
+            Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                Err(anyhow::anyhow!("event channel disconnected"))
+            }
+        }
+    }
+
     /// Get a clone of the sender for sending events from other threads.
     pub fn sender(&self) -> mpsc::Sender<AppEvent> {
         self.tx.clone()
