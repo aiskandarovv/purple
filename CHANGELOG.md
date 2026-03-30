@@ -1,3 +1,11 @@
+## 2.20.0
+
+- TransIP provider. 16 cloud providers now supported
+- RSA-SHA512 signed JWT authentication or pre-generated Bearer token
+- Syncs VPS name, IP, availability zone, product plan, OS and status as provider metadata
+- Native TransIP tags synced as provider tags
+- Single API call fetches all VPS instances (no pagination needed for typical fleets)
+
 ## 2.19.0
 
 - i3D.net provider. 15 cloud providers now supported

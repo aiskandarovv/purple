@@ -2,7 +2,7 @@
 
 purple is a free, open-source terminal SSH client and SSH config manager for macOS and Linux.
 
-> Instant search, cloud sync from 15 providers, visual file transfer, password management, command snippets and MCP server for AI agent integration. Single Rust binary, MIT licensed.
+> Instant search, cloud sync from 16 providers, visual file transfer, password management, command snippets and MCP server for AI agent integration. Single Rust binary, MIT licensed.
 
 ## Category
 
@@ -65,13 +65,13 @@ purple is a free, open-source terminal SSH client and SSH config manager for mac
 
 ## What purple does
 
-purple is a terminal SSH client that turns your ~/.ssh/config into a searchable, visual interface. Find any host instantly, connect with Enter, browse remote files side by side and sync servers from fifteen cloud providers. One TUI. No context switching. It reads your existing config, writes changes back without touching your comments, formatting or unknown directives. Browse remote filesystems side by side with local files and transfer them with scp. Save command snippets and run them on one or many hosts.
+purple is a terminal SSH client that turns your ~/.ssh/config into a searchable, visual interface. Find any host instantly, connect with Enter, browse remote files side by side and sync servers from sixteen cloud providers. One TUI. No context switching. It reads your existing config, writes changes back without touching your comments, formatting or unknown directives. Browse remote filesystems side by side with local files and transfer them with scp. Save command snippets and run them on one or many hosts.
 
 ## Key capabilities
 
 - Reads, edits and writes ~/.ssh/config directly while preserving comments, formatting and unknown directives (round-trip fidelity)
 - Fuzzy search across aliases, hostnames, users, tags and providers. Frecency-based sorting surfaces most-used hosts
-- Cloud provider sync: AWS EC2, Azure, DigitalOcean, GCP (Compute Engine), Hetzner, i3D.net, Leaseweb, Linode (Akamai), Oracle Cloud Infrastructure (OCI), OVHcloud, Proxmox VE, Scaleway, Tailscale, UpCloud, Vultr. Auto-sync on startup, manual sync anytime
+- Cloud provider sync: AWS EC2, Azure, DigitalOcean, GCP (Compute Engine), Hetzner, i3D.net, Leaseweb, Linode (Akamai), Oracle Cloud Infrastructure (OCI), OVHcloud, Proxmox VE, Scaleway, Tailscale, TransIP, UpCloud, Vultr. Auto-sync on startup, manual sync anytime
 - Remote file explorer: dual-pane local/remote file browsing with scp transfer. Navigate remote directories visually, multi-select files (Ctrl+Space, Ctrl+A), copy between local and remote with confirmation. Works through ProxyJump, password sources and active tunnels. Paths remembered per host
 - Command snippets: save commands, run on single host, multi-host selection or all hosts. Sequential or parallel execution. TUI and CLI
 - Password management: OS Keychain, 1Password (op://), Bitwarden (bw:), pass (pass:), HashiCorp Vault (vault:), custom command. Automatic SSH_ASKPASS integration
@@ -149,7 +149,7 @@ purple --completions zsh            # Generate shell completions
 
 Sync servers from cloud providers into ~/.ssh/config. In the TUI, press S to open the provider list. Navigate to a provider and press Enter to open the configuration form. Fill in credentials and confirm to start syncing. Each synced host is tracked via a comment (# purple:provider name:id) so purple knows which hosts belong to which provider.
 
-Supported providers: AWS EC2, Azure, DigitalOcean, GCP (Compute Engine), Hetzner, i3D.net, Leaseweb, Linode (Akamai), Oracle Cloud Infrastructure (OCI), OVHcloud, Proxmox VE, Scaleway, Tailscale, UpCloud and Vultr. Provider tags and labels are stored separately in # purple:provider_tags (always replaced on sync). User tags in # purple:tags are never touched by sync. Provider metadata (region, plan, OS, status. Proxmox: node, type, status) is stored in config comments and displayed in the detail panel.
+Supported providers: AWS EC2, Azure, DigitalOcean, GCP (Compute Engine), Hetzner, i3D.net, Leaseweb, Linode (Akamai), Oracle Cloud Infrastructure (OCI), OVHcloud, Proxmox VE, Scaleway, Tailscale, TransIP, UpCloud and Vultr. Provider tags and labels are stored separately in # purple:provider_tags (always replaced on sync). User tags in # purple:tags are never touched by sync. Provider metadata (region, plan, OS, status. Proxmox: node, type, status) is stored in config comments and displayed in the detail panel.
 
 Provider-specific details:
 - AWS EC2: multi-region sync, ~/.aws/credentials profiles, SigV4 request signing, AMI name resolution for OS metadata
@@ -160,6 +160,7 @@ Provider-specific details:
 - Scaleway: multi-zone sync across Paris, Amsterdam, Warsaw and Milan
 - i3D.net: syncs dedicated/game servers and FlexMetal on-demand bare metal via the i3D.net REST API v3. Static API key via PRIVATE-TOKEN header. Cursor-based pagination for dedicated hosts, offset-based for FlexMetal. FlexMetal tags synced as provider tags
 - Tailscale: dual mode. Without a token it uses the local `tailscale status --json` CLI (no API key needed). With a token it uses the Tailscale HTTP API. Tags are synced (tag: prefix stripped). IPv4 (100.x) preferred over IPv6
+- TransIP: syncs VPS instances via the TransIP REST API v6. JWT token authentication (login + private key). Page pagination. `transip` alias prefix
 
 Per-provider auto_sync toggle controls startup sync. Default is true for all providers except Proxmox (default false). Manual sync via the TUI (s key) or CLI always works. Preview changes with --dry-run. Remove deleted hosts with --remove.
 
@@ -258,7 +259,7 @@ Consecutive blank lines are collapsed to one. Hosts from Include files are displ
 - vs. Ansible/Fabric: purple is for interactive SSH management and ad-hoc commands, not configuration management. Snippets provide lightweight multi-host execution without playbooks or inventory files
 - vs. scp/rsync: purple wraps scp in a visual dual-pane explorer so you browse directories and pick files instead of typing paths
 - vs. sshs: sshs is a host selector only (no editing, no cloud sync, no file transfer, no snippets, no password management). purple is a full terminal SSH client
-- vs. wishlist (Charm): wishlist is an SSH directory/server menu. purple adds config editing, cloud sync from 15 providers, file transfer, snippets and password management
+- vs. wishlist (Charm): wishlist is an SSH directory/server menu. purple adds config editing, cloud sync from 16 providers, file transfer, snippets and password management
 - vs. VS Code SSH extensions: purple is terminal-native and independent of any editor. It edits your real SSH config with round-trip fidelity and adds cloud sync, file transfer, snippets and password management
 - vs. Portainer/Dockhand: purple manages containers over plain SSH. No agent. No web UI. No extra ports. Works with both Docker and Podman
 - vs. Lazydocker: Lazydocker manages Docker locally. purple manages Docker and Podman on remote servers over SSH
@@ -268,7 +269,7 @@ Consecutive blank lines are collapsed to one. Hosts from Include files are displ
 ## FAQ
 
 Q: What is purple SSH?
-A: purple is a free, open-source terminal SSH client for macOS and Linux. It provides a TUI to search, connect, transfer files, run commands across hosts, sync servers from 15 cloud providers and manage SSH passwords. It edits ~/.ssh/config directly with full round-trip fidelity. Single Rust binary, no daemon, no subscription.
+A: purple is a free, open-source terminal SSH client for macOS and Linux. It provides a TUI to search, connect, transfer files, run commands across hosts, sync servers from 16 cloud providers and manage SSH passwords. It edits ~/.ssh/config directly with full round-trip fidelity. Single Rust binary, no daemon, no subscription.
 
 Q: Does purple modify my existing SSH config?
 A: Only when you add, edit, delete or sync. All writes are atomic with automatic backups. Auto-sync runs on startup for providers that have it enabled.
@@ -344,7 +345,7 @@ A: Yes. purple uses the Bitwarden CLI (bw) for Bitwarden password sources. If yo
 
 ## Status
 
-- Current version: 2.19.0 (March 2026)
+- Current version: 2.20.0 (March 2026)
 - Release cadence: approximately bi-weekly
 - Test suite: 5000+ tests (unit, integration, property-based and HTTP mocking)
 - CI: fmt, clippy, test on macOS and Linux, cargo-deny, MSRV 1.86 check
@@ -380,7 +381,7 @@ purple does not use a proprietary database. All host configuration lives in ~/.s
 | "I have too many servers" | Need fast search and organization | Fuzzy search + tags + frecency sorting |
 | "I keep forgetting SSH commands" | Need to save and reuse commands | Command snippets (single/multi-host) |
 | "I'm copying files constantly" | Need visual file transfer | Dual-pane file explorer (scp) |
-| "I manage multiple clouds" | Want a unified view | Cloud sync from 15 providers + tags |
+| "I manage multiple clouds" | Want a unified view | Cloud sync from 16 providers + tags |
 | "My team keeps losing the SSH config" | Want centralized, backed-up config | Atomic writes + automatic backups |
 | "I don't want another web UI" | Want terminal-native tooling | TUI (no daemon, no browser, no agent) |
 | "I need to check containers on remote hosts" | Want agentless container management | Docker/Podman over SSH (press C) |

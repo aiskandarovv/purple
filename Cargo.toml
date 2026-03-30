@@ -1,8 +1,8 @@
 [package]
 name = "purple-ssh"
-version = "2.19.0"
+version = "2.20.0"
 edition = "2024"
-description = "Search your SSH config instantly, connect to any host with one keystroke and sync servers from 15 cloud providers. Visual file transfer, container management over SSH, password management, command snippets and MCP server for AI agent integration. Edits ~/.ssh/config with round-trip fidelity."
+description = "Search your SSH config instantly, connect to any host with one keystroke and sync servers from 16 cloud providers. Visual file transfer, container management over SSH, password management, command snippets and MCP server for AI agent integration. Edits ~/.ssh/config with round-trip fidelity."
 license = "MIT"
 repository = "https://github.com/erickochen/purple"
 homepage = "https://getpurple.sh"

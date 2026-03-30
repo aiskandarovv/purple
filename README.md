@@ -23,7 +23,7 @@ purple is a terminal SSH client and SSH config manager for macOS and Linux. It r
 From one terminal interface you can:
 
 - **Search and connect** to any host instantly with fuzzy search and frecency sorting
-- **Sync servers** from 15 cloud providers (AWS, Azure, DigitalOcean, GCP, Hetzner, i3D.net, Leaseweb, Linode, OCI, OVHcloud, Proxmox, Scaleway, Tailscale, UpCloud and Vultr)
+- **Sync servers** from 16 cloud providers (AWS, Azure, DigitalOcean, GCP, Hetzner, i3D.net, Leaseweb, Linode, OCI, OVHcloud, Proxmox, Scaleway, Tailscale, TransIP, UpCloud and Vultr)
 - **Manage containers** over SSH (Docker and Podman, no agent required)
 - **Browse remote files** in a split-screen explorer and copy with a keystroke
 - **Run command snippets** across one host, a selection or all hosts at once
@@ -87,7 +87,7 @@ Find any host in under a second, no matter how large your config. Instant fuzzy 
 
 ### Cloud provider sync
 
-Pull servers from **AWS EC2**, **Azure**, **DigitalOcean**, **GCP (Compute Engine)**, **Hetzner**, **i3D.net**, **Leaseweb**, **Linode (Akamai)**, **Oracle Cloud Infrastructure (OCI)**, **OVHcloud**, **Proxmox VE**, **Scaleway**, **Tailscale**, **UpCloud** and **Vultr** directly into `~/.ssh/config`. Sync adds new hosts, updates changed IPs and optionally removes deleted servers. Provider tags are synced separately from your own tags and always mirror the remote. Your tags are never modified by sync. Press `S` to configure a provider.
+Pull servers from **AWS EC2**, **Azure**, **DigitalOcean**, **GCP (Compute Engine)**, **Hetzner**, **i3D.net**, **Leaseweb**, **Linode (Akamai)**, **Oracle Cloud Infrastructure (OCI)**, **OVHcloud**, **Proxmox VE**, **Scaleway**, **Tailscale**, **TransIP**, **UpCloud** and **Vultr** directly into `~/.ssh/config`. Sync adds new hosts, updates changed IPs and optionally removes deleted servers. Provider tags are synced separately from your own tags and always mirror the remote. Your tags are never modified by sync. Press `S` to configure a provider.
 
 ### Docker and Podman containers
 
@@ -163,6 +163,7 @@ The client starts `purple mcp` automatically. No manual server process needed. F
 | **Proxmox VE** | API token + cluster URL | `purple provider add proxmox --url https://pve:8006 --token TOKEN` |
 | **Scaleway** | Secret key | `purple provider add scaleway --token YOUR_TOKEN --regions fr-par-1` |
 | **Tailscale** | Local CLI (no token) or API key | `purple provider add tailscale` |
+| **TransIP** | RSA private key or Bearer token | `purple provider add transip --token LOGIN:/path/to/key.pem` |
 | **UpCloud** | API token | `purple provider add upcloud --token YOUR_TOKEN` |
 | **Vultr** | API token | `purple provider add vultr --token YOUR_TOKEN` |
 

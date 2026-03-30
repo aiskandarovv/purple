@@ -13,6 +13,7 @@ mod proxmox;
 pub mod scaleway;
 pub mod sync;
 mod tailscale;
+mod transip;
 mod upcloud;
 mod vultr;
 
@@ -120,6 +121,7 @@ pub const PROVIDER_NAMES: &[&str] = &[
     "ovh",
     "leaseweb",
     "i3d",
+    "transip",
 ];
 
 /// Get a provider implementation by name.
@@ -157,6 +159,7 @@ pub fn get_provider(name: &str) -> Option<Box<dyn Provider>> {
         })),
         "leaseweb" => Some(Box::new(leaseweb::Leaseweb)),
         "i3d" => Some(Box::new(i3d::I3d)),
+        "transip" => Some(Box::new(transip::TransIp)),
         _ => None,
     }
 }
@@ -242,6 +245,7 @@ pub fn provider_display_name(name: &str) -> &str {
         "ovh" => "OVHcloud",
         "leaseweb" => "Leaseweb",
         "i3d" => "i3D.net",
+        "transip" => "TransIP",
         other => other,
     }
 }
@@ -644,6 +648,7 @@ mod tests {
         assert_eq!(provider_display_name("ovh"), "OVHcloud");
         assert_eq!(provider_display_name("leaseweb"), "Leaseweb");
         assert_eq!(provider_display_name("i3d"), "i3D.net");
+        assert_eq!(provider_display_name("transip"), "TransIP");
     }
 
     #[test]
@@ -661,7 +666,7 @@ mod tests {
 
     #[test]
     fn test_provider_names_count() {
-        assert_eq!(PROVIDER_NAMES.len(), 15);
+        assert_eq!(PROVIDER_NAMES.len(), 16);
     }
 
     #[test]
@@ -681,6 +686,7 @@ mod tests {
         assert!(PROVIDER_NAMES.contains(&"ovh"));
         assert!(PROVIDER_NAMES.contains(&"leaseweb"));
         assert!(PROVIDER_NAMES.contains(&"i3d"));
+        assert!(PROVIDER_NAMES.contains(&"transip"));
     }
 
     // =========================================================================
@@ -922,6 +928,7 @@ mod tests {
         assert_eq!(provider_display_name("ovh"), "OVHcloud");
         assert_eq!(provider_display_name("leaseweb"), "Leaseweb");
         assert_eq!(provider_display_name("i3d"), "i3D.net");
+        assert_eq!(provider_display_name("transip"), "TransIP");
     }
 
     #[test]
@@ -960,8 +967,8 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn test_provider_names_has_all_fifteen() {
-        assert_eq!(PROVIDER_NAMES.len(), 15);
+    fn test_provider_names_has_all_sixteen() {
+        assert_eq!(PROVIDER_NAMES.len(), 16);
         assert!(PROVIDER_NAMES.contains(&"digitalocean"));
         assert!(PROVIDER_NAMES.contains(&"proxmox"));
         assert!(PROVIDER_NAMES.contains(&"aws"));
@@ -972,6 +979,7 @@ mod tests {
         assert!(PROVIDER_NAMES.contains(&"ovh"));
         assert!(PROVIDER_NAMES.contains(&"leaseweb"));
         assert!(PROVIDER_NAMES.contains(&"i3d"));
+        assert!(PROVIDER_NAMES.contains(&"transip"));
     }
 
     // =========================================================================
@@ -996,6 +1004,7 @@ mod tests {
             ("ovh", "ovh"),
             ("leaseweb", "lsw"),
             ("i3d", "i3d"),
+            ("transip", "tip"),
         ];
         for (name, expected_label) in &cases {
             let p = get_provider(name).unwrap();
