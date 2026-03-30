@@ -17,6 +17,11 @@ pub fn init() {
     }
 }
 
+/// Current color mode: 0 = NO_COLOR, 1 = ANSI 16, 2 = truecolor.
+pub fn color_mode() -> u8 {
+    COLOR_MODE.load(Ordering::Acquire)
+}
+
 /// Brand badge: purple background with white text. The single splash of color.
 /// Truecolor: #9333EA purple bg. ANSI 16: Magenta bg. NO_COLOR: REVERSED.
 /// Removes DIM so border_style doesn't leak through ratatui's Style::patch().

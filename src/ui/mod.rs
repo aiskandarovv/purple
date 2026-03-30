@@ -20,7 +20,7 @@ mod tunnel_list;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
@@ -204,7 +204,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 fn render_overlay(frame: &mut Frame, app: &mut App, f: impl FnOnce(&mut Frame, &mut App)) {
     let status = app.status.take();
 
-    // Save host list buffer before overlay renders (needed for open animation clip restore)
+    dim_background(frame);
+
+    // Save dimmed host list buffer before overlay renders (needed for open
+    // animation clip restore). Captured after dim so the background outside the
+    // growing clip stays consistently dimmed during the animation.
     let progress = app.overlay_anim_progress();
     let animating_open = progress.is_some();
     let pre_overlay = if animating_open {
@@ -233,6 +237,33 @@ fn render_overlay(frame: &mut Frame, app: &mut App, f: impl FnOnce(&mut Frame, &
     app.status = status;
 }
 
+/// Dim all cells in the frame buffer so the host list behind an overlay appears muted.
+/// On truecolor/ANSI-16 terminals the foreground is replaced with dark grey for a
+/// stronger effect. Cells that already have a coloured background (badges, selected
+/// row) only receive the DIM modifier so their text stays readable.
+fn dim_background(frame: &mut Frame) {
+    use ratatui::style::Color;
+
+    let dim_only = Style::default().add_modifier(Modifier::DIM);
+    let style = match theme::color_mode() {
+        2 => Style::default()
+            .fg(Color::Rgb(70, 70, 70))
+            .add_modifier(Modifier::DIM),
+        1 => Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::DIM),
+        _ => dim_only,
+    };
+    let area = frame.area();
+    let buf = frame.buffer_mut();
+    for y in area.y..area.y + area.height {
+        for x in area.x..area.x + area.width {
+            let has_bg = buf[(x, y)].bg != Color::Reset;
+            buf[(x, y)].set_style(if has_bg { dim_only } else { style });
+        }
+    }
+}
+
 /// Render the close animation: paint saved overlay buffer with shrinking scale clip.
 fn render_overlay_close(frame: &mut Frame, app: &mut App) {
     // Only run when a close animation is active
@@ -248,6 +279,10 @@ fn render_overlay_close(frame: &mut Frame, app: &mut App) {
 
     if let Some(ref saved) = app.overlay_buffer {
         if progress > 0.0 {
+            // Dim the host list so the background stays consistently muted
+            // while the overlay shrinks away.
+            dim_background(frame);
+
             let area = frame.area();
             let (left, right, top, bottom) = scale_clip_rect(area, progress);
 
@@ -380,6 +415,9 @@ pub(crate) fn truncate(s: &str, max_cols: usize) -> String {
 }
 
 /// Render a horizontal divider: ├─ Label ───────┤
+/// The `├` and `┤` connectors use the border style so they blend with the outer
+/// border. The horizontal `─` fill is rendered DIM to keep dividers visually
+/// subordinate to the border.
 pub(crate) fn render_divider(
     frame: &mut Frame,
     block_area: Rect,
@@ -388,13 +426,16 @@ pub(crate) fn render_divider(
     label_style: Style,
     border_style: Style,
 ) {
+    let dim = theme::muted();
     let width = block_area.width as usize;
     let label_w = label.width();
     let fill = width.saturating_sub(3 + label_w);
     let line = Line::from(vec![
-        Span::styled("├─", border_style),
+        Span::styled("├", border_style),
+        Span::styled("─", dim),
         Span::styled(label.to_string(), label_style),
-        Span::styled(format!("{}┤", "─".repeat(fill)), border_style),
+        Span::styled("─".repeat(fill), dim),
+        Span::styled("┤", border_style),
     ]);
     frame.render_widget(
         Paragraph::new(line),

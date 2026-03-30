@@ -1,3 +1,10 @@
+## 2.22.0
+
+- Dimmed background behind overlays for better visual depth and focus
+- Form divider lines rendered dim to establish clear visual hierarchy (border > labels > dividers)
+- Three-tier color support: truecolor (dark grey fg), ANSI 16 (DarkGray), NO_COLOR (DIM modifier only)
+- Consistent dimming across open animation, steady-state and close animation
+
 ## 2.21.0
 
 - Host patterns support
