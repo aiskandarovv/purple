@@ -499,11 +499,20 @@ fn main() -> Result<()> {
 
 fn apply_saved_sort(app: &mut App) {
     let saved = preferences::load_sort_mode();
-    let group = preferences::load_group_by_provider();
+    let group = preferences::load_group_by();
     app.sort_mode = saved;
-    app.group_by_provider = group;
+    app.group_by = group;
     app.view_mode = preferences::load_view_mode();
-    if saved != app::SortMode::Original || group {
+    // Clear stale tag preference if the tag no longer exists in any host
+    if app.clear_stale_group_tag() {
+        if let Err(e) = preferences::save_group_by(&app.group_by) {
+            app.set_status(
+                format!("Group preference reset. (save failed: {})", e),
+                true,
+            );
+        }
+    }
+    if saved != app::SortMode::Original || !matches!(app.group_by, app::GroupBy::None) {
         app.apply_sort();
         // After startup sort, select the first host in the sorted order
         // rather than preserving the arbitrary first-in-config selection.

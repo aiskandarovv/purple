@@ -177,7 +177,7 @@ const LANDING_PAGE = `<!DOCTYPE html>
   "url": "https://getpurple.sh",
   "downloadUrl": "https://getpurple.sh",
   "installUrl": "https://github.com/erickochen/purple/releases",
-  "softwareVersion": "2.22.0",
+  "softwareVersion": "2.23.0",
   "datePublished": "2024-10-01",
   "dateModified": "2026-03-26",
   "softwareRequirements": "macOS or Linux",
@@ -1140,7 +1140,7 @@ footer a:hover { color: var(--accent); }
 </main>
 
 <footer>
-  <a href="https://github.com/erickochen/purple" rel="noopener">GitHub</a> · <a href="https://crates.io/crates/purple-ssh" rel="noopener">crates.io</a> · MIT License · v2.22.0
+  <a href="https://github.com/erickochen/purple" rel="noopener">GitHub</a> · <a href="https://crates.io/crates/purple-ssh" rel="noopener">crates.io</a> · MIT License · v2.23.0
 </footer>
 
 <script>
@@ -1369,7 +1369,7 @@ Press T on any host to open the tunnel overlay. Press a to add a tunnel rule (Lo
 
 ## Tags
 
-User tags are stored as SSH config comments (# purple:tags prod,us-east). Provider tags from cloud sync are stored separately (# purple:provider_tags). Sync always replaces provider_tags with the exact remote tags. User tags are never touched by sync. Filter with tag: prefix in search (fuzzy match) or tag= prefix (exact match). Provider names appear as virtual tags. The tag picker (# key) shows all tags with host counts.
+User tags are stored as SSH config comments (# purple:tags prod,us-east). Provider tags from cloud sync are stored separately (# purple:provider_tags). Sync always replaces provider_tags with the exact remote tags. User tags are never touched by sync. Filter with tag: prefix in search (fuzzy match) or tag= prefix (exact match). Provider names appear as virtual tags. The tag picker (# key) shows all tags with host counts. The g key cycles group modes: ungrouped, group by provider or group by tag. Tag grouping opens a picker to select a user tag. Hosts with that tag are grouped under a header. Group preference is persisted.
 
 ## Round-trip fidelity
 
@@ -1397,7 +1397,7 @@ Consecutive blank lines are collapsed to one. Hosts from Include files are displ
 
 ## Common use cases
 
-- SRE/DevOps engineer managing 50-500 servers across multiple cloud providers. Search, tag and group by provider
+- SRE/DevOps engineer managing 50-500 servers across multiple cloud providers. Search, tag and group by provider or tag
 - Developer transferring config files, logs or database dumps between servers without remembering scp paths
 - Team lead onboarding new members: share SSH config with cloud sync so they get all servers instantly
 - Freelancer managing client infrastructure across AWS, Hetzner, DigitalOcean and OCI from one TUI
@@ -1502,7 +1502,7 @@ A: Yes. purple uses the Bitwarden CLI (bw) for Bitwarden password sources. If yo
 
 ## Status
 
-- Current version: 2.22.0 (March 2026)
+- Current version: 2.23.0 (March 2026)
 - Release cadence: approximately bi-weekly
 - Test suite: 5000+ tests (unit, integration, property-based and HTTP mocking)
 - CI: fmt, clippy, test on macOS and Linux, cargo-deny, MSRV 1.86 check

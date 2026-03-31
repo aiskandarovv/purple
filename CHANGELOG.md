@@ -1,3 +1,11 @@
+## 2.23.0
+
+- Group hosts by any tag. Press g to cycle: ungrouped, provider or tag.
+- Tag grouping opens a picker to choose which tag to group by. Thanks [@AciDCooL](https://github.com/AciDCooL) for the [feature request](https://github.com/erickochen/purple/issues/10)
+- Group preference persisted across sessions and migrated automatically from the old provider-only setting
+- Tag pickers close gracefully on config reload during provider sync
+- Stale tag preferences cleared on startup when the tag no longer exists
+
 ## 2.22.0
 
 - Dimmed background behind overlays for better visual depth and focus

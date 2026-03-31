@@ -125,6 +125,7 @@ pub enum Screen {
         index: usize,
     },
     TagPicker,
+    GroupTagPicker,
     Providers,
     ProviderForm {
         provider: String,
@@ -1236,6 +1237,44 @@ impl SortMode {
     }
 }
 
+/// Group mode for the host list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GroupBy {
+    None,
+    Provider,
+    Tag(String),
+}
+
+impl GroupBy {
+    pub fn to_key(&self) -> String {
+        match self {
+            GroupBy::None => "none".to_string(),
+            GroupBy::Provider => "provider".to_string(),
+            GroupBy::Tag(tag) => format!("tag:{}", tag),
+        }
+    }
+
+    pub fn from_key(s: &str) -> Self {
+        match s {
+            "none" => GroupBy::None,
+            "provider" => GroupBy::Provider,
+            s if s.starts_with("tag:") => match s.strip_prefix("tag:") {
+                Some(tag) if !tag.is_empty() => GroupBy::Tag(tag.to_string()),
+                _ => GroupBy::None,
+            },
+            _ => GroupBy::None,
+        }
+    }
+
+    pub fn label(&self) -> String {
+        match self {
+            GroupBy::None => "ungrouped".to_string(),
+            GroupBy::Provider => "provider".to_string(),
+            GroupBy::Tag(tag) => format!("tag: {}", tag),
+        }
+    }
+}
+
 /// Stores a deleted host for undo.
 #[derive(Debug, Clone)]
 pub struct DeletedHost {
@@ -1389,7 +1428,7 @@ pub struct App {
     // History + preferences
     pub history: ConnectionHistory,
     pub sort_mode: SortMode,
-    pub group_by_provider: bool,
+    pub group_by: GroupBy,
     pub view_mode: ViewMode,
     pub detail_anim: Option<DetailAnimation>,
 
@@ -1548,7 +1587,7 @@ impl App {
             tag_list: Vec::new(),
             history: ConnectionHistory::load(),
             sort_mode: SortMode::Original,
-            group_by_provider: false,
+            group_by: GroupBy::None,
             view_mode: ViewMode::Compact,
             detail_anim: None,
             overlay_anim: None,
@@ -1802,7 +1841,7 @@ impl App {
         }
     }
 
-    /// Rebuild the display list based on the current sort mode and group_by_provider toggle.
+    /// Rebuild the display list based on the current sort mode and group_by toggle.
     pub fn apply_sort(&mut self) {
         // Preserve currently selected host or pattern across sort changes
         let selected_alias = self
@@ -1813,13 +1852,13 @@ impl App {
         // Multi-select indices become visually misleading after reorder
         self.multi_select.clear();
 
-        if self.sort_mode == SortMode::Original && !self.group_by_provider {
+        if self.sort_mode == SortMode::Original && matches!(self.group_by, GroupBy::None) {
             self.display_list =
                 Self::build_display_list_from(&self.config, &self.hosts, &self.patterns);
-        } else if self.sort_mode == SortMode::Original && self.group_by_provider {
-            // Original order but grouped by provider: extract flat indices from config order
+        } else if self.sort_mode == SortMode::Original && !matches!(self.group_by, GroupBy::None) {
+            // Original order but grouped: extract flat indices from config order
             let indices: Vec<usize> = (0..self.hosts.len()).collect();
-            self.display_list = Self::group_indices_by_provider(&self.hosts, &indices);
+            self.display_list = self.group_indices(&indices);
         } else {
             let mut indices: Vec<usize> = (0..self.hosts.len()).collect();
             match self.sort_mode {
@@ -1871,19 +1910,12 @@ impl App {
                 }
                 _ => {}
             }
-            if self.group_by_provider {
-                self.display_list = Self::group_indices_by_provider(&self.hosts, &indices);
-            } else {
-                self.display_list = indices
-                    .into_iter()
-                    .map(|i| HostListItem::Host { index: i })
-                    .collect();
-            }
+            self.display_list = self.group_indices(&indices);
         }
 
         // Append pattern group at the bottom (sorted/grouped paths skip
         // build_display_list_from which already handles this)
-        if (self.sort_mode != SortMode::Original || self.group_by_provider)
+        if (self.sort_mode != SortMode::Original || !matches!(self.group_by, GroupBy::None))
             && !self.patterns.is_empty()
         {
             self.display_list
@@ -1921,6 +1953,17 @@ impl App {
     /// Partition sorted indices by provider, inserting group headers.
     /// Hosts without provider appear first (no header), then named provider
     /// groups (in first-appearance order) with headers.
+    fn group_indices(&self, sorted_indices: &[usize]) -> Vec<HostListItem> {
+        match &self.group_by {
+            GroupBy::None => sorted_indices
+                .iter()
+                .map(|&i| HostListItem::Host { index: i })
+                .collect(),
+            GroupBy::Provider => Self::group_indices_by_provider(&self.hosts, sorted_indices),
+            GroupBy::Tag(tag) => Self::group_indices_by_tag(&self.hosts, sorted_indices, tag),
+        }
+    }
+
     fn group_indices_by_provider(
         hosts: &[HostEntry],
         sorted_indices: &[usize],
@@ -1959,6 +2002,41 @@ impl App {
                 display_list.push(HostListItem::Host { index: idx });
             }
         }
+        display_list
+    }
+
+    /// Partition sorted indices by a user tag, inserting a group header.
+    /// Hosts without the tag appear first (no header), then hosts with the
+    /// tag appear under a single group header.
+    fn group_indices_by_tag(
+        hosts: &[HostEntry],
+        sorted_indices: &[usize],
+        tag: &str,
+    ) -> Vec<HostListItem> {
+        let mut without_tag: Vec<usize> = Vec::new();
+        let mut with_tag: Vec<usize> = Vec::new();
+
+        for &idx in sorted_indices {
+            if hosts[idx].tags.iter().any(|t| t == tag) {
+                with_tag.push(idx);
+            } else {
+                without_tag.push(idx);
+            }
+        }
+
+        let mut display_list = Vec::new();
+
+        for idx in &without_tag {
+            display_list.push(HostListItem::Host { index: *idx });
+        }
+
+        if !with_tag.is_empty() {
+            display_list.push(HostListItem::GroupHeader(tag.to_string()));
+            for &idx in &with_tag {
+                display_list.push(HostListItem::Host { index: idx });
+            }
+        }
+
         display_list
     }
 
@@ -2164,11 +2242,16 @@ impl App {
         self.tunnel_summaries_cache.clear();
         self.hosts = self.config.host_entries();
         self.patterns = self.config.pattern_entries();
-        if self.sort_mode == SortMode::Original && !self.group_by_provider {
+        if self.sort_mode == SortMode::Original && matches!(self.group_by, GroupBy::None) {
             self.display_list =
                 Self::build_display_list_from(&self.config, &self.hosts, &self.patterns);
         } else {
             self.apply_sort();
+        }
+
+        // Close tag pickers if open — tag_list is stale after reload
+        if matches!(self.screen, Screen::TagPicker | Screen::GroupTagPicker) {
+            self.screen = Screen::HostList;
         }
 
         // Multi-select stores indices into hosts; clear to avoid stale refs
@@ -2564,6 +2647,8 @@ impl App {
                 | Screen::ConfirmHostKeyReset { .. }
                 | Screen::ConfirmPurgeStale { .. }
                 | Screen::ConfirmImport { .. }
+                | Screen::TagPicker
+                | Screen::GroupTagPicker
         ) || self.tag_input.is_some()
         {
             return;
@@ -3238,6 +3323,19 @@ impl App {
         msg.push('.');
         (msg, false, total)
     }
+
+    /// Clear group-by-tag if the tag no longer exists in any host.
+    /// Returns true if the tag was cleared.
+    pub fn clear_stale_group_tag(&mut self) -> bool {
+        if let GroupBy::Tag(ref tag) = self.group_by {
+            let tag_exists = self.hosts.iter().any(|h| h.tags.iter().any(|t| t == tag));
+            if !tag_exists {
+                self.group_by = GroupBy::None;
+                return true;
+            }
+        }
+        false
+    }
 }
 
 /// Cycle list selection forward or backward with wraparound.
@@ -3409,7 +3507,7 @@ Host vultr-app
   # purple:provider vultr:789
 ";
         let mut app = make_app(content);
-        app.group_by_provider = true;
+        app.group_by = GroupBy::Provider;
         app.apply_sort();
 
         // Should have: DigitalOcean header, 2 hosts, Vultr header, 1 host
@@ -3434,7 +3532,7 @@ Host do-web
   # purple:provider digitalocean:123
 ";
         let mut app = make_app(content);
-        app.group_by_provider = true;
+        app.group_by = GroupBy::Provider;
         app.apply_sort();
 
         // manual first (no header), then DigitalOcean header + do-web
@@ -3459,7 +3557,7 @@ Host do-alpha
   # purple:provider digitalocean:2
 ";
         let mut app = make_app(content);
-        app.group_by_provider = true;
+        app.group_by = GroupBy::Provider;
         app.sort_mode = SortMode::AlphaAlias;
         app.apply_sort();
 
@@ -3516,13 +3614,13 @@ Host vultr-app
         app.sort_mode = SortMode::AlphaAlias;
 
         // Enable grouping
-        app.group_by_provider = true;
+        app.group_by = GroupBy::Provider;
         app.apply_sort();
         let grouped_len = app.display_list.len();
         assert!(grouped_len > 2); // Has headers
 
         // Disable grouping
-        app.group_by_provider = false;
+        app.group_by = GroupBy::None;
         app.apply_sort();
         // Should be flat: just hosts, no headers
         assert_eq!(app.display_list.len(), 2);
@@ -3531,6 +3629,355 @@ Host vultr-app
                 .iter()
                 .all(|item| matches!(item, HostListItem::Host { .. }))
         );
+    }
+
+    #[test]
+    fn group_by_tag_groups_hosts_with_tag() {
+        let content = "\
+Host web1
+  HostName 1.1.1.1
+  # purple:tags production
+
+Host web2
+  HostName 2.2.2.2
+  # purple:tags production
+
+Host dev1
+  HostName 3.3.3.3
+  # purple:tags staging
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Tag("production".to_string());
+        app.apply_sort();
+        // dev1 ungrouped first, then production header + 2 hosts
+        assert_eq!(app.display_list.len(), 4);
+        assert!(matches!(&app.display_list[0], HostListItem::Host { .. }));
+        assert!(matches!(&app.display_list[1], HostListItem::GroupHeader(s) if s == "production"));
+        assert!(matches!(&app.display_list[2], HostListItem::Host { .. }));
+        assert!(matches!(&app.display_list[3], HostListItem::Host { .. }));
+        // Verify config order preserved within group
+        if let HostListItem::Host { index } = &app.display_list[2] {
+            assert_eq!(app.hosts[*index].alias, "web1");
+        } else {
+            panic!("Expected Host item at position 2");
+        }
+        if let HostListItem::Host { index } = &app.display_list[3] {
+            assert_eq!(app.hosts[*index].alias, "web2");
+        } else {
+            panic!("Expected Host item at position 3");
+        }
+    }
+
+    #[test]
+    fn group_by_tag_no_hosts_have_tag() {
+        let content = "\
+Host web1
+  HostName 1.1.1.1
+  # purple:tags staging
+
+Host web2
+  HostName 2.2.2.2
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Tag("production".to_string());
+        app.apply_sort();
+        assert_eq!(app.display_list.len(), 2);
+        assert!(
+            app.display_list
+                .iter()
+                .all(|item| matches!(item, HostListItem::Host { .. }))
+        );
+    }
+
+    #[test]
+    fn group_by_tag_all_hosts_have_tag() {
+        let content = "\
+Host web1
+  HostName 1.1.1.1
+  # purple:tags production
+
+Host web2
+  HostName 2.2.2.2
+  # purple:tags production
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Tag("production".to_string());
+        app.apply_sort();
+        assert_eq!(app.display_list.len(), 3);
+        assert!(matches!(&app.display_list[0], HostListItem::GroupHeader(s) if s == "production"));
+    }
+
+    #[test]
+    fn group_by_tag_host_with_multiple_tags() {
+        let content = "\
+Host web1
+  HostName 1.1.1.1
+  # purple:tags production,frontend
+
+Host dev1
+  HostName 3.3.3.3
+  # purple:tags staging
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Tag("production".to_string());
+        app.apply_sort();
+        assert_eq!(app.display_list.len(), 3);
+        assert!(matches!(&app.display_list[0], HostListItem::Host { .. }));
+        assert!(matches!(&app.display_list[1], HostListItem::GroupHeader(s) if s == "production"));
+    }
+
+    #[test]
+    fn group_by_tag_empty_host_list() {
+        let content = "";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Tag("production".to_string());
+        app.apply_sort();
+        assert!(app.display_list.is_empty());
+    }
+
+    #[test]
+    fn group_by_tag_case_sensitive() {
+        let content = "\
+Host web1
+  HostName 1.1.1.1
+  # purple:tags Production
+
+Host web2
+  HostName 2.2.2.2
+  # purple:tags production
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Tag("production".to_string());
+        app.apply_sort();
+        assert_eq!(app.display_list.len(), 3);
+        assert!(matches!(&app.display_list[0], HostListItem::Host { .. }));
+        assert!(matches!(&app.display_list[1], HostListItem::GroupHeader(s) if s == "production"));
+        if let HostListItem::Host { index } = &app.display_list[2] {
+            assert_eq!(app.hosts[*index].alias, "web2");
+        } else {
+            panic!("Expected Host item");
+        }
+    }
+
+    #[test]
+    fn group_by_tag_with_alpha_sort() {
+        let content = "\
+Host zeta
+  HostName 1.1.1.1
+  # purple:tags production
+
+Host alpha
+  HostName 2.2.2.2
+  # purple:tags production
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Tag("production".to_string());
+        app.sort_mode = SortMode::AlphaAlias;
+        app.apply_sort();
+        assert_eq!(app.display_list.len(), 3);
+        assert!(matches!(&app.display_list[0], HostListItem::GroupHeader(s) if s == "production"));
+        if let HostListItem::Host { index } = &app.display_list[1] {
+            assert_eq!(app.hosts[*index].alias, "alpha");
+        } else {
+            panic!("Expected Host item");
+        }
+    }
+
+    #[test]
+    fn group_by_tag_preserves_ordering_within_ungrouped() {
+        let content = "\
+Host charlie
+  HostName 3.3.3.3
+
+Host alpha
+  HostName 1.1.1.1
+
+Host bravo
+  HostName 2.2.2.2
+  # purple:tags production
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Tag("production".to_string());
+        app.sort_mode = SortMode::AlphaAlias;
+        app.apply_sort();
+        assert_eq!(app.display_list.len(), 4);
+        if let HostListItem::Host { index } = &app.display_list[0] {
+            assert_eq!(app.hosts[*index].alias, "alpha");
+        } else {
+            panic!("Expected Host item");
+        }
+        if let HostListItem::Host { index } = &app.display_list[1] {
+            assert_eq!(app.hosts[*index].alias, "charlie");
+        } else {
+            panic!("Expected Host item");
+        }
+        assert!(matches!(&app.display_list[2], HostListItem::GroupHeader(s) if s == "production"));
+    }
+
+    #[test]
+    fn group_by_tag_does_not_mutate_config() {
+        let content = "\
+Host web1
+  HostName 1.1.1.1
+  # purple:tags production
+
+Host web2
+  HostName 2.2.2.2
+  # purple:tags staging
+  # purple:provider_tags cloud,frontend
+  # purple:provider digitalocean:123
+";
+        let app = make_app(content);
+        let original_len = app.config.elements.len();
+
+        let mut app2 = make_app(content);
+        app2.group_by = GroupBy::Tag("production".to_string());
+        app2.apply_sort();
+
+        // Config elements must be identical — grouping is display-only
+        assert_eq!(app.config.elements.len(), app2.config.elements.len());
+        assert_eq!(original_len, app2.config.elements.len());
+    }
+
+    #[test]
+    fn group_by_tag_then_provider_then_none_config_unchanged() {
+        let content = "\
+Host web1
+  HostName 1.1.1.1
+  # purple:tags production
+  # purple:provider digitalocean:1
+
+Host dev1
+  HostName 2.2.2.2
+  # purple:tags staging
+";
+        let mut app = make_app(content);
+        let original_len = app.config.elements.len();
+
+        app.group_by = GroupBy::Tag("production".to_string());
+        app.apply_sort();
+        app.group_by = GroupBy::Provider;
+        app.apply_sort();
+        app.group_by = GroupBy::None;
+        app.apply_sort();
+
+        assert_eq!(app.config.elements.len(), original_len);
+    }
+
+    #[test]
+    fn provider_grouping_still_works_after_refactor() {
+        let content = "\
+Host do-web
+  HostName 1.2.3.4
+  # purple:provider digitalocean:123
+
+Host manual
+  HostName 5.5.5.5
+
+Host vultr-app
+  HostName 9.9.9.9
+  # purple:provider vultr:789
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Provider;
+        app.apply_sort();
+
+        assert_eq!(app.display_list.len(), 5);
+        assert!(matches!(&app.display_list[0], HostListItem::Host { .. }));
+        assert!(
+            matches!(&app.display_list[1], HostListItem::GroupHeader(s) if s == "DigitalOcean")
+        );
+        assert!(matches!(&app.display_list[2], HostListItem::Host { .. }));
+        assert!(matches!(&app.display_list[3], HostListItem::GroupHeader(s) if s == "Vultr"));
+        assert!(matches!(&app.display_list[4], HostListItem::Host { .. }));
+    }
+
+    #[test]
+    fn provider_grouping_with_sort_still_works() {
+        let content = "\
+Host do-zeta
+  HostName 1.2.3.4
+  # purple:provider digitalocean:1
+
+Host do-alpha
+  HostName 5.6.7.8
+  # purple:provider digitalocean:2
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Provider;
+        app.sort_mode = SortMode::AlphaAlias;
+        app.apply_sort();
+
+        assert_eq!(app.display_list.len(), 3);
+        assert!(
+            matches!(&app.display_list[0], HostListItem::GroupHeader(s) if s == "DigitalOcean")
+        );
+        if let HostListItem::Host { index } = &app.display_list[1] {
+            assert_eq!(app.hosts[*index].alias, "do-alpha");
+        } else {
+            panic!("Expected Host item");
+        }
+    }
+
+    #[test]
+    fn group_by_to_key_none() {
+        assert_eq!(GroupBy::None.to_key(), "none");
+    }
+
+    #[test]
+    fn group_by_to_key_provider() {
+        assert_eq!(GroupBy::Provider.to_key(), "provider");
+    }
+
+    #[test]
+    fn group_by_to_key_tag() {
+        assert_eq!(
+            GroupBy::Tag("production".to_string()).to_key(),
+            "tag:production"
+        );
+    }
+
+    #[test]
+    fn group_by_from_key_none() {
+        assert_eq!(GroupBy::from_key("none"), GroupBy::None);
+    }
+
+    #[test]
+    fn group_by_from_key_provider() {
+        assert_eq!(GroupBy::from_key("provider"), GroupBy::Provider);
+    }
+
+    #[test]
+    fn group_by_from_key_tag() {
+        assert_eq!(
+            GroupBy::from_key("tag:production"),
+            GroupBy::Tag("production".to_string())
+        );
+    }
+
+    #[test]
+    fn group_by_from_key_unknown_falls_back_to_none() {
+        assert_eq!(GroupBy::from_key("garbage"), GroupBy::None);
+    }
+
+    #[test]
+    fn group_by_from_key_empty_tag_name() {
+        assert_eq!(GroupBy::from_key("tag:"), GroupBy::None);
+    }
+
+    #[test]
+    fn group_by_label_none() {
+        assert_eq!(GroupBy::None.label(), "ungrouped");
+    }
+
+    #[test]
+    fn group_by_label_provider() {
+        assert_eq!(GroupBy::Provider.label(), "provider");
+    }
+
+    #[test]
+    fn group_by_label_tag() {
+        assert_eq!(GroupBy::Tag("env".to_string()).label(), "tag: env");
     }
 
     // --- New validation tests from review findings ---
@@ -5392,7 +5839,7 @@ Host do-alpha
   # purple:provider digitalocean:1
 ";
         let mut app = make_app(content);
-        app.group_by_provider = true;
+        app.group_by = GroupBy::Provider;
         app.sort_mode = SortMode::AlphaAlias;
         app.apply_sort();
         app.select_first_host();
@@ -5729,5 +6176,693 @@ Host 10.30.0.*
         assert_eq!(form.proxy_jump, "bastion");
         assert_eq!(form.tags, "internal");
         assert_eq!(form.askpass, "keychain");
+    }
+
+    // --- GroupBy::from_key edge cases ---
+
+    #[test]
+    fn group_by_from_key_tag_with_colon_in_name() {
+        // "tag:prod:us-east" — everything after first "tag:" is the tag name
+        assert_eq!(
+            GroupBy::from_key("tag:prod:us-east"),
+            GroupBy::Tag("prod:us-east".to_string())
+        );
+    }
+
+    #[test]
+    fn group_by_from_key_tag_with_special_chars() {
+        assert_eq!(
+            GroupBy::from_key("tag:prod-v2.1"),
+            GroupBy::Tag("prod-v2.1".to_string())
+        );
+    }
+
+    #[test]
+    fn group_by_from_key_tag_with_unicode() {
+        assert_eq!(
+            GroupBy::from_key("tag:生产"),
+            GroupBy::Tag("生产".to_string())
+        );
+    }
+
+    #[test]
+    fn group_by_from_key_tag_with_spaces() {
+        assert_eq!(
+            GroupBy::from_key("tag:my servers"),
+            GroupBy::Tag("my servers".to_string())
+        );
+    }
+
+    // --- group_indices_by_tag with stale hosts ---
+
+    #[test]
+    fn group_by_tag_stale_host_with_tag() {
+        let content = "\
+Host web1
+  HostName 1.1.1.1
+  # purple:tags production
+  # purple:stale 1700000000
+
+Host web2
+  HostName 2.2.2.2
+  # purple:tags production
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Tag("production".to_string());
+        app.apply_sort();
+
+        // Both hosts have the tag, stale or not — both in group
+        assert_eq!(app.display_list.len(), 3);
+        assert!(matches!(&app.display_list[0], HostListItem::GroupHeader(s) if s == "production"));
+    }
+
+    #[test]
+    fn group_by_tag_host_with_provider_and_user_tags() {
+        let content = "\
+Host do-web
+  HostName 1.1.1.1
+  # purple:tags production
+  # purple:provider_tags cloud,frontend
+  # purple:provider digitalocean:123
+
+Host manual
+  HostName 2.2.2.2
+  # purple:tags production
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Tag("production".to_string());
+        app.apply_sort();
+
+        // Both hosts have user tag "production" — both grouped
+        assert_eq!(app.display_list.len(), 3);
+        assert!(matches!(&app.display_list[0], HostListItem::GroupHeader(s) if s == "production"));
+    }
+
+    #[test]
+    fn group_by_tag_provider_tag_not_matched() {
+        // provider_tags should NOT be matched by group_indices_by_tag
+        let content = "\
+Host do-web
+  HostName 1.1.1.1
+  # purple:provider_tags production
+
+Host manual
+  HostName 2.2.2.2
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Tag("production".to_string());
+        app.apply_sort();
+
+        // "production" is a provider_tag, not a user tag — no grouping
+        assert_eq!(app.display_list.len(), 2);
+        assert!(
+            app.display_list
+                .iter()
+                .all(|item| matches!(item, HostListItem::Host { .. }))
+        );
+    }
+
+    // --- apply_sort() — missing SortMode x GroupBy combinations ---
+
+    #[test]
+    fn group_by_tag_with_original_sort() {
+        let content = "\
+Host zeta
+  HostName 1.1.1.1
+  # purple:tags production
+
+Host alpha
+  HostName 2.2.2.2
+  # purple:tags production
+
+Host manual
+  HostName 3.3.3.3
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Tag("production".to_string());
+        app.sort_mode = SortMode::Original;
+        app.apply_sort();
+
+        // manual ungrouped, then production header + zeta + alpha (config order)
+        assert_eq!(app.display_list.len(), 4);
+        assert!(matches!(&app.display_list[0], HostListItem::Host { .. }));
+        assert!(matches!(&app.display_list[1], HostListItem::GroupHeader(s) if s == "production"));
+        // Verify config order preserved within group
+        if let HostListItem::Host { index } = &app.display_list[2] {
+            assert_eq!(app.hosts[*index].alias, "zeta");
+        } else {
+            panic!("Expected Host item at position 2");
+        }
+        if let HostListItem::Host { index } = &app.display_list[3] {
+            assert_eq!(app.hosts[*index].alias, "alpha");
+        } else {
+            panic!("Expected Host item at position 3");
+        }
+    }
+
+    #[test]
+    fn group_by_tag_with_hostname_sort() {
+        let content = "\
+Host web1
+  HostName zebra.example.com
+  # purple:tags production
+
+Host web2
+  HostName alpha.example.com
+  # purple:tags production
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Tag("production".to_string());
+        app.sort_mode = SortMode::AlphaHostname;
+        app.apply_sort();
+
+        assert_eq!(app.display_list.len(), 3);
+        assert!(matches!(&app.display_list[0], HostListItem::GroupHeader(s) if s == "production"));
+        if let HostListItem::Host { index } = &app.display_list[1] {
+            assert_eq!(app.hosts[*index].hostname, "alpha.example.com");
+        } else {
+            panic!("Expected Host item");
+        }
+    }
+
+    #[test]
+    fn group_by_provider_with_hostname_sort() {
+        let content = "\
+Host do-zebra
+  HostName zebra.example.com
+  # purple:provider digitalocean:1
+
+Host do-alpha
+  HostName alpha.example.com
+  # purple:provider digitalocean:2
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Provider;
+        app.sort_mode = SortMode::AlphaHostname;
+        app.apply_sort();
+
+        assert_eq!(app.display_list.len(), 3);
+        assert!(
+            matches!(&app.display_list[0], HostListItem::GroupHeader(s) if s == "DigitalOcean")
+        );
+        if let HostListItem::Host { index } = &app.display_list[1] {
+            assert_eq!(app.hosts[*index].hostname, "alpha.example.com");
+        } else {
+            panic!("Expected Host item");
+        }
+    }
+
+    #[test]
+    fn group_by_none_with_each_sort_mode() {
+        let content = "\
+Host beta
+  HostName 2.2.2.2
+
+Host alpha
+  HostName 1.1.1.1
+";
+        for mode in [SortMode::AlphaAlias, SortMode::AlphaHostname] {
+            let mut app = make_app(content);
+            app.group_by = GroupBy::None;
+            app.sort_mode = mode;
+            app.apply_sort();
+
+            // No headers, just sorted hosts
+            assert_eq!(app.display_list.len(), 2);
+            assert!(
+                app.display_list
+                    .iter()
+                    .all(|item| matches!(item, HostListItem::Host { .. }))
+            );
+            if let HostListItem::Host { index } = &app.display_list[0] {
+                assert_eq!(app.hosts[*index].alias, "alpha");
+            }
+        }
+    }
+
+    // --- Search + grouping interaction ---
+
+    #[test]
+    fn search_works_with_tag_grouping() {
+        let content = "\
+Host web-prod
+  HostName 1.1.1.1
+  # purple:tags production
+
+Host web-staging
+  HostName 2.2.2.2
+  # purple:tags staging
+
+Host db-prod
+  HostName 3.3.3.3
+  # purple:tags production
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Tag("production".to_string());
+        app.apply_sort();
+
+        // Before search: 1 ungrouped + 1 header + 2 grouped = 4
+        assert_eq!(app.display_list.len(), 4);
+
+        // Start search and filter for "web"
+        app.start_search();
+        app.search.query = Some("web".to_string());
+        app.apply_filter();
+
+        // Search should filter to web-prod and web-staging
+        assert_eq!(app.search.filtered_indices.len(), 2);
+    }
+
+    // --- Multi-select cleared on group change ---
+
+    #[test]
+    fn multi_select_cleared_on_group_change() {
+        let content = "\
+Host web1
+  HostName 1.1.1.1
+  # purple:tags production
+
+Host web2
+  HostName 2.2.2.2
+";
+        let mut app = make_app(content);
+        app.multi_select.insert(0);
+        app.multi_select.insert(1);
+        assert_eq!(app.multi_select.len(), 2);
+
+        app.group_by = GroupBy::Tag("production".to_string());
+        app.apply_sort();
+
+        assert!(app.multi_select.is_empty());
+    }
+
+    // --- Pattern entries with tag grouping ---
+
+    #[test]
+    fn patterns_appear_at_bottom_with_tag_grouping() {
+        let content = "\
+Host web1
+  HostName 1.1.1.1
+  # purple:tags production
+
+Host 10.0.0.*
+  User debian
+  # purple:tags internal
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Tag("production".to_string());
+        app.sort_mode = SortMode::AlphaAlias;
+        app.apply_sort();
+
+        // Should have: production header + web1, then Patterns header + pattern
+        let has_patterns_header = app
+            .display_list
+            .iter()
+            .any(|item| matches!(item, HostListItem::GroupHeader(s) if s == "Patterns"));
+        assert!(
+            has_patterns_header,
+            "Patterns header should appear at bottom"
+        );
+
+        // Patterns header should be after all hosts
+        let patterns_pos = app
+            .display_list
+            .iter()
+            .position(|item| matches!(item, HostListItem::GroupHeader(s) if s == "Patterns"))
+            .unwrap();
+        let last_host_pos = app
+            .display_list
+            .iter()
+            .rposition(|item| matches!(item, HostListItem::Host { .. }));
+        if let Some(host_pos) = last_host_pos {
+            assert!(
+                patterns_pos > host_pos,
+                "Patterns header should be after last host"
+            );
+        }
+    }
+
+    // --- Proptest: group_by_tag display_list consistency ---
+
+    use proptest::prelude::*;
+
+    /// Generate a simple SSH config block with optional user tags.
+    fn prop_host_block(alias: String, hostname: String, tags: Option<Vec<String>>) -> String {
+        let mut lines = vec![format!("Host {alias}"), format!("  HostName {hostname}")];
+        if let Some(ref ts) = tags {
+            if !ts.is_empty() {
+                lines.push(format!("  # purple:tags {}", ts.join(",")));
+            }
+        }
+        lines.join("\n")
+    }
+
+    proptest! {
+        #![proptest_config(proptest::test_runner::Config::with_cases(200))]
+
+        /// GroupBy::Tag display_list is consistent:
+        /// - Total host items == app.hosts.len()
+        /// - No duplicate host indices
+        /// - At most one GroupHeader per apply_sort call
+        /// - All indices are in-bounds
+        #[test]
+        fn group_by_tag_display_list_consistent(
+            hosts in prop::collection::vec(
+                (
+                    "[a-z][a-z0-9]{2,10}".prop_map(|s| s),
+                    "[a-z]{3,8}\\.(com|net|io)".prop_map(|s| s),
+                    prop::option::of(
+                        prop::collection::vec("[a-z]{2,8}", 1..=3)
+                    ),
+                ),
+                1..=15,
+            ),
+            tag_index in 0usize..10,
+        ) {
+            // Build config content from generated host data
+            let mut blocks: Vec<String> = Vec::new();
+            let mut all_tags: Vec<String> = Vec::new();
+
+            for (alias, hostname, tags) in &hosts {
+                if let Some(ts) = tags {
+                    for t in ts {
+                        if !all_tags.contains(t) {
+                            all_tags.push(t.clone());
+                        }
+                    }
+                }
+                blocks.push(prop_host_block(alias.clone(), hostname.clone(), tags.clone()));
+            }
+
+            let content = blocks.join("\n\n") + "\n";
+            let mut app = make_app(&content);
+
+            // Pick a tag to group by (or use a nonexistent one if no tags)
+            let chosen_tag = if all_tags.is_empty() {
+                "nonexistent".to_string()
+            } else {
+                all_tags[tag_index % all_tags.len()].clone()
+            };
+
+            app.group_by = GroupBy::Tag(chosen_tag.clone());
+            app.apply_sort();
+
+            let host_count = app.hosts.len();
+            let display_host_count = app.display_list.iter()
+                .filter(|item| matches!(item, HostListItem::Host { .. }))
+                .count();
+
+            // All hosts must appear exactly once
+            prop_assert_eq!(
+                host_count,
+                display_host_count,
+                "host count mismatch: {} hosts but {} in display_list",
+                host_count,
+                display_host_count,
+            );
+
+            // No duplicate host indices
+            let indices: Vec<usize> = app.display_list.iter()
+                .filter_map(|item| {
+                    if let HostListItem::Host { index } = item {
+                        Some(*index)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            let mut seen = std::collections::HashSet::new();
+            for &idx in &indices {
+                prop_assert!(
+                    seen.insert(idx),
+                    "duplicate host index {} in display_list",
+                    idx,
+                );
+                prop_assert!(
+                    idx < host_count,
+                    "host index {} out of bounds (hosts len {})",
+                    idx,
+                    host_count,
+                );
+            }
+
+            // At most one GroupHeader with the chosen tag name
+            let header_count = app.display_list.iter()
+                .filter(|item| matches!(item, HostListItem::GroupHeader(s) if s == &chosen_tag))
+                .count();
+            prop_assert!(
+                header_count <= 1,
+                "expected at most 1 GroupHeader for '{}', got {}",
+                chosen_tag,
+                header_count,
+            );
+
+            // If header is present, all tagged hosts appear after it
+            if header_count == 1 {
+                let header_pos = app.display_list.iter()
+                    .position(|item| matches!(item, HostListItem::GroupHeader(s) if s == &chosen_tag))
+                    .unwrap();
+                for (pos, item) in app.display_list.iter().enumerate() {
+                    if let HostListItem::Host { index } = item {
+                        let has_tag = app.hosts[*index].tags.iter().any(|t| t == &chosen_tag);
+                        if has_tag {
+                            prop_assert!(
+                                pos > header_pos,
+                                "tagged host at pos {} is before header at pos {}",
+                                pos,
+                                header_pos,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        /// GroupBy::None produces no GroupHeaders and all hosts appear exactly once.
+        #[test]
+        fn group_by_none_display_list_no_headers(
+            hosts in prop::collection::vec(
+                (
+                    "[a-z][a-z0-9]{2,10}".prop_map(|s| s),
+                    "[a-z]{3,8}\\.(com|net|io)".prop_map(|s| s),
+                    prop::option::of(prop::collection::vec("[a-z]{2,8}", 1..=3)),
+                ),
+                1..=10,
+            ),
+        ) {
+            let blocks: Vec<String> = hosts.iter().map(|(alias, hostname, tags)| {
+                prop_host_block(alias.clone(), hostname.clone(), tags.clone())
+            }).collect();
+            let content = blocks.join("\n\n") + "\n";
+            let mut app = make_app(&content);
+
+            app.group_by = GroupBy::None;
+            app.sort_mode = SortMode::AlphaAlias;
+            app.apply_sort();
+
+            let host_count = app.hosts.len();
+
+            // No group headers from GroupBy::None (comment-based headers possible;
+            // but no tag/provider headers)
+            let display_host_count = app.display_list.iter()
+                .filter(|item| matches!(item, HostListItem::Host { .. }))
+                .count();
+
+            prop_assert_eq!(
+                host_count,
+                display_host_count,
+                "GroupBy::None: host count mismatch: {} hosts vs {} in display",
+                host_count,
+                display_host_count,
+            );
+        }
+
+        /// Switching GroupBy::Tag → GroupBy::None always removes the GroupHeader.
+        #[test]
+        fn group_by_tag_to_none_removes_header(
+            alias in "[a-z][a-z0-9]{2,8}",
+            hostname in "[a-z]{3,8}\\.(com|net|io)",
+            tag in "[a-z]{2,8}",
+        ) {
+            let content = format!(
+                "Host {alias}\n  HostName {hostname}\n  # purple:tags {tag}\n"
+            );
+            let mut app = make_app(&content);
+
+            // Apply tag grouping
+            app.group_by = GroupBy::Tag(tag.clone());
+            app.apply_sort();
+            let has_header_grouped = app.display_list.iter()
+                .any(|item| matches!(item, HostListItem::GroupHeader(s) if s == &tag));
+            prop_assert!(has_header_grouped, "expected GroupHeader for tag '{}'", tag);
+
+            // Switch to None
+            app.group_by = GroupBy::None;
+            app.apply_sort();
+            let has_header_none = app.display_list.iter()
+                .any(|item| matches!(item, HostListItem::GroupHeader(s) if s == &tag));
+            prop_assert!(!has_header_none, "GroupHeader should be gone after GroupBy::None");
+        }
+    }
+
+    #[test]
+    fn group_by_tag_graceful_when_tag_removed_from_all_hosts() {
+        let content = "\
+Host web1
+  HostName 1.1.1.1
+  # purple:tags staging
+
+Host web2
+  HostName 2.2.2.2
+";
+        let mut app = make_app(content);
+        // Group by a tag that no host has
+        app.group_by = GroupBy::Tag("production".to_string());
+        app.apply_sort();
+
+        // All hosts ungrouped, no header, no panic
+        assert_eq!(app.display_list.len(), 2);
+        assert!(
+            app.display_list
+                .iter()
+                .all(|item| matches!(item, HostListItem::Host { .. }))
+        );
+    }
+
+    #[test]
+    fn group_by_tag_original_sort_preserves_stale_position() {
+        // In Original sort mode, stale hosts stay in config order even when grouped.
+        // This differs from other sort modes which push stale hosts to the bottom.
+        let content = "\
+Host stale-first
+  HostName 1.1.1.1
+  # purple:tags production
+  # purple:stale 1700000000
+
+Host healthy-second
+  HostName 2.2.2.2
+  # purple:tags production
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Tag("production".to_string());
+        app.sort_mode = SortMode::Original;
+        app.apply_sort();
+
+        // Original order preserved: stale host first within group
+        assert_eq!(app.display_list.len(), 3);
+        assert!(matches!(&app.display_list[0], HostListItem::GroupHeader(s) if s == "production"));
+        if let HostListItem::Host { index } = &app.display_list[1] {
+            assert_eq!(app.hosts[*index].alias, "stale-first");
+        } else {
+            panic!("Expected Host item");
+        }
+    }
+
+    #[test]
+    fn group_by_tag_alpha_sort_pushes_stale_to_bottom() {
+        // Non-Original sort modes push stale hosts to the bottom of each group.
+        let content = "\
+Host alpha-stale
+  HostName 1.1.1.1
+  # purple:tags production
+  # purple:stale 1700000000
+
+Host beta-healthy
+  HostName 2.2.2.2
+  # purple:tags production
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Tag("production".to_string());
+        app.sort_mode = SortMode::AlphaAlias;
+        app.apply_sort();
+
+        // Alpha sort: stale host pushed to bottom of group
+        assert_eq!(app.display_list.len(), 3);
+        assert!(matches!(&app.display_list[0], HostListItem::GroupHeader(s) if s == "production"));
+        if let HostListItem::Host { index } = &app.display_list[1] {
+            assert_eq!(app.hosts[*index].alias, "beta-healthy");
+        } else {
+            panic!("Expected Host item");
+        }
+        if let HostListItem::Host { index } = &app.display_list[2] {
+            assert_eq!(app.hosts[*index].alias, "alpha-stale");
+        } else {
+            panic!("Expected Host item");
+        }
+    }
+
+    #[test]
+    fn clear_stale_group_tag_clears_when_tag_missing() {
+        let content = "\
+Host web1
+  HostName 1.1.1.1
+  # purple:tags staging
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Tag("production".to_string());
+
+        let cleared = app.clear_stale_group_tag();
+
+        assert!(cleared);
+        assert_eq!(app.group_by, GroupBy::None);
+    }
+
+    #[test]
+    fn clear_stale_group_tag_keeps_when_tag_exists() {
+        let content = "\
+Host web1
+  HostName 1.1.1.1
+  # purple:tags production
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Tag("production".to_string());
+
+        let cleared = app.clear_stale_group_tag();
+
+        assert!(!cleared);
+        assert_eq!(app.group_by, GroupBy::Tag("production".to_string()));
+    }
+
+    #[test]
+    fn clear_stale_group_tag_noop_for_provider() {
+        let content = "\
+Host web1
+  HostName 1.1.1.1
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Provider;
+
+        let cleared = app.clear_stale_group_tag();
+
+        assert!(!cleared);
+        assert_eq!(app.group_by, GroupBy::Provider);
+    }
+
+    #[test]
+    fn clear_stale_group_tag_noop_for_none() {
+        let content = "\
+Host web1
+  HostName 1.1.1.1
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::None;
+
+        let cleared = app.clear_stale_group_tag();
+
+        assert!(!cleared);
+        assert_eq!(app.group_by, GroupBy::None);
+    }
+
+    #[test]
+    fn clear_stale_group_tag_empty_hosts() {
+        let content = "";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Tag("production".to_string());
+
+        let cleared = app.clear_stale_group_tag();
+
+        assert!(cleared);
+        assert_eq!(app.group_by, GroupBy::None);
     }
 }

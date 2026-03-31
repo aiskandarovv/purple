@@ -365,7 +365,6 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             footer_spans(
                 target_detail,
                 app.multi_select.len(),
-                app.group_by_provider,
                 app.hosts.iter().filter(|h| h.stale.is_some()).count(),
             )
         };
@@ -1254,12 +1253,7 @@ fn render_search_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) 
     frame.render_widget(Paragraph::new(search_line), area);
 }
 
-fn footer_spans(
-    detail_active: bool,
-    multi_count: usize,
-    _group_by_provider: bool,
-    stale_count: usize,
-) -> Vec<Span<'static>> {
+fn footer_spans(detail_active: bool, multi_count: usize, stale_count: usize) -> Vec<Span<'static>> {
     let view_label = if detail_active {
         " compact "
     } else {
@@ -1592,7 +1586,7 @@ mod tests {
     #[test]
     fn test_footer_spans_with_grouping_no_indicator() {
         // "grouped" indicator was removed (redundant with status bar)
-        let spans = footer_spans(false, 0, true, 0);
+        let spans = footer_spans(false, 0, 0);
         let text: String = spans.iter().map(|s| s.content.to_string()).collect();
         assert!(
             !text.contains("grouped"),
@@ -1603,7 +1597,7 @@ mod tests {
 
     #[test]
     fn test_footer_spans_with_stale_hosts() {
-        let spans = footer_spans(false, 0, false, 5);
+        let spans = footer_spans(false, 0, 5);
         let text: String = spans.iter().map(|s| s.content.to_string()).collect();
         assert!(text.contains("X"));
         assert!(text.contains("purge 5 stale"));
@@ -1611,7 +1605,7 @@ mod tests {
 
     #[test]
     fn test_footer_spans_no_stale() {
-        let spans = footer_spans(false, 0, false, 0);
+        let spans = footer_spans(false, 0, 0);
         let text: String = spans.iter().map(|s| s.content.to_string()).collect();
         assert!(!text.contains("stale"));
         assert!(!text.contains("purge"));
@@ -1619,7 +1613,7 @@ mod tests {
 
     #[test]
     fn test_footer_spans_stale_single() {
-        let spans = footer_spans(false, 0, false, 1);
+        let spans = footer_spans(false, 0, 1);
         let text: String = spans.iter().map(|s| s.content.to_string()).collect();
         assert!(text.contains("purge 1 stale"));
     }

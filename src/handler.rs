@@ -101,6 +101,7 @@ pub fn handle_key_event(
         Screen::KeyDetail { .. } => handle_key_detail(app, key),
         Screen::HostDetail { .. } => handle_host_detail(app, key),
         Screen::TagPicker => handle_tag_picker_screen(app, key),
+        Screen::GroupTagPicker => handle_group_tag_picker(app, key),
         Screen::Providers => handle_provider_list(app, key, events_tx),
         Screen::ProviderForm { .. } => handle_provider_form(app, key, events_tx),
         Screen::TunnelList { .. } => handle_tunnel_list(app, key),
@@ -562,19 +563,58 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
             }
         }
         KeyCode::Char('g') => {
-            app.group_by_provider = !app.group_by_provider;
-            app.apply_sort();
-            if let Err(e) = preferences::save_group_by_provider(app.group_by_provider) {
-                let msg = if app.group_by_provider {
-                    format!("Grouped by provider. (save failed: {})", e)
-                } else {
-                    format!("Ungrouped. (save failed: {})", e)
-                };
-                app.set_status(msg, true);
-            } else if app.group_by_provider {
-                app.set_status("Grouped by provider.", false);
-            } else {
-                app.set_status("Ungrouped.", false);
+            use crate::app::GroupBy;
+            match &app.group_by {
+                GroupBy::None => {
+                    app.group_by = GroupBy::Provider;
+                    app.apply_sort();
+                    if let Err(e) = preferences::save_group_by(&app.group_by) {
+                        app.set_status(
+                            format!("Grouped by {}. (save failed: {})", app.group_by.label(), e),
+                            true,
+                        );
+                    } else {
+                        app.set_status(format!("Grouped by {}.", app.group_by.label()), false);
+                    }
+                }
+                GroupBy::Provider => {
+                    let user_tags: Vec<String> = {
+                        let mut seen = std::collections::HashSet::new();
+                        let mut tags = Vec::new();
+                        for host in &app.hosts {
+                            for tag in &host.tags {
+                                if seen.insert(tag.clone()) {
+                                    tags.push(tag.clone());
+                                }
+                            }
+                        }
+                        tags.sort_by_cached_key(|a| a.to_lowercase());
+                        tags
+                    };
+                    if user_tags.is_empty() {
+                        app.group_by = GroupBy::None;
+                        app.apply_sort();
+                        if let Err(e) = preferences::save_group_by(&app.group_by) {
+                            app.set_status(format!("Ungrouped. (save failed: {})", e), true);
+                        } else {
+                            app.set_status("Ungrouped.", false);
+                        }
+                    } else {
+                        app.tag_list = user_tags;
+                        app.ui.tag_picker_state = ratatui::widgets::ListState::default();
+                        app.ui.tag_picker_state.select(Some(0));
+                        app.screen = Screen::GroupTagPicker;
+                    }
+                }
+                GroupBy::Tag(_) => {
+                    app.group_by = GroupBy::None;
+                    app.apply_sort();
+                    if let Err(e) = preferences::save_group_by(&app.group_by) {
+                        app.set_status(format!("Ungrouped. (save failed: {})", e), true);
+                    } else {
+                        app.set_status("Ungrouped.", false);
+                    }
+                }
             }
         }
         KeyCode::Char('i') => {
@@ -1611,6 +1651,58 @@ fn handle_tag_picker_screen(app: &mut App, key: KeyEvent) {
                     app.apply_filter();
                 }
             }
+        }
+        _ => {}
+    }
+}
+
+fn handle_group_tag_picker(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => {
+            app.group_by = crate::app::GroupBy::None;
+            app.screen = Screen::HostList;
+            app.apply_sort();
+            if let Err(e) = preferences::save_group_by(&app.group_by) {
+                app.set_status(format!("Ungrouped. (save failed: {})", e), true);
+            } else {
+                app.set_status("Ungrouped.", false);
+            }
+        }
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.select_next_tag();
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.select_prev_tag();
+        }
+        KeyCode::PageDown => {
+            crate::app::page_down(&mut app.ui.tag_picker_state, app.tag_list.len(), 10);
+        }
+        KeyCode::PageUp => {
+            crate::app::page_up(&mut app.ui.tag_picker_state, app.tag_list.len(), 10);
+        }
+        KeyCode::Enter => {
+            if let Some(index) = app.ui.tag_picker_state.selected() {
+                if let Some(tag) = app.tag_list.get(index) {
+                    let tag = tag.clone();
+                    app.group_by = crate::app::GroupBy::Tag(tag);
+                    app.screen = Screen::HostList;
+                    app.apply_sort();
+                    if let Err(e) = preferences::save_group_by(&app.group_by) {
+                        app.set_status(
+                            format!("Grouped by {}. (save failed: {})", app.group_by.label(), e),
+                            true,
+                        );
+                    } else {
+                        app.set_status(format!("Grouped by {}.", app.group_by.label()), false);
+                    }
+                }
+            }
+        }
+        KeyCode::Char('?') => {
+            let old = std::mem::replace(&mut app.screen, Screen::HostList);
+            app.screen = Screen::Help {
+                return_screen: Box::new(old),
+            };
         }
         _ => {}
     }
@@ -9359,5 +9451,190 @@ Host gamma
             }
             other => panic!("expected Help, got {:?}", std::mem::discriminant(other)),
         }
+    }
+
+    // --- g-key GroupBy cycle ---
+
+    #[test]
+    fn g_key_none_to_provider() {
+        let mut app =
+            make_app("Host web1\n  HostName 1.2.3.4\n  # purple:provider digitalocean:1\n");
+        assert_eq!(app.group_by, crate::app::GroupBy::None);
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('g')), &tx);
+        assert_eq!(app.group_by, crate::app::GroupBy::Provider);
+        assert!(matches!(app.screen, Screen::HostList));
+    }
+
+    #[test]
+    fn g_key_provider_to_group_tag_picker_when_tags_exist() {
+        let content = "\
+Host web1
+  HostName 1.1.1.1
+  # purple:tags production
+";
+        let mut app = make_app(content);
+        app.group_by = crate::app::GroupBy::Provider;
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('g')), &tx);
+        assert!(
+            matches!(app.screen, Screen::GroupTagPicker),
+            "expected GroupTagPicker, got {:?}",
+            std::mem::discriminant(&app.screen)
+        );
+        assert!(!app.tag_list.is_empty(), "tag_list should be populated");
+        assert!(
+            app.tag_list.contains(&"production".to_string()),
+            "tag_list should contain 'production'"
+        );
+    }
+
+    #[test]
+    fn g_key_provider_to_none_when_no_tags() {
+        let content = "\
+Host web1
+  HostName 1.1.1.1
+";
+        let mut app = make_app(content);
+        app.group_by = crate::app::GroupBy::Provider;
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('g')), &tx);
+        assert_eq!(app.group_by, crate::app::GroupBy::None);
+        assert!(matches!(app.screen, Screen::HostList));
+    }
+
+    #[test]
+    fn g_key_tag_to_none() {
+        let content = "\
+Host web1
+  HostName 1.1.1.1
+  # purple:tags production
+";
+        let mut app = make_app(content);
+        app.group_by = crate::app::GroupBy::Tag("production".to_string());
+        app.apply_sort();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('g')), &tx);
+        assert_eq!(app.group_by, crate::app::GroupBy::None);
+        assert!(matches!(app.screen, Screen::HostList));
+        assert!(
+            app.display_list
+                .iter()
+                .all(|item| matches!(item, crate::app::HostListItem::Host { .. }))
+        );
+    }
+
+    #[test]
+    fn g_key_full_cycle_with_tags_and_enter() {
+        // None → Provider
+        let content = "\
+Host web1
+  HostName 1.1.1.1
+  # purple:tags production
+";
+        let mut app = make_app(content);
+        assert_eq!(app.group_by, crate::app::GroupBy::None);
+
+        let (tx, _rx) = mpsc::channel();
+
+        // None → Provider
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('g')), &tx);
+        assert_eq!(app.group_by, crate::app::GroupBy::Provider);
+
+        // Provider → GroupTagPicker (tags exist)
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('g')), &tx);
+        assert!(matches!(app.screen, Screen::GroupTagPicker));
+
+        // Select first tag with Enter → Tag("production")
+        app.ui.tag_picker_state.select(Some(0));
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert_eq!(
+            app.group_by,
+            crate::app::GroupBy::Tag("production".to_string())
+        );
+        assert!(matches!(app.screen, Screen::HostList));
+
+        // Tag → None
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('g')), &tx);
+        assert_eq!(app.group_by, crate::app::GroupBy::None);
+    }
+
+    #[test]
+    fn esc_from_group_tag_picker_resets_to_none() {
+        let content = "\
+Host web1
+  HostName 1.1.1.1
+  # purple:tags production
+";
+        let mut app = make_app(content);
+        app.group_by = crate::app::GroupBy::Provider;
+        app.screen = Screen::GroupTagPicker;
+        app.tag_list = vec!["production".to_string()];
+
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+
+        assert_eq!(app.group_by, crate::app::GroupBy::None);
+        assert!(matches!(app.screen, Screen::HostList));
+    }
+
+    #[test]
+    fn g_key_cycle_no_tags_stays_none_provider_none() {
+        // With no user tags: None → Provider → None (skips GroupTagPicker)
+        let content = "\
+Host db1
+  HostName 10.0.0.1
+  # purple:provider digitalocean:99
+";
+        let mut app = make_app(content);
+        let (tx, _rx) = mpsc::channel();
+
+        // Step 1: None → Provider
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('g')), &tx);
+        assert_eq!(app.group_by, crate::app::GroupBy::Provider);
+
+        // Step 2: Provider → None (no user tags, skips picker)
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('g')), &tx);
+        assert_eq!(app.group_by, crate::app::GroupBy::None);
+        assert!(
+            !matches!(app.screen, Screen::GroupTagPicker),
+            "should not open GroupTagPicker when no user tags"
+        );
+    }
+
+    #[test]
+    fn g_key_tag_to_none_empty_hosts() {
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut app = make_app("");
+        app.group_by = crate::app::GroupBy::Tag("production".to_string());
+
+        let key = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE);
+        let _ = handle_key_event(&mut app, key, &tx);
+
+        assert_eq!(app.group_by, crate::app::GroupBy::None);
+        assert!(matches!(app.screen, Screen::HostList));
+    }
+
+    #[test]
+    fn help_from_group_tag_picker_returns_to_picker() {
+        let (tx, _rx) = mpsc::channel();
+        let mut app = make_app("Host web1\n  HostName 1.1.1.1\n  # purple:tags prod\n");
+        app.tag_list = vec!["prod".to_string()];
+        app.ui.tag_picker_state = ratatui::widgets::ListState::default();
+        app.ui.tag_picker_state.select(Some(0));
+        app.screen = Screen::GroupTagPicker;
+
+        // Press ? to open help
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('?')), &tx);
+        match &app.screen {
+            Screen::Help { return_screen } => {
+                assert!(matches!(**return_screen, Screen::GroupTagPicker));
+            }
+            other => panic!("expected Help, got {:?}", std::mem::discriminant(other)),
+        }
+
+        // Press Esc to close help — should return to GroupTagPicker
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        assert!(matches!(app.screen, Screen::GroupTagPicker));
     }
 }

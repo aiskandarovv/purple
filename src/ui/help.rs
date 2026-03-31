@@ -30,6 +30,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             Screen::KeyDetail { .. } => key_detail_lines(),
             Screen::HostDetail { .. } => host_detail_lines(),
             Screen::TagPicker => tag_picker_lines(),
+            Screen::GroupTagPicker => group_tag_picker_lines(),
             _ => vec![],
         };
         (lines, vec![])
@@ -147,6 +148,7 @@ fn context_title(screen: &Screen) -> &'static str {
         Screen::KeyDetail { .. } => "Key Detail",
         Screen::HostDetail { .. } => "All Directives",
         Screen::TagPicker => "Tags",
+        Screen::GroupTagPicker => "Group by Tag",
         _ => "Help",
     }
 }
@@ -185,7 +187,7 @@ fn host_list_columns() -> (Vec<Line<'static>>, Vec<Line<'static>>) {
     col1.extend(section_header("VIEW"));
     col1.push(help_line("v", "detail panel"));
     col1.push(help_line("s", "cycle sort"));
-    col1.push(help_line("g", "group by provider"));
+    col1.push(help_line("g", "group (off/provider/tag)"));
     col1.push(help_line("[ / ]", "scroll detail"));
     col1.push(help_line("tag:name", "fuzzy tag filter"));
     col1.push(help_line("tag=name", "exact tag filter"));
@@ -327,6 +329,15 @@ fn tag_picker_lines() -> Vec<Line<'static>> {
     lines.push(help_line("Enter", "filter by tag"));
     lines.push(help_line("PgDn/PgUp", "page down / up"));
     lines.push(help_line("q/Esc/#", "close"));
+    lines
+}
+
+fn group_tag_picker_lines() -> Vec<Line<'static>> {
+    let mut lines = vec![blank()];
+    lines.push(help_line("j/k", "up / down"));
+    lines.push(help_line("Enter", "group by tag"));
+    lines.push(help_line("PgDn/PgUp", "page down / up"));
+    lines.push(help_line("q/Esc", "cancel"));
     lines
 }
 

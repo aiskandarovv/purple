@@ -95,6 +95,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             host_list::render(frame, app);
             render_overlay(frame, app, tag_picker::render);
         }
+        Screen::GroupTagPicker => {
+            host_list::render(frame, app);
+            render_overlay(frame, app, tag_picker::render_group_picker);
+        }
         Screen::Providers => {
             host_list::render(frame, app);
             render_overlay(frame, app, |frame, app| {

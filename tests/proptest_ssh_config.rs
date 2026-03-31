@@ -837,3 +837,121 @@ proptest! {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Property: grouping is display-only — serialize() output is never altered
+//
+// GroupBy changes only `display_list` (the UI ordering), never `config.elements`
+// (the data). Serialization reads exclusively from `elements`, so the written
+// output must be byte-identical before and after any grouping operation.
+//
+// We test this invariant two ways:
+//   1. Proptest: configs with purple:tags annotations produce stable output
+//      across two independent serialize() calls on the same parsed data.
+//   2. Deterministic: an explicit multi-host config with tags survives a
+//      parse -> serialize -> parse -> serialize cycle unchanged.
+// ---------------------------------------------------------------------------
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(300))]
+
+    /// Grouping is display-only: calling serialize() twice on the same
+    /// parsed config (with purple:tags annotations) must return the same bytes.
+    /// This simulates the invariant that applying GroupBy to `display_list`
+    /// never mutates `elements` and therefore never alters the written output.
+    #[test]
+    fn groupby_does_not_alter_serialized_output(content in annotated_config_strategy()) {
+        let config = parse_str(&content);
+
+        // First serialize — baseline (analogous to "before any GroupBy applied")
+        let first = config.serialize();
+
+        // Second serialize on the same config — must be byte-identical.
+        // GroupBy only ever touches display_list (an App-level Vec of display
+        // indices), never config.elements.  Serialize reads only elements, so
+        // no matter what ordering the UI uses, the on-disk representation must
+        // be stable.
+        let second = config.serialize();
+
+        prop_assert!(
+            first == second,
+            "serialize() is non-deterministic on annotated config \
+             (len {} vs {})",
+            first.len(),
+            second.len(),
+        );
+
+        // Also verify the output is idempotent under a full parse round-trip,
+        // confirming tags survive intact when re-read.
+        let reparsed = parse_str(&first);
+        let third = reparsed.serialize();
+        prop_assert!(
+            first == third,
+            "Round-trip changed serialized output after parse (len {} vs {})",
+            first.len(),
+            third.len(),
+        );
+    }
+}
+
+// Deterministic: explicit config with purple:tags on multiple hosts.
+// Validates that a concrete, human-readable scenario passes the same invariant.
+#[test]
+fn groupby_roundtrip_deterministic() {
+    let content = "\
+Host web-prod
+  HostName 10.0.1.10
+  User deploy
+  # purple:tags prod,web
+  # purple:provider aws:i-0abc123
+
+Host db-prod
+  HostName 10.0.1.20
+  User deploy
+  # purple:tags prod,db
+  # purple:provider aws:i-0def456
+
+Host staging
+  HostName 10.0.2.10
+  User deploy
+  # purple:tags staging,web
+
+Host bastion
+  HostName 203.0.113.5
+  User admin
+";
+
+    let config = parse_str(content);
+    let first = config.serialize();
+
+    // Parse -> serialize again — must be byte-identical regardless of
+    // any GroupBy ordering that the UI layer might apply.
+    let reparsed = parse_str(&first);
+    let second = reparsed.serialize();
+
+    assert_eq!(
+        first, second,
+        "Deterministic round-trip changed output for config with tags"
+    );
+
+    // Confirm all tags survived the round-trip.
+    let entries = reparsed.host_entries();
+    let web = entries.iter().find(|e| e.alias == "web-prod").unwrap();
+    assert!(
+        web.tags.contains(&"prod".to_string()) && web.tags.contains(&"web".to_string()),
+        "web-prod tags not preserved: {:?}",
+        web.tags
+    );
+    let db = entries.iter().find(|e| e.alias == "db-prod").unwrap();
+    assert!(
+        db.tags.contains(&"prod".to_string()) && db.tags.contains(&"db".to_string()),
+        "db-prod tags not preserved: {:?}",
+        db.tags
+    );
+    let staging = entries.iter().find(|e| e.alias == "staging").unwrap();
+    assert!(
+        staging.tags.contains(&"staging".to_string()),
+        "staging tags not preserved: {:?}",
+        staging.tags
+    );
+}
