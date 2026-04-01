@@ -1,3 +1,19 @@
+## 2.24.0
+
+- Collapsible groups, Ctrl+A select all and smarter Proxmox OS detection
+- Navigate to a group header and press Enter to collapse or expand it. Collapsed state is saved between sessions
+- Ctrl+A to select or deselect all visible hosts. Works with search filters and collapsed groups
+- Proxmox VMs with QEMU guest agent now show actual OS (e.g. "Debian GNU/Linux 13 (trixie)") instead of generic "Linux 2.6-6.x"
+- Ping results no longer persist after clearing. Background ping threads are properly discarded
+- Column hide priority improved: tags stay visible longest on narrow terminals
+- Detail panel wider (40/46 columns) and shown by default
+- Group headers are bold with collapse indicators
+- Pinned "? more" help hint in footer
+- Breadcrumb navigation in overlay titles (e.g. "Providers > AWS")
+- Sync completion shows change summary (e.g. "+3 ~1 -2")
+- Refreshed welcome screen with new logo and "Press ? anytime for help"
+- Help screen shows issue tracker link
+
 ## 2.23.0
 
 - Group hosts by any tag. Press g to cycle: ungrouped, provider or tag.

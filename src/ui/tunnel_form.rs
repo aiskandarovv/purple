@@ -14,9 +14,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     let title = match &app.screen {
         Screen::TunnelForm {
-            editing: Some(_), ..
-        } => " Edit Tunnel ",
-        _ => " Add Tunnel ",
+            alias,
+            editing: Some(_),
+            ..
+        } => format!(" Tunnels for {} > Edit ", alias),
+        Screen::TunnelForm { alias, .. } => format!(" Tunnels for {} > Add ", alias),
+        _ => return,
     };
 
     let is_dynamic = app.tunnel_form.tunnel_type == TunnelType::Dynamic;

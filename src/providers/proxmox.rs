@@ -125,6 +125,19 @@ struct GuestIpAddress {
     ip_address_type: String,
 }
 
+// Guest agent OS info response: {"data": {"result": {"pretty-name": "..."}}}
+#[derive(Debug, Deserialize, Default)]
+struct GuestOsInfoResult {
+    #[serde(default, rename = "pretty-name")]
+    pretty_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GuestOsInfoData {
+    #[serde(default, deserialize_with = "null_to_default")]
+    result: GuestOsInfoResult,
+}
+
 // LXC container interfaces from /lxc/{vmid}/interfaces
 #[derive(Deserialize, Default)]
 struct LxcInterface {
@@ -186,6 +199,25 @@ fn extract_ostype(config: &VmConfig) -> Option<String> {
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
+}
+
+/// Try to get the real OS name from the QEMU guest agent.
+/// Returns the pretty-name (e.g. "Debian GNU/Linux 13 (trixie)") or None.
+fn fetch_guest_os_info(
+    agent: &ureq::Agent,
+    base: &str,
+    auth: &str,
+    node: &str,
+    vmid: u64,
+) -> Option<String> {
+    let url = format!(
+        "{}/api2/json/nodes/{}/qemu/{}/agent/get-osinfo",
+        base, node, vmid
+    );
+    let mut resp = agent.get(&url).header("Authorization", auth).call().ok()?;
+    let info: PveResponse<GuestOsInfoData> = resp.body_mut().read_json().ok()?;
+    let name = info.data.result.pretty_name;
+    if name.is_empty() { None } else { Some(name) }
 }
 
 /// Format CPU/memory as a compact plan string (e.g. "2c/4GiB").
@@ -551,7 +583,9 @@ impl Provider for Proxmox {
                 .map(|ip| super::strip_cidr(ip).to_string())
                 .filter(|ip| !is_unusable_ip(ip));
             let outcome = if let Some(ip) = cluster_ip {
-                ResolveOutcome::Resolved(ip, None)
+                // Cluster IP available; still fetch config for ostype
+                let ostype = self.fetch_ostype(&agent, &base, &auth, resource);
+                ResolveOutcome::Resolved(ip, ostype)
             } else if resource.resource_type == "qemu" {
                 self.resolve_qemu_ip(&agent, &base, &auth, resource)
             } else {
@@ -671,6 +705,46 @@ impl Provider for Proxmox {
 }
 
 impl Proxmox {
+    /// Fetch ostype for a VM/container that already has an IP from the cluster API.
+    /// Tries guest agent get-osinfo for QEMU VMs, falls back to config ostype.
+    fn fetch_ostype(
+        &self,
+        agent: &ureq::Agent,
+        base: &str,
+        auth: &str,
+        resource: &ClusterResource,
+    ) -> Option<String> {
+        let api_type = if resource.resource_type == "qemu" {
+            "qemu"
+        } else {
+            "lxc"
+        };
+        let config_url = format!(
+            "{}/api2/json/nodes/{}/{}/{}/config",
+            base, resource.node, api_type, resource.vmid
+        );
+        let config: VmConfig = agent
+            .get(&config_url)
+            .header("Authorization", auth)
+            .call()
+            .ok()
+            .and_then(|mut resp| resp.body_mut().read_json::<PveResponse<VmConfig>>().ok())
+            .map(|r| r.data)?;
+
+        // For running QEMU VMs with guest agent, try get-osinfo first
+        if resource.resource_type == "qemu"
+            && resource.status == "running"
+            && is_agent_enabled(config.agent.as_deref())
+        {
+            if let Some(os) = fetch_guest_os_info(agent, base, auth, &resource.node, resource.vmid)
+            {
+                return Some(os);
+            }
+        }
+
+        extract_ostype(&config)
+    }
+
     fn resolve_qemu_ip(
         &self,
         agent: &ureq::Agent,
@@ -695,6 +769,13 @@ impl Proxmox {
         };
 
         let ostype = extract_ostype(&config);
+
+        // Try guest agent OS info for a better OS label
+        let ostype = if resource.status == "running" && is_agent_enabled(config.agent.as_deref()) {
+            fetch_guest_os_info(agent, base, auth, &resource.node, resource.vmid).or(ostype)
+        } else {
+            ostype
+        };
 
         // Try static IP from ipconfig0..9
         for ipconfig in extract_numbered_values(&config.extra, "ipconfig") {
@@ -3684,5 +3765,221 @@ mod tests {
         let ip = select_lxc_interface_ip(&resp.data);
         assert_eq!(ip, Some("10.0.0.10".to_string()));
         mock.assert();
+    }
+
+    // --- Guest OS info tests ---
+
+    #[test]
+    fn test_parse_guest_os_info_response() {
+        let json = r#"{"data":{"result":{"pretty-name":"Debian GNU/Linux 13 (trixie)","id":"debian","version-id":"13"}}}"#;
+        let resp: PveResponse<GuestOsInfoData> = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.data.result.pretty_name, "Debian GNU/Linux 13 (trixie)");
+    }
+
+    #[test]
+    fn test_parse_guest_os_info_empty_pretty_name() {
+        let json = r#"{"data":{"result":{"id":"unknown"}}}"#;
+        let resp: PveResponse<GuestOsInfoData> = serde_json::from_str(json).unwrap();
+        assert!(resp.data.result.pretty_name.is_empty());
+    }
+
+    #[test]
+    fn test_http_guest_os_info_roundtrip() {
+        let mut server = mockito::Server::new();
+        let mock = server
+            .mock(
+                "GET",
+                "/api2/json/nodes/pve1/qemu/100/agent/get-osinfo",
+            )
+            .match_header("Authorization", "PVEAPIToken=user@pam!tok=uuid")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"data":{"result":{"pretty-name":"Debian GNU/Linux 13 (trixie)","id":"debian","version-id":"13"}}}"#,
+            )
+            .create();
+
+        let agent = super::super::http_agent();
+        let result = fetch_guest_os_info(
+            &agent,
+            &server.url(),
+            "PVEAPIToken=user@pam!tok=uuid",
+            "pve1",
+            100,
+        );
+        assert_eq!(result, Some("Debian GNU/Linux 13 (trixie)".to_string()));
+        mock.assert();
+    }
+
+    #[test]
+    fn test_http_guest_os_info_returns_none_on_error() {
+        let mut server = mockito::Server::new();
+        let mock = server
+            .mock("GET", "/api2/json/nodes/pve1/qemu/100/agent/get-osinfo")
+            .match_header("Authorization", "PVEAPIToken=user@pam!tok=uuid")
+            .with_status(500)
+            .with_body(r#"{"message":"No QEMU guest agent configured\n","data":null}"#)
+            .create();
+
+        let agent = super::super::http_agent();
+        let result = fetch_guest_os_info(
+            &agent,
+            &server.url(),
+            "PVEAPIToken=user@pam!tok=uuid",
+            "pve1",
+            100,
+        );
+        assert_eq!(result, None);
+        mock.assert();
+    }
+
+    #[test]
+    fn test_http_guest_os_info_returns_none_on_empty_pretty_name() {
+        let mut server = mockito::Server::new();
+        let mock = server
+            .mock("GET", "/api2/json/nodes/pve1/qemu/100/agent/get-osinfo")
+            .match_header("Authorization", "PVEAPIToken=user@pam!tok=uuid")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"data":{"result":{"id":"unknown"}}}"#)
+            .create();
+
+        let agent = super::super::http_agent();
+        let result = fetch_guest_os_info(
+            &agent,
+            &server.url(),
+            "PVEAPIToken=user@pam!tok=uuid",
+            "pve1",
+            100,
+        );
+        assert_eq!(result, None);
+        mock.assert();
+    }
+
+    #[test]
+    fn test_fetch_ostype_with_guest_agent() {
+        let mut server = mockito::Server::new();
+        let config_mock = server
+            .mock("GET", "/api2/json/nodes/pve1/qemu/100/config")
+            .with_status(200)
+            .with_body(r#"{"data":{"agent":"1","ostype":"l26"}}"#)
+            .create();
+        let osinfo_mock = server
+            .mock("GET", "/api2/json/nodes/pve1/qemu/100/agent/get-osinfo")
+            .with_status(200)
+            .with_body(r#"{"data":{"result":{"pretty-name":"Debian GNU/Linux 13 (trixie)"}}}"#)
+            .create();
+
+        let proxmox = Proxmox {
+            base_url: server.url(),
+            verify_tls: false,
+        };
+        let agent = super::super::http_agent();
+        let resource = ClusterResource {
+            resource_type: "qemu".to_string(),
+            vmid: 100,
+            name: "test-vm".to_string(),
+            node: "pve1".to_string(),
+            status: "running".to_string(),
+            template: 0,
+            tags: None,
+            ip: None,
+            maxcpu: None,
+            maxmem: None,
+        };
+        let result = proxmox.fetch_ostype(&agent, &server.url(), "Bearer test", &resource);
+        assert_eq!(
+            result,
+            Some("Debian GNU/Linux 13 (trixie)".to_string()),
+            "should use guest agent pretty-name"
+        );
+        config_mock.assert();
+        osinfo_mock.assert();
+    }
+
+    #[test]
+    fn test_fetch_ostype_without_guest_agent() {
+        let mut server = mockito::Server::new();
+        let config_mock = server
+            .mock("GET", "/api2/json/nodes/pve1/qemu/101/config")
+            .with_status(200)
+            .with_body(r#"{"data":{"ostype":"l26"}}"#)
+            .create();
+
+        let proxmox = Proxmox {
+            base_url: server.url(),
+            verify_tls: false,
+        };
+        let agent = super::super::http_agent();
+        let resource = ClusterResource {
+            resource_type: "qemu".to_string(),
+            vmid: 101,
+            name: "test-vm".to_string(),
+            node: "pve1".to_string(),
+            status: "running".to_string(),
+            template: 0,
+            tags: None,
+            ip: None,
+            maxcpu: None,
+            maxmem: None,
+        };
+        let result = proxmox.fetch_ostype(&agent, &server.url(), "Bearer test", &resource);
+        assert_eq!(
+            result,
+            Some("l26".to_string()),
+            "should fall back to config ostype"
+        );
+        config_mock.assert();
+    }
+
+    #[test]
+    fn test_fetch_ostype_null_osinfo_result() {
+        let mut server = mockito::Server::new();
+        let config_mock = server
+            .mock("GET", "/api2/json/nodes/pve1/qemu/102/config")
+            .with_status(200)
+            .with_body(r#"{"data":{"agent":"1","ostype":"l26"}}"#)
+            .create();
+        let osinfo_mock = server
+            .mock("GET", "/api2/json/nodes/pve1/qemu/102/agent/get-osinfo")
+            .with_status(200)
+            .with_body(r#"{"data":{"result":null}}"#)
+            .create();
+
+        let proxmox = Proxmox {
+            base_url: server.url(),
+            verify_tls: false,
+        };
+        let agent = super::super::http_agent();
+        let resource = ClusterResource {
+            resource_type: "qemu".to_string(),
+            vmid: 102,
+            name: "test-vm".to_string(),
+            node: "pve1".to_string(),
+            status: "running".to_string(),
+            template: 0,
+            tags: None,
+            ip: None,
+            maxcpu: None,
+            maxmem: None,
+        };
+        let result = proxmox.fetch_ostype(&agent, &server.url(), "Bearer test", &resource);
+        assert_eq!(
+            result,
+            Some("l26".to_string()),
+            "should fall back to config ostype when guest agent returns null result"
+        );
+        config_mock.assert();
+        osinfo_mock.assert();
+    }
+
+    #[test]
+    fn test_guest_os_info_passthrough_map_qemu_ostype() {
+        // Guest agent pretty-name should pass through map_qemu_ostype unchanged
+        assert_eq!(
+            map_qemu_ostype("Debian GNU/Linux 13 (trixie)"),
+            "Debian GNU/Linux 13 (trixie)"
+        );
+        assert_eq!(map_qemu_ostype("Ubuntu 24.04.1 LTS"), "Ubuntu 24.04.1 LTS");
     }
 }

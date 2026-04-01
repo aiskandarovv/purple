@@ -13,6 +13,7 @@ pub enum AppEvent {
     PingResult {
         alias: String,
         reachable: bool,
+        generation: u64,
     },
     SyncComplete {
         provider: String,

@@ -10,7 +10,7 @@ use crate::app::{self, App, HostListItem, PingStatus, ViewMode};
 use crate::ssh_config::model::ConfigElement;
 
 /// Minimum terminal width to show the detail panel in detailed view mode.
-const DETAIL_MIN_WIDTH: u16 = 90;
+const DETAIL_MIN_WIDTH: u16 = 95;
 
 /// Build the update badge label, truncating the headline with ellipsis if needed.
 /// `max_width` is the border area width (including border chars).
@@ -96,7 +96,7 @@ impl Columns {
         } else {
             0
         };
-        let show_ping = has_ping; // fixed 4 chars, never hidden
+        let mut show_ping = has_ping;
         let mut history = if history_w > 0 {
             Self::padded(history_w).max(4)
         } else {
@@ -142,12 +142,8 @@ impl Columns {
         let mut rw = right_cluster(tags, tunnel, auth, show_ping, history);
         let min_total = left + gap + rw;
 
-        // Hide right-cluster columns by priority: TAGS → AUTH → TUNNEL → LAST
-        if min_total > content && tags > 0 {
-            tags = 0;
-            rw = right_cluster(tags, tunnel, auth, show_ping, history);
-        }
-        if left + gap + rw > content && auth > 0 {
+        // Hide right-cluster columns by priority: AUTH → TUNNEL → LAST → PING → TAGS
+        if min_total > content && auth > 0 {
             auth = 0;
             rw = right_cluster(tags, tunnel, auth, show_ping, history);
         }
@@ -157,6 +153,14 @@ impl Columns {
         }
         if left + gap + rw > content && history > 0 {
             history = 0;
+            rw = right_cluster(tags, tunnel, auth, show_ping, history);
+        }
+        if left + gap + rw > content && show_ping {
+            show_ping = false;
+            rw = right_cluster(tags, tunnel, auth, show_ping, history);
+        }
+        if left + gap + rw > content && tags > 0 {
+            tags = 0;
             rw = right_cluster(tags, tunnel, auth, show_ping, history);
         }
 
@@ -317,9 +321,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let target_detail =
         app.view_mode == ViewMode::Detailed && content_area.width >= DETAIL_MIN_WIDTH;
     let full_detail_width = if content_area.width >= 140 {
-        42u16
+        46u16
     } else {
-        36u16
+        40u16
     };
 
     // Calculate detail width: animated or instant.
@@ -368,7 +372,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 app.hosts.iter().filter(|h| h.stale.is_some()).count(),
             )
         };
-        super::render_footer_with_status(frame, chunks[2], spans, app);
+        super::render_footer_with_help(frame, chunks[2], spans, app);
     }
 
     if let Some(detail) = detail_area {
@@ -536,24 +540,8 @@ fn render_display_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::
         underline_area,
     );
 
-    // Count hosts per group for group headers
-    let group_counts: std::collections::HashMap<&str, usize> = {
-        let mut counts = std::collections::HashMap::new();
-        let mut current_group: Option<&str> = None;
-        for item in &app.display_list {
-            match item {
-                HostListItem::GroupHeader(text) => {
-                    current_group = Some(text.as_str());
-                }
-                HostListItem::Host { .. } | HostListItem::Pattern { .. } => {
-                    if let Some(group) = current_group {
-                        *counts.entry(group).or_insert(0) += 1;
-                    }
-                }
-            }
-        }
-        counts
-    };
+    // Use pre-computed group host counts (computed before collapse filtering)
+    let group_counts = &app.group_host_counts;
 
     let mut items: Vec<ListItem> = Vec::new();
     for item in &app.display_list {
@@ -561,10 +549,15 @@ fn render_display_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::
             HostListItem::GroupHeader(text) => {
                 let upper = text.to_uppercase();
                 let count = group_counts.get(text.as_str()).copied().unwrap_or(0);
-                let label = format!("{}  {} ", upper, count);
-                let fill = content_width.saturating_sub(label.width());
+                let collapsed = app.collapsed_groups.contains(text);
+                let arrow = if collapsed { "\u{25B6} " } else { "\u{25BC} " };
+                let name_part = format!("{}{}  ", arrow, upper);
+                let count_part = format!("{} ", count);
+                let label_width = name_part.width() + count_part.width();
+                let fill = content_width.saturating_sub(label_width);
                 let line = Line::from(vec![
-                    Span::styled(label, theme::muted()),
+                    Span::styled(name_part, theme::bold()),
+                    Span::styled(count_part, theme::muted()),
                     Span::styled("─".repeat(fill), theme::muted()),
                 ]);
                 items.push(ListItem::new(line));
@@ -1295,9 +1288,6 @@ fn footer_spans(detail_active: bool, multi_count: usize, stale_count: usize) -> 
         Span::styled("\u{2502} ", theme::muted()),
         Span::styled("v", theme::accent_bold()),
         Span::styled(view_label, theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
-        Span::styled("?", theme::accent_bold()),
-        Span::styled(" more ", theme::muted()),
     ];
     if multi_count > 0 {
         spans.push(Span::styled("\u{2502} ", theme::muted()));
@@ -1344,9 +1334,6 @@ fn pattern_footer_spans(detail_active: bool) -> Vec<Span<'static>> {
         Span::styled("\u{2502} ", theme::muted()),
         Span::styled("v", theme::accent_bold()),
         Span::styled(view_label, theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
-        Span::styled("?", theme::accent_bold()),
-        Span::styled(" more ", theme::muted()),
     ]
 }
 
@@ -1503,23 +1490,23 @@ mod tests {
     }
 
     #[test]
-    fn test_columns_compute_hides_tags_first() {
+    fn test_columns_compute_hides_auth_first() {
         // Set up widths that are too wide for content area.
-        // Tags should be hidden first, while auth and tunnel remain.
+        // Auth should be hidden first, while tags remain visible.
         let cols = Columns::compute(
             10,    // alias_w
             20,    // host_w
-            10,    // tags_w — should be hidden first
+            10,    // tags_w — should remain visible
             8,     // tunnel_w
-            8,     // auth_w
+            8,     // auth_w — should be hidden first
             false, // no ping
             6,     // history_w
             60,    // narrow content
         );
-        assert_eq!(cols.tags, 0, "Tags should be hidden first when too narrow");
+        assert_eq!(cols.auth, 0, "Auth should be hidden first when too narrow");
         assert!(
-            cols.auth > 0 || cols.tunnel > 0,
-            "Auth or tunnel should still be present"
+            cols.tags > 0,
+            "Tags should still be present after auth is hidden"
         );
     }
 
@@ -1647,5 +1634,50 @@ mod tests {
         assert_eq!(chunks[2].height, 1);
         assert_eq!(chunks[3].height, 1);
         assert!(chunks[3].y > chunks[0].y + chunks[0].height);
+    }
+
+    // =========================================================================
+    // Column hide priority tests
+    // =========================================================================
+
+    #[test]
+    fn columns_hide_full_priority_chain() {
+        // Wide enough for everything
+        let cols_wide = Columns::compute(10, 15, 8, 6, 6, true, 5, 200);
+        assert!(cols_wide.auth > 0, "auth visible at 200");
+        assert!(cols_wide.tunnel > 0, "tunnel visible at 200");
+        assert!(cols_wide.history > 0, "history visible at 200");
+        assert!(cols_wide.show_ping, "ping visible at 200");
+        assert!(cols_wide.tags > 0, "tags visible at 200");
+
+        // Progressively narrower: AUTH hides first
+        let cols_no_auth = Columns::compute(10, 15, 8, 6, 6, true, 5, 70);
+        assert_eq!(cols_no_auth.auth, 0, "auth should hide first");
+
+        // Even narrower: TUNNEL hides next
+        let cols_no_tunnel = Columns::compute(10, 15, 8, 6, 6, true, 5, 55);
+        assert_eq!(cols_no_tunnel.auth, 0, "auth still hidden");
+        assert_eq!(cols_no_tunnel.tunnel, 0, "tunnel should hide second");
+
+        // Narrower still: LAST (history) hides next
+        let cols_no_history = Columns::compute(10, 15, 8, 6, 6, true, 5, 48);
+        assert_eq!(cols_no_history.auth, 0);
+        assert_eq!(cols_no_history.tunnel, 0);
+        assert_eq!(cols_no_history.history, 0, "history should hide third");
+
+        // Very narrow: PING hides next
+        let cols_no_ping = Columns::compute(10, 15, 8, 6, 6, true, 5, 42);
+        assert_eq!(cols_no_ping.auth, 0);
+        assert_eq!(cols_no_ping.tunnel, 0);
+        assert_eq!(cols_no_ping.history, 0);
+        assert!(!cols_no_ping.show_ping, "ping should hide fourth");
+
+        // Extremely narrow: TAGS hides last
+        let cols_no_tags = Columns::compute(10, 15, 8, 6, 6, true, 5, 35);
+        assert_eq!(cols_no_tags.auth, 0);
+        assert_eq!(cols_no_tags.tunnel, 0);
+        assert_eq!(cols_no_tags.history, 0);
+        assert!(!cols_no_tags.show_ping);
+        assert_eq!(cols_no_tags.tags, 0, "tags should hide last");
     }
 }

@@ -14,8 +14,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let title = match &app.screen {
         Screen::SnippetForm {
             editing: Some(_), ..
-        } => " Edit Snippet ",
-        _ => " Add Snippet ",
+        } => " Snippets > Edit ",
+        _ => " Snippets > Add ",
     };
 
     let fields = SnippetFormField::ALL;

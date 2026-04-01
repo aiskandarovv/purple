@@ -196,7 +196,7 @@ pub fn render_provider_form(frame: &mut Frame, app: &mut App, provider_name: &st
     let area = frame.area();
 
     let display_name = crate::providers::provider_display_name(provider_name);
-    let title = format!(" Configure {} ", display_name);
+    let title = format!(" Providers > {} ", display_name);
 
     let fields = ProviderFormField::fields_for(provider_name);
 

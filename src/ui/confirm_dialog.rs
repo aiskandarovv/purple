@@ -186,18 +186,13 @@ pub fn render_confirm_purge_stale(
     frame.render_widget(paragraph, area);
 }
 
-/// Block-art logo for the welcome screen (░█ style, 9 lines).
+/// Block-art logo for the welcome screen (4 lines).
 /// Lines are trimmed; render code pads to max display width for alignment.
-const LOGO: [&str; 9] = [
-    "                                          ░██",
-    "                                          ░██",
-    "░████████  ░██    ░██ ░██░████ ░████████  ░██  ░███████",
-    "░██    ░██ ░██    ░██ ░███     ░██    ░██ ░██ ░██    ░██",
-    "░██    ░██ ░██    ░██ ░██      ░██    ░██ ░██ ░█████████",
-    "░███   ░██ ░██   ░███ ░██      ░███   ░██ ░██ ░██",
-    "░██░█████   ░█████░██ ░██      ░██░█████  ░██  ░███████",
-    "░██                            ░██",
-    "░██                            ░██",
+const LOGO: [&str; 4] = [
+    "        \u{259C}   ",
+    "\u{259B}\u{258C}\u{258C}\u{258C}\u{259B}\u{2598}\u{259B}\u{258C}\u{2590} \u{2588}\u{258C}",
+    "\u{2599}\u{258C}\u{2599}\u{258C}\u{258C} \u{2599}\u{258C}\u{2590}\u{2596}\u{2599}\u{2596}",
+    "\u{258C}     \u{258C}     ",
 ];
 
 /// Typewriter delay: ms after logo reveal before text starts.
@@ -280,12 +275,16 @@ pub fn render_welcome(
         ((elapsed - text_start) / TYPEWRITER_CHAR_MS) as usize
     };
 
-    // Build info lines to count height
-    let info_line_count = if has_hosts {
-        1 + if has_backup { 2 } else { 0 }
-    } else {
-        (if known_hosts_count > 0 { 2 } else { 0 }) + if has_backup { 2 } else { 0 }
-    };
+    // Count extra lines for the info section (matches text-building logic below exactly)
+    let mut extra = 2usize; // blank + blank between subtitle and hint
+    if has_hosts {
+        extra += 3; // blank + blank + "N hosts loaded"
+    } else if known_hosts_count > 0 {
+        extra += 5; // blank + blank + "Found N" + blank + "Press I"
+    }
+    if has_backup {
+        extra += 3; // blank + backup line 1 + line 2
+    }
 
     // Compute logo display width (max across lines) for alignment padding
     let logo_max_w = LOGO
@@ -294,9 +293,11 @@ pub fn render_welcome(
         .max()
         .unwrap_or(0);
 
-    // Height: border(2) + blank(1) + logo(9) + blank(2) + subtitle(1) + info + blank(1) + footer(1) + blank(1)
-    let content_height = 18 + info_line_count + if info_line_count > 0 { 1 } else { 0 };
-    let dialog_width = (logo_max_w as u16) + 6; // logo + border(2) + padding(4)
+    // border(2) + blank(3) + logo(4) + blank(3) + subtitle(1) + hint(1) + blank(1) + footer(1) + blank(3) = 21 base
+    let content_height = 21 + extra;
+    // Minimum width: fits longest text line ("Your original config has been backed up")
+    // with comfortable padding. Logo width + padding, or 56 chars minimum.
+    let dialog_width = ((logo_max_w as u16) + 24).max(56);
     let area = super::centered_rect_fixed(dialog_width, content_height as u16, frame.area());
 
     frame.render_widget(Clear, area);
@@ -309,6 +310,8 @@ pub fn render_welcome(
     let mut text: Vec<Line<'_>> = Vec::new();
 
     // Top spacing
+    text.push(Line::from(""));
+    text.push(Line::from(""));
     text.push(Line::from(""));
 
     // Logo (phased line-by-line reveal, padded to uniform width)
@@ -328,6 +331,7 @@ pub fn render_welcome(
 
     text.push(Line::from(""));
     text.push(Line::from(""));
+    text.push(Line::from(""));
 
     // Subtitle (typewriter)
     let sub_spans = vec![Span::styled(
@@ -337,12 +341,23 @@ pub fn render_welcome(
     text.push(
         Line::from(typewriter_spans(sub_spans, &mut char_budget)).alignment(Alignment::Center),
     );
+    text.push(Line::from(""));
+    text.push(Line::from(""));
+    let hint_spans = vec![
+        Span::styled("Press ", theme::muted()),
+        Span::styled("?", theme::accent_bold()),
+        Span::styled(" anytime for help.", theme::muted()),
+    ];
+    text.push(
+        Line::from(typewriter_spans(hint_spans, &mut char_budget)).alignment(Alignment::Center),
+    );
 
     // Info lines (typewriter continues)
     if has_hosts {
         text.push(Line::from(""));
+        text.push(Line::from(""));
         let info = format!(
-            "Found {} host{} in your SSH config.",
+            "{} host{} loaded from ~/.ssh/config.",
             host_count,
             if host_count == 1 { "" } else { "s" },
         );
@@ -351,6 +366,7 @@ pub fn render_welcome(
             Line::from(typewriter_spans(spans, &mut char_budget)).alignment(Alignment::Center),
         );
     } else if known_hosts_count > 0 {
+        text.push(Line::from(""));
         text.push(Line::from(""));
         let info = format!(
             "Found {} host{} in known_hosts.",
@@ -361,7 +377,7 @@ pub fn render_welcome(
         text.push(
             Line::from(typewriter_spans(spans, &mut char_budget)).alignment(Alignment::Center),
         );
-
+        text.push(Line::from(""));
         let hint_spans = vec![
             Span::styled("Press ", theme::muted()),
             Span::styled("I", theme::accent_bold()),
@@ -372,9 +388,7 @@ pub fn render_welcome(
         );
     }
     if has_backup {
-        if !has_hosts && known_hosts_count == 0 {
-            text.push(Line::from(""));
-        }
+        text.push(Line::from(""));
         let b1 = vec![Span::styled(
             "Your original config has been backed up",
             theme::muted(),
@@ -389,9 +403,6 @@ pub fn render_welcome(
     if char_budget > 0 {
         text.push(
             Line::from(vec![
-                Span::styled("?", theme::accent_bold()),
-                Span::styled(" cheat sheet ", theme::muted()),
-                Span::styled("\u{2502} ", theme::muted()),
                 Span::styled("Enter", theme::accent_bold()),
                 Span::styled(" continue", theme::muted()),
             ])
@@ -400,6 +411,8 @@ pub fn render_welcome(
     } else {
         text.push(Line::from(""));
     }
+    text.push(Line::from(""));
+    text.push(Line::from(""));
     text.push(Line::from(""));
 
     let paragraph = Paragraph::new(text).block(block);
@@ -415,29 +428,20 @@ fn welcome_height_and_lines(
     known_hosts_count: usize,
 ) -> (usize, usize) {
     let has_hosts = host_count > 0;
-    let info_line_count = if has_hosts {
-        1 + if has_backup { 2 } else { 0 }
-    } else {
-        (if known_hosts_count > 0 { 2 } else { 0 }) + if has_backup { 2 } else { 0 }
-    };
-    // content_height from render_welcome
-    let height = 18 + info_line_count + if info_line_count > 0 { 1 } else { 0 };
-
-    // Replicate the text-building logic:
-    // blank(1) + logo(9) + blank(2) + subtitle(1)
-    let mut lines = 13;
+    // Count extra lines (must match render_welcome exactly)
+    let mut extra = 2usize; // blank + blank between subtitle and hint
     if has_hosts {
-        lines += 2; // blank + "Found N hosts"
+        extra += 3;
     } else if known_hosts_count > 0 {
-        lines += 3; // blank + "Found N in known_hosts" + "Press I to import"
+        extra += 5;
     }
     if has_backup {
-        if !has_hosts && known_hosts_count == 0 {
-            lines += 1; // explicit blank
-        }
-        lines += 2; // backup line 1 + backup line 2
+        extra += 3;
     }
-    lines += 3; // blank + footer + trailing blank
+    let height = 21 + extra;
+
+    // Text lines = height - border(2)
+    let lines = height - 2;
 
     (height, lines)
 }

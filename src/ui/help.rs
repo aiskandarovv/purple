@@ -64,7 +64,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         .border_style(theme::accent());
     if is_host_list {
         let author = Line::from(Span::styled(
-            " github.com/erickochen/purple ",
+            " Bugs or ideas? github.com/erickochen/purple/issues ",
             theme::muted(),
         ));
         let version = Line::from(vec![
@@ -180,7 +180,7 @@ fn host_list_columns() -> (Vec<Line<'static>>, Vec<Line<'static>>) {
     col1.extend(section_header("NAVIGATE"));
     col1.push(help_line("j/k", "up / down"));
     col1.push(help_line("PgDn/PgUp", "page down / up"));
-    col1.push(help_line("Enter", "connect"));
+    col1.push(help_line("Enter", "connect (on group: collapse)"));
     col1.push(help_line("/", "search"));
     col1.push(help_line("#", "filter by tag"));
     col1.push(blank());
@@ -217,6 +217,7 @@ fn host_list_columns() -> (Vec<Line<'static>>, Vec<Line<'static>>) {
     col2.push(blank());
     col2.extend(section_header("CONNECT AND RUN"));
     col2.push(help_line("^Space", "multi-select"));
+    col2.push(help_line("^A", "select all / none"));
     col2.push(help_line("r", "run snippet"));
     col2.push(help_line("R", "run on all visible"));
     col2.push(help_line("p/P", "ping / all"));
@@ -540,7 +541,7 @@ mod tests {
         for desc in &[
             "up / down",
             "page down / up",
-            "connect",
+            "connect (on group: collapse)",
             "search",
             "filter by tag",
             "detail panel",

@@ -15,14 +15,26 @@ use crate::event::AppEvent;
 /// no cancellation support. Repeated pings to hosts with broken DNS can
 /// temporarily accumulate threads, but they will self-clean once the OS
 /// resolver gives up.
-pub fn ping_host(alias: String, hostname: String, port: u16, tx: mpsc::Sender<AppEvent>) {
+pub fn ping_host(
+    alias: String,
+    hostname: String,
+    port: u16,
+    tx: mpsc::Sender<AppEvent>,
+    generation: u64,
+) {
     thread::spawn(move || {
-        ping_host_inner(&alias, &hostname, port, &tx);
+        ping_host_inner(&alias, &hostname, port, &tx, generation);
     });
 }
 
 /// Core ping logic shared by `ping_host` and `ping_all`.
-fn ping_host_inner(alias: &str, hostname: &str, port: u16, tx: &mpsc::Sender<AppEvent>) {
+fn ping_host_inner(
+    alias: &str,
+    hostname: &str,
+    port: u16,
+    tx: &mpsc::Sender<AppEvent>,
+    generation: u64,
+) {
     // Strip existing brackets from IPv6 addresses (e.g. "[::1]" -> "::1")
     let clean = hostname.trim_start_matches('[').trim_end_matches(']');
     let addr_str = if clean.contains(':') {
@@ -52,13 +64,14 @@ fn ping_host_inner(alias: &str, hostname: &str, port: u16, tx: &mpsc::Sender<App
     let _ = tx.send(AppEvent::PingResult {
         alias: alias.to_string(),
         reachable,
+        generation,
     });
 }
 
 /// Ping all given hosts with a concurrency limit of 10.
 /// Spawns a coordinator thread that uses a semaphore-style channel
 /// to limit concurrent pings, preventing thread explosion on large host lists.
-pub fn ping_all(hosts: &[(String, String, u16)], tx: mpsc::Sender<AppEvent>) {
+pub fn ping_all(hosts: &[(String, String, u16)], tx: mpsc::Sender<AppEvent>, generation: u64) {
     let hosts = hosts.to_vec();
     thread::spawn(move || {
         let max_concurrent: usize = 10;
@@ -71,7 +84,7 @@ pub fn ping_all(hosts: &[(String, String, u16)], tx: mpsc::Sender<AppEvent>) {
             let slot_tx = slot_tx.clone();
             let tx = tx.clone();
             thread::spawn(move || {
-                ping_host_inner(&alias, &hostname, port, &tx);
+                ping_host_inner(&alias, &hostname, port, &tx, generation);
                 let _ = slot_tx.send(()); // release slot
             });
         }

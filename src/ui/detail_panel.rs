@@ -132,6 +132,22 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from(""));
         lines.push(section_header("Activity"));
 
+        if let Some(status) = ping {
+            let (text, style) = match status {
+                PingStatus::Checking => ("checking...", theme::muted()),
+                PingStatus::Reachable => ("reachable", theme::success()),
+                PingStatus::Unreachable => ("unreachable", theme::error()),
+                PingStatus::Skipped => ("skipped", theme::muted()),
+            };
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("{:<width$}", "Status", width = LABEL_WIDTH),
+                    theme::muted(),
+                ),
+                Span::styled(text, style),
+            ]));
+        }
+
         if let Some(entry) = history_entry {
             let ago = ConnectionHistory::format_time_ago(entry.last_connected);
             if !ago.is_empty() {
@@ -190,22 +206,6 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                     }
                 }
             }
-        }
-
-        if let Some(status) = ping {
-            let (text, style) = match status {
-                PingStatus::Checking => ("checking...", theme::muted()),
-                PingStatus::Reachable => ("reachable", theme::success()),
-                PingStatus::Unreachable => ("unreachable", theme::error()),
-                PingStatus::Skipped => ("skipped", theme::muted()),
-            };
-            lines.push(Line::from(vec![
-                Span::styled(
-                    format!("{:<width$}", "Status", width = LABEL_WIDTH),
-                    theme::muted(),
-                ),
-                Span::styled(text, style),
-            ]));
         }
     }
 

@@ -503,6 +503,7 @@ fn apply_saved_sort(app: &mut App) {
     app.sort_mode = saved;
     app.group_by = group;
     app.view_mode = preferences::load_view_mode();
+    app.collapsed_groups = preferences::load_collapsed_groups();
     // Clear stale tag preference if the tag no longer exists in any host
     if app.clear_stale_group_tag() {
         if let Err(e) = preferences::save_group_by(&app.group_by) {
@@ -521,6 +522,21 @@ fn apply_saved_sort(app: &mut App) {
 }
 
 /// Build a rolling sync summary from completed providers.
+/// Format a sync diff summary like "(+3 ~1 -2)" from add/update/stale counts.
+/// Returns empty string when all counts are zero.
+fn format_sync_diff(added: usize, updated: usize, stale: usize) -> String {
+    let diff_parts: Vec<String> = [(added, "+"), (updated, "~"), (stale, "-")]
+        .iter()
+        .filter(|(n, _)| *n > 0)
+        .map(|(n, prefix)| format!("{}{}", prefix, n))
+        .collect();
+    if diff_parts.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", diff_parts.join(" "))
+    }
+}
+
 /// Shows "Synced: AWS, DO, Vultr" that grows as each provider finishes.
 /// Clears the batch state once all providers are done so the status can expire normally.
 fn set_sync_summary(app: &mut App) {
@@ -640,13 +656,19 @@ fn run_tui(mut app: App) -> Result<()> {
                     app.set_status(msg, is_error);
                 }
             }
-            Some(AppEvent::PingResult { alias, reachable }) => {
-                let status = if reachable {
-                    app::PingStatus::Reachable
-                } else {
-                    app::PingStatus::Unreachable
-                };
-                app.ping_status.insert(alias, status);
+            Some(AppEvent::PingResult {
+                alias,
+                reachable,
+                generation,
+            }) => {
+                if generation == app.ping_generation {
+                    let status = if reachable {
+                        app::PingStatus::Reachable
+                    } else {
+                        app::PingStatus::Unreachable
+                    };
+                    app.ping_status.insert(alias, status);
+                }
             }
             Some(AppEvent::SyncProgress { provider, message }) => {
                 // Only show per-provider progress if no providers have completed yet,
@@ -662,7 +684,8 @@ fn run_tui(mut app: App) -> Result<()> {
                     .unwrap_or_default()
                     .as_secs();
                 let display_name = providers::provider_display_name(&provider);
-                let (_msg, is_err, total) = app.apply_sync_result(&provider, hosts, false);
+                let (_msg, is_err, total, added, updated, stale) =
+                    app.apply_sync_result(&provider, hosts, false);
                 if is_err {
                     app.sync_history.insert(
                         provider.clone(),
@@ -675,11 +698,17 @@ fn run_tui(mut app: App) -> Result<()> {
                     app.sync_had_errors = true;
                 } else {
                     let label = if total == 1 { "server" } else { "servers" };
+                    let message = format!(
+                        "{} {}{}",
+                        total,
+                        label,
+                        format_sync_diff(added, updated, stale)
+                    );
                     app.sync_history.insert(
                         provider.clone(),
                         app::SyncRecord {
                             timestamp: now,
-                            message: format!("{} {}", total, label),
+                            message,
                             is_error: false,
                         },
                     );
@@ -699,7 +728,8 @@ fn run_tui(mut app: App) -> Result<()> {
                     .unwrap_or_default()
                     .as_secs();
                 let display_name = providers::provider_display_name(provider.as_str());
-                let (msg, is_err, synced) = app.apply_sync_result(&provider, hosts, true);
+                let (msg, is_err, synced, added, updated, stale) =
+                    app.apply_sync_result(&provider, hosts, true);
                 if is_err {
                     app.sync_history.insert(
                         provider.clone(),
@@ -716,8 +746,12 @@ fn run_tui(mut app: App) -> Result<()> {
                         app::SyncRecord {
                             timestamp: now,
                             message: format!(
-                                "{} {} ({} of {} failed)",
-                                synced, label, failures, total
+                                "{} {}{} ({} of {} failed)",
+                                synced,
+                                label,
+                                format_sync_diff(added, updated, stale),
+                                failures,
+                                total
                             ),
                             is_error: true,
                         },
@@ -3176,5 +3210,20 @@ mod tests {
         } else {
             panic!("expected Welcome");
         }
+    }
+
+    #[test]
+    fn test_format_sync_diff_all_changes() {
+        assert_eq!(format_sync_diff(3, 1, 2), " (+3 ~1 -2)");
+    }
+
+    #[test]
+    fn test_format_sync_diff_no_changes() {
+        assert_eq!(format_sync_diff(0, 0, 0), "");
+    }
+
+    #[test]
+    fn test_format_sync_diff_only_added() {
+        assert_eq!(format_sync_diff(5, 0, 0), " (+5)");
     }
 }

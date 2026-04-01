@@ -1461,6 +1461,7 @@ pub struct App {
     // Hints
     pub ping_status: HashMap<String, PingStatus>,
     pub has_pinged: bool,
+    pub ping_generation: u64,
 
     // Tunnels
     pub tunnel_list: Vec<TunnelRule>,
@@ -1473,6 +1474,10 @@ pub struct App {
     pub pending_snippet: Option<(crate::snippet::Snippet, Vec<String>)>,
     /// Host indices selected for multi-host snippet execution (space to toggle).
     pub multi_select: HashSet<usize>,
+    /// Group headers that are currently collapsed (hidden children).
+    pub collapsed_groups: HashSet<String>,
+    /// Host/pattern counts per group (computed before collapse filtering).
+    pub group_host_counts: HashMap<String, usize>,
     pub snippet_output: Option<SnippetOutputState>,
     pub snippet_param_form: Option<SnippetParamFormState>,
     /// When true, the snippet param form submits to terminal-exit mode (! key).
@@ -1607,6 +1612,7 @@ impl App {
             pending_tunnel_delete: None,
             ping_status: HashMap::new(),
             has_pinged: false,
+            ping_generation: 0,
             tunnel_list: Vec::new(),
             tunnel_form: TunnelForm::new(),
             active_tunnels: HashMap::new(),
@@ -1614,6 +1620,8 @@ impl App {
             snippet_form: SnippetForm::new(),
             pending_snippet: None,
             multi_select: HashSet::new(),
+            collapsed_groups: HashSet::new(),
+            group_host_counts: HashMap::new(),
             snippet_output: None,
             snippet_param_form: None,
             pending_snippet_terminal: false,
@@ -1928,6 +1936,44 @@ impl App {
             );
         }
 
+        // Compute group host counts before collapse filtering
+        {
+            self.group_host_counts.clear();
+            let mut current_group: Option<&str> = None;
+            for item in &self.display_list {
+                match item {
+                    HostListItem::GroupHeader(text) => {
+                        current_group = Some(text.as_str());
+                    }
+                    HostListItem::Host { .. } | HostListItem::Pattern { .. } => {
+                        if let Some(group) = current_group {
+                            *self.group_host_counts.entry(group.to_string()).or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Filter out hosts/patterns in collapsed groups
+        if !self.collapsed_groups.is_empty() {
+            let mut filtered = Vec::with_capacity(self.display_list.len());
+            let mut in_collapsed = false;
+            for item in std::mem::take(&mut self.display_list) {
+                match &item {
+                    HostListItem::GroupHeader(text) => {
+                        in_collapsed = self.collapsed_groups.contains(text);
+                        filtered.push(item);
+                    }
+                    _ => {
+                        if !in_collapsed {
+                            filtered.push(item);
+                        }
+                    }
+                }
+            }
+            self.display_list = filtered;
+        }
+
         // Restore selection by alias, fall back to first host
         if let Some(alias) = selected_alias {
             self.select_host_by_alias(&alias);
@@ -1938,13 +1984,12 @@ impl App {
         self.select_first_host();
     }
 
-    /// Select the first host item in the display list.
+    /// Select the first selectable item in the display list.
     pub fn select_first_host(&mut self) {
-        if let Some(pos) = self.display_list.iter().position(|item| {
-            matches!(
-                item,
-                HostListItem::Host { .. } | HostListItem::Pattern { .. }
-            )
+        let allow_headers = !matches!(self.group_by, GroupBy::None);
+        if let Some(pos) = self.display_list.iter().position(|item| match item {
+            HostListItem::Host { .. } | HostListItem::Pattern { .. } => true,
+            HostListItem::GroupHeader(_) => allow_headers,
         }) {
             self.ui.list_state.select(Some(pos));
         }
@@ -2130,17 +2175,22 @@ impl App {
         if self.display_list.is_empty() {
             return;
         }
+        let allow_headers = !matches!(self.group_by, GroupBy::None);
         let len = self.display_list.len();
         let current = self.ui.list_state.selected().unwrap_or(0);
-        // Find next Host or Pattern item after current
+        // Find next selectable item after current
         for offset in 1..=len {
             let idx = (current + offset) % len;
-            if matches!(
-                self.display_list[idx],
-                HostListItem::Host { .. } | HostListItem::Pattern { .. }
-            ) {
-                self.ui.list_state.select(Some(idx));
-                return;
+            match &self.display_list[idx] {
+                HostListItem::Host { .. } | HostListItem::Pattern { .. } => {
+                    self.ui.list_state.select(Some(idx));
+                    return;
+                }
+                HostListItem::GroupHeader(_) if allow_headers => {
+                    self.ui.list_state.select(Some(idx));
+                    return;
+                }
+                _ => {}
             }
         }
     }
@@ -2149,22 +2199,27 @@ impl App {
         if self.display_list.is_empty() {
             return;
         }
+        let allow_headers = !matches!(self.group_by, GroupBy::None);
         let len = self.display_list.len();
         let current = self.ui.list_state.selected().unwrap_or(0);
-        // Find prev Host or Pattern item before current
+        // Find prev selectable item before current
         for offset in 1..=len {
             let idx = (current + len - offset) % len;
-            if matches!(
-                self.display_list[idx],
-                HostListItem::Host { .. } | HostListItem::Pattern { .. }
-            ) {
-                self.ui.list_state.select(Some(idx));
-                return;
+            match &self.display_list[idx] {
+                HostListItem::Host { .. } | HostListItem::Pattern { .. } => {
+                    self.ui.list_state.select(Some(idx));
+                    return;
+                }
+                HostListItem::GroupHeader(_) if allow_headers => {
+                    self.ui.list_state.select(Some(idx));
+                    return;
+                }
+                _ => {}
             }
         }
     }
 
-    /// Page down in the host list, skipping group headers.
+    /// Page down in the host list, skipping group headers when ungrouped.
     pub fn page_down_host(&mut self) {
         self.ui.detail_scroll = 0;
         const PAGE_SIZE: usize = 10;
@@ -2175,19 +2230,20 @@ impl App {
                 PAGE_SIZE,
             );
         } else {
+            let allow_headers = !matches!(self.group_by, GroupBy::None);
             let current = self.ui.list_state.selected().unwrap_or(0);
-            // Jump PAGE_SIZE host/pattern items forward (skip group headers)
             let mut target = current;
-            let mut hosts_skipped = 0;
+            let mut items_skipped = 0;
             let len = self.display_list.len();
             for i in (current + 1)..len {
-                if matches!(
-                    self.display_list[i],
-                    HostListItem::Host { .. } | HostListItem::Pattern { .. }
-                ) {
+                let selectable = match &self.display_list[i] {
+                    HostListItem::Host { .. } | HostListItem::Pattern { .. } => true,
+                    HostListItem::GroupHeader(_) => allow_headers,
+                };
+                if selectable {
                     target = i;
-                    hosts_skipped += 1;
-                    if hosts_skipped >= PAGE_SIZE {
+                    items_skipped += 1;
+                    if items_skipped >= PAGE_SIZE {
                         break;
                     }
                 }
@@ -2198,7 +2254,7 @@ impl App {
         }
     }
 
-    /// Page up in the host list, skipping group headers.
+    /// Page up in the host list, skipping group headers when ungrouped.
     pub fn page_up_host(&mut self) {
         self.ui.detail_scroll = 0;
         const PAGE_SIZE: usize = 10;
@@ -2209,18 +2265,19 @@ impl App {
                 PAGE_SIZE,
             );
         } else {
+            let allow_headers = !matches!(self.group_by, GroupBy::None);
             let current = self.ui.list_state.selected().unwrap_or(0);
-            // Jump PAGE_SIZE host/pattern items backward (skip group headers)
             let mut target = current;
-            let mut hosts_skipped = 0;
+            let mut items_skipped = 0;
             for i in (0..current).rev() {
-                if matches!(
-                    self.display_list[i],
-                    HostListItem::Host { .. } | HostListItem::Pattern { .. }
-                ) {
+                let selectable = match &self.display_list[i] {
+                    HostListItem::Host { .. } | HostListItem::Pattern { .. } => true,
+                    HostListItem::GroupHeader(_) => allow_headers,
+                };
+                if selectable {
                     target = i;
-                    hosts_skipped += 1;
-                    if hosts_skipped >= PAGE_SIZE {
+                    items_skipped += 1;
+                    if items_skipped >= PAGE_SIZE {
                         break;
                     }
                 }
@@ -3253,13 +3310,13 @@ impl App {
     }
 
     /// Apply sync results from a background provider fetch.
-    /// Returns (message, is_error, server_count). Caller must remove from syncing_providers.
+    /// Returns (message, is_error, server_count, added, updated, stale). Caller must remove from syncing_providers.
     pub fn apply_sync_result(
         &mut self,
         provider: &str,
         hosts: Vec<crate::providers::ProviderHost>,
         partial: bool,
-    ) -> (String, bool, usize) {
+    ) -> (String, bool, usize, usize, usize, usize) {
         let section = match self.provider_config.section(provider).cloned() {
             Some(s) => s,
             None => {
@@ -3269,6 +3326,9 @@ impl App {
                         crate::providers::provider_display_name(provider)
                     ),
                     true,
+                    0,
+                    0,
+                    0,
                     0,
                 );
             }
@@ -3282,6 +3342,9 @@ impl App {
                         crate::providers::provider_display_name(provider)
                     ),
                     true,
+                    0,
+                    0,
+                    0,
                     0,
                 );
             }
@@ -3300,7 +3363,7 @@ impl App {
         if result.added > 0 || result.updated > 0 || result.stale > 0 {
             if let Err(e) = self.config.write() {
                 self.config = config_backup;
-                return (format!("Sync failed to save: {}", e), true, total);
+                return (format!("Sync failed to save: {}", e), true, total, 0, 0, 0);
             }
             self.undo_stack.clear();
             self.update_last_modified();
@@ -3321,7 +3384,14 @@ impl App {
             msg.push_str(&format!(", stale {}", result.stale));
         }
         msg.push('.');
-        (msg, false, total)
+        (
+            msg,
+            false,
+            total,
+            result.added,
+            result.updated,
+            result.stale,
+        )
     }
 
     /// Clear group-by-tag if the tag no longer exists in any host.
@@ -3331,6 +3401,7 @@ impl App {
             let tag_exists = self.hosts.iter().any(|h| h.tags.iter().any(|t| t == tag));
             if !tag_exists {
                 self.group_by = GroupBy::None;
+                self.collapsed_groups.clear();
                 return true;
             }
         }
@@ -4592,7 +4663,7 @@ Host do-alpha
     fn test_apply_sync_result_no_config() {
         let mut app = make_app("Host test\n  HostName test.com\n");
         app.provider_config = crate::providers::config::ProviderConfig::default();
-        let (msg, is_err, total) = app.apply_sync_result("digitalocean", vec![], false);
+        let (msg, is_err, total, _, _, _) = app.apply_sync_result("digitalocean", vec![], false);
         assert!(is_err);
         assert_eq!(total, 0);
         assert!(msg.contains("no config"));
@@ -4601,7 +4672,7 @@ Host do-alpha
     #[test]
     fn test_apply_sync_result_empty_hosts_returns_zero_total() {
         let mut app = make_provider_app();
-        let (msg, is_err, total) = app.apply_sync_result("digitalocean", vec![], false);
+        let (msg, is_err, total, _, _, _) = app.apply_sync_result("digitalocean", vec![], false);
         assert!(!is_err);
         assert_eq!(total, 0);
         assert!(msg.contains("added 0"));
@@ -4625,9 +4696,10 @@ Host do-alpha
                 vec![],
             ),
         ];
-        let (msg, is_err, total) = app.apply_sync_result("digitalocean", hosts, false);
+        let (msg, is_err, total, added, _, _) = app.apply_sync_result("digitalocean", hosts, false);
         assert!(!is_err);
         assert_eq!(total, 2);
+        assert_eq!(added, 2);
         assert!(msg.contains("added 2"));
         assert!(msg.contains("unchanged 0"));
     }
@@ -4651,7 +4723,7 @@ Host do-alpha
                 vec![],
             ),
         ];
-        let (msg, is_err, total) = app.apply_sync_result("digitalocean", hosts, false);
+        let (msg, is_err, total, _, _, _) = app.apply_sync_result("digitalocean", hosts, false);
         assert!(is_err);
         assert_eq!(total, 2); // total preserved despite write failure
         assert!(msg.contains("Sync failed to save"));
@@ -4677,7 +4749,7 @@ Host do-alpha
                 project: String::new(),
                 compartment: String::new(),
             });
-        let (msg, is_err, total) = app.apply_sync_result("nonexistent", vec![], false);
+        let (msg, is_err, total, _, _, _) = app.apply_sync_result("nonexistent", vec![], false);
         assert!(is_err);
         assert_eq!(total, 0);
         assert!(msg.contains("Unknown provider"));
@@ -5828,7 +5900,7 @@ Host gamma
     }
 
     #[test]
-    fn test_select_first_host_skips_group_header() {
+    fn test_select_first_host_lands_on_group_header_when_grouped() {
         let content = "\
 Host do-beta
   HostName 2.2.2.2
@@ -5844,8 +5916,32 @@ Host do-alpha
         app.apply_sort();
         app.select_first_host();
 
-        // First item is the group header, selection should skip to first host
+        // When grouping is active, the first item (group header) is selectable
         assert!(matches!(&app.display_list[0], HostListItem::GroupHeader(_)));
+        assert_eq!(app.ui.list_state.selected(), Some(0));
+        // selected_host() returns None on a group header
+        assert!(app.selected_host().is_none());
+    }
+
+    #[test]
+    fn test_select_first_host_skips_group_header_when_ungrouped() {
+        let content = "\
+Host do-beta
+  HostName 2.2.2.2
+  # purple:provider digitalocean:2
+
+Host do-alpha
+  HostName 1.1.1.1
+  # purple:provider digitalocean:1
+";
+        let mut app = make_app(content);
+        // GroupBy::None means headers should be skipped
+        app.group_by = GroupBy::None;
+        app.sort_mode = SortMode::AlphaAlias;
+        app.apply_sort();
+        app.select_first_host();
+
+        // With no grouping, display_list has no headers
         assert_eq!(app.selected_host().unwrap().alias, "do-alpha");
     }
 
@@ -5968,7 +6064,7 @@ Host do-db
                 vec![],
             ),
         ];
-        let (_, is_err, _) = app.apply_sync_result("digitalocean", hosts, false);
+        let (_, is_err, _, _, _, _) = app.apply_sync_result("digitalocean", hosts, false);
         assert!(!is_err);
 
         // Second sync with only one host (non-partial) should mark the other as stale
@@ -5978,9 +6074,11 @@ Host do-db
             "1.2.3.4".to_string(),
             vec![],
         )];
-        let (msg, is_err, total) = app.apply_sync_result("digitalocean", hosts2, false);
+        let (msg, is_err, total, _, _, stale) =
+            app.apply_sync_result("digitalocean", hosts2, false);
         assert!(!is_err);
         assert_eq!(total, 1); // only the one host that's still present
+        assert_eq!(stale, 1);
         assert!(
             msg.contains("stale 1"),
             "Expected stale count in message, got: {}",
@@ -6864,5 +6962,310 @@ Host web1
 
         assert!(cleared);
         assert_eq!(app.group_by, GroupBy::None);
+    }
+
+    // --- Collapsible groups ---
+
+    #[test]
+    fn collapse_group_filters_display_list() {
+        let content = "\
+Host web-prod
+  HostName 1.1.1.1
+  # purple:tags production
+
+Host web-staging
+  HostName 2.2.2.2
+  # purple:tags staging
+
+Host db-prod
+  HostName 3.3.3.3
+  # purple:tags production
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Tag("production".to_string());
+        app.apply_sort();
+
+        // Before collapse: ungrouped hosts + GroupHeader("production") + grouped hosts
+        let has_header = app
+            .display_list
+            .iter()
+            .any(|item| matches!(item, HostListItem::GroupHeader(s) if s == "production"));
+        assert!(has_header, "production header should exist");
+
+        let hosts_before: Vec<_> = app
+            .display_list
+            .iter()
+            .filter(|item| matches!(item, HostListItem::Host { .. }))
+            .collect();
+        assert_eq!(hosts_before.len(), 3, "all 3 hosts should be visible");
+
+        // group_host_counts should show 2 for production
+        assert_eq!(
+            app.group_host_counts.get("production"),
+            Some(&2),
+            "production group should have 2 hosts"
+        );
+
+        // Collapse the production group
+        app.collapsed_groups.insert("production".to_string());
+        app.apply_sort();
+
+        // Header should still exist
+        let has_header_after = app
+            .display_list
+            .iter()
+            .any(|item| matches!(item, HostListItem::GroupHeader(s) if s == "production"));
+        assert!(
+            has_header_after,
+            "production header should still exist after collapse"
+        );
+
+        // Only the ungrouped host (web-staging) should be visible as a Host item
+        let hosts_after: Vec<_> = app
+            .display_list
+            .iter()
+            .filter(|item| matches!(item, HostListItem::Host { .. }))
+            .collect();
+        assert_eq!(
+            hosts_after.len(),
+            1,
+            "only ungrouped host should be visible after collapse"
+        );
+
+        // group_host_counts should still show the correct count
+        assert_eq!(
+            app.group_host_counts.get("production"),
+            Some(&2),
+            "count should still be 2 even when collapsed"
+        );
+    }
+
+    #[test]
+    fn expand_group_restores_display_list() {
+        let content = "\
+Host web-prod
+  HostName 1.1.1.1
+  # purple:tags production
+
+Host web-staging
+  HostName 2.2.2.2
+  # purple:tags staging
+
+Host db-prod
+  HostName 3.3.3.3
+  # purple:tags production
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Tag("production".to_string());
+
+        // Collapse
+        app.collapsed_groups.insert("production".to_string());
+        app.apply_sort();
+
+        let hosts_collapsed: Vec<_> = app
+            .display_list
+            .iter()
+            .filter(|item| matches!(item, HostListItem::Host { .. }))
+            .collect();
+        assert_eq!(hosts_collapsed.len(), 1);
+
+        // Expand
+        app.collapsed_groups.remove("production");
+        app.apply_sort();
+
+        let hosts_expanded: Vec<_> = app
+            .display_list
+            .iter()
+            .filter(|item| matches!(item, HostListItem::Host { .. }))
+            .collect();
+        assert_eq!(
+            hosts_expanded.len(),
+            3,
+            "all hosts should reappear after expanding"
+        );
+    }
+
+    #[test]
+    fn collapsed_groups_cleared_on_group_by_change() {
+        let content = "\
+Host web1
+  HostName 1.1.1.1
+  # purple:tags production
+  # purple:provider aws:i-123
+
+Host web2
+  HostName 2.2.2.2
+  # purple:tags staging
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Provider;
+        app.collapsed_groups.insert("aws".to_string());
+        assert!(!app.collapsed_groups.is_empty());
+
+        // Change group_by to Tag, which triggers clear_stale_group_tag
+        app.group_by = GroupBy::Tag("nonexistent".to_string());
+        let cleared = app.clear_stale_group_tag();
+
+        assert!(cleared);
+        assert!(
+            app.collapsed_groups.is_empty(),
+            "collapsed_groups should be cleared when group_by tag is stale"
+        );
+    }
+
+    #[test]
+    fn all_groups_collapsed_shows_only_headers() {
+        let content = "\
+Host web-prod
+  HostName 1.1.1.1
+  # purple:tags production
+
+Host web-staging
+  HostName 2.2.2.2
+  # purple:tags staging
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Tag("production".to_string());
+        app.collapsed_groups.insert("production".to_string());
+        // The ungrouped staging host is not inside a collapsible group header,
+        // so it stays visible. Only hosts under the "production" header are hidden.
+        app.apply_sort();
+
+        // The production group header is present
+        assert!(
+            app.display_list
+                .iter()
+                .any(|item| matches!(item, HostListItem::GroupHeader(t) if t == "production"))
+        );
+        // The production hosts are hidden
+        let visible_hosts: Vec<_> = app
+            .display_list
+            .iter()
+            .filter_map(|item| match item {
+                HostListItem::Host { index } => Some(&app.hosts[*index]),
+                _ => None,
+            })
+            .collect();
+        for h in &visible_hosts {
+            assert!(
+                !h.tags.contains(&"production".to_string()),
+                "production host {} should be hidden",
+                h.alias
+            );
+        }
+    }
+
+    #[test]
+    fn ctrl_a_with_collapsed_groups_skips_hidden_hosts() {
+        let content = "\
+Host web-prod
+  HostName 1.1.1.1
+  # purple:tags production
+
+Host db-prod
+  HostName 3.3.3.3
+  # purple:tags production
+
+Host web-staging
+  HostName 2.2.2.2
+  # purple:tags staging
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Tag("production".to_string());
+        app.collapsed_groups.insert("production".to_string());
+        app.apply_sort();
+
+        // Simulate Ctrl+A: select all visible Host items
+        let visible_indices: Vec<usize> = app
+            .display_list
+            .iter()
+            .filter_map(|item| match item {
+                HostListItem::Host { index } => Some(*index),
+                _ => None,
+            })
+            .collect();
+        for idx in &visible_indices {
+            app.multi_select.insert(*idx);
+        }
+
+        // Only staging host should be selected (production hosts are collapsed)
+        assert_eq!(app.multi_select.len(), 1);
+        let selected_host = &app.hosts[*app.multi_select.iter().next().unwrap()];
+        assert_eq!(selected_host.alias, "web-staging");
+    }
+
+    // --- Ping generation ---
+    // Handler-level test: test_p_key_clears_ping_increments_generation in handler.rs
+
+    // --- Ctrl+A select all / deselect all ---
+
+    #[test]
+    fn ctrl_a_selects_all_visible_hosts() {
+        let content = "\
+Host web1
+  HostName 1.1.1.1
+
+Host web2
+  HostName 2.2.2.2
+
+Host web3
+  HostName 3.3.3.3
+";
+        let mut app = make_app(content);
+        app.apply_sort();
+
+        // Simulate Ctrl+A: collect all Host indices from display_list
+        let host_indices: Vec<usize> = app
+            .display_list
+            .iter()
+            .filter_map(|item| match item {
+                HostListItem::Host { index } => Some(*index),
+                _ => None,
+            })
+            .collect();
+        for idx in &host_indices {
+            app.multi_select.insert(*idx);
+        }
+
+        assert_eq!(app.multi_select.len(), 3);
+    }
+
+    #[test]
+    fn ctrl_a_toggle_deselects_when_all_selected() {
+        let content = "\
+Host web1
+  HostName 1.1.1.1
+
+Host web2
+  HostName 2.2.2.2
+
+Host web3
+  HostName 3.3.3.3
+";
+        let mut app = make_app(content);
+        app.apply_sort();
+
+        // Select all
+        let host_indices: Vec<usize> = app
+            .display_list
+            .iter()
+            .filter_map(|item| match item {
+                HostListItem::Host { index } => Some(*index),
+                _ => None,
+            })
+            .collect();
+        for idx in &host_indices {
+            app.multi_select.insert(*idx);
+        }
+        assert_eq!(app.multi_select.len(), 3);
+
+        // Check all_selected condition and clear
+        let all_selected = host_indices
+            .iter()
+            .all(|idx| app.multi_select.contains(idx));
+        assert!(all_selected);
+        app.multi_select.clear();
+
+        assert!(app.multi_select.is_empty());
     }
 }

@@ -148,14 +148,14 @@ pub fn save_group_by(mode: &crate::app::GroupBy) -> io::Result<()> {
     Ok(())
 }
 
-/// Load view mode from ~/.purple/preferences. Returns Compact if missing or invalid.
+/// Load view mode from ~/.purple/preferences. Returns Detailed if missing or invalid.
 pub fn load_view_mode() -> ViewMode {
     load_value("view_mode")
         .map(|v| match v.as_str() {
-            "detailed" => ViewMode::Detailed,
-            _ => ViewMode::Compact,
+            "compact" => ViewMode::Compact,
+            _ => ViewMode::Detailed,
         })
-        .unwrap_or(ViewMode::Compact)
+        .unwrap_or(ViewMode::Detailed)
 }
 
 /// Save view mode to ~/.purple/preferences.
@@ -167,6 +167,28 @@ pub fn save_view_mode(mode: ViewMode) -> io::Result<()> {
             ViewMode::Detailed => "detailed",
         },
     )
+}
+
+/// Load collapsed groups from ~/.purple/preferences.
+/// Returns a set of group header strings that were collapsed.
+/// Uses unit separator (U+001F) as delimiter to avoid conflicts with commas in tag names.
+pub fn load_collapsed_groups() -> std::collections::HashSet<String> {
+    load_value("collapsed_groups")
+        .filter(|v| !v.is_empty())
+        .map(|v| v.split('\x1f').map(|s| s.to_string()).collect())
+        .unwrap_or_default()
+}
+
+/// Save collapsed groups to ~/.purple/preferences.
+/// Uses unit separator (U+001F) as delimiter to avoid conflicts with commas in tag names.
+pub fn save_collapsed_groups(groups: &std::collections::HashSet<String>) -> io::Result<()> {
+    if groups.is_empty() {
+        remove_value("collapsed_groups")
+    } else {
+        let mut sorted: Vec<&str> = groups.iter().map(|s| s.as_str()).collect();
+        sorted.sort_unstable();
+        save_value("collapsed_groups", &sorted.join("\x1f"))
+    }
 }
 
 /// Load global askpass default from ~/.purple/preferences.
@@ -646,6 +668,66 @@ mod tests {
             assert!(after.contains("sort_mode=alpha"));
             assert!(!before.contains("group_by_provider"));
             assert!(!after.contains("group_by_provider"));
+        });
+    }
+
+    // --- Collapsed groups persistence ---
+
+    #[test]
+    fn save_load_collapsed_groups_roundtrip() {
+        with_temp_prefs("collapsed_roundtrip", |_path| {
+            let mut groups = std::collections::HashSet::new();
+            groups.insert("production".to_string());
+            groups.insert("staging".to_string());
+            save_collapsed_groups(&groups).unwrap();
+
+            let loaded = load_collapsed_groups();
+            assert_eq!(loaded, groups);
+        });
+    }
+
+    #[test]
+    fn save_load_collapsed_groups_empty() {
+        with_temp_prefs("collapsed_empty", |_path| {
+            let groups = std::collections::HashSet::new();
+            save_collapsed_groups(&groups).unwrap();
+
+            let loaded = load_collapsed_groups();
+            assert!(loaded.is_empty());
+        });
+    }
+
+    #[test]
+    fn save_load_collapsed_groups_special_chars() {
+        with_temp_prefs("collapsed_special", |_path| {
+            let mut groups = std::collections::HashSet::new();
+            groups.insert("us-east,prod".to_string());
+            save_collapsed_groups(&groups).unwrap();
+
+            let loaded = load_collapsed_groups();
+            assert_eq!(loaded, groups);
+            assert!(loaded.contains("us-east,prod"));
+        });
+    }
+
+    // --- View mode defaults ---
+
+    #[test]
+    fn load_view_mode_defaults_to_detailed() {
+        with_temp_prefs("view_mode_default", |_path| {
+            // No preferences file content written, but file exists (empty)
+            // load_view_mode reads "view_mode" key; missing -> Detailed
+            let mode = load_view_mode();
+            assert_eq!(mode, ViewMode::Detailed);
+        });
+    }
+
+    #[test]
+    fn load_view_mode_explicit_compact() {
+        with_temp_prefs("view_mode_compact", |path| {
+            std::fs::write(path, "view_mode=compact\n").unwrap();
+            let mode = load_view_mode();
+            assert_eq!(mode, ViewMode::Compact);
         });
     }
 }

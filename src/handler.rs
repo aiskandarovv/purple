@@ -320,6 +320,30 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
             app.page_up_host();
         }
         KeyCode::Enter => {
+            // Toggle collapse if on a group header
+            if let Some(selected) = app.ui.list_state.selected() {
+                if let Some(crate::app::HostListItem::GroupHeader(text)) =
+                    app.display_list.get(selected)
+                {
+                    let text = text.clone();
+                    if app.collapsed_groups.contains(&text) {
+                        app.collapsed_groups.remove(&text);
+                    } else {
+                        app.collapsed_groups.insert(text.clone());
+                    }
+                    app.apply_sort();
+                    // Restore selection to the same group header
+                    if let Some(pos) = app.display_list.iter().position(|item| {
+                        matches!(item, crate::app::HostListItem::GroupHeader(t) if *t == text)
+                    }) {
+                        app.ui.list_state.select(Some(pos));
+                    }
+                    if let Err(e) = preferences::save_collapsed_groups(&app.collapsed_groups) {
+                        app.set_status(format!("Collapse save failed: {}", e), true);
+                    }
+                    return;
+                }
+            }
             if app.is_pattern_selected() {
                 return;
             }
@@ -335,6 +359,27 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
                     app.set_status(format!("Stale host.{}", hint), true);
                 }
                 app.pending_connect = Some((alias, askpass));
+            }
+        }
+        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            let visible_indices: Vec<usize> = app
+                .display_list
+                .iter()
+                .filter_map(|item| match item {
+                    crate::app::HostListItem::Host { index } => Some(*index),
+                    _ => None,
+                })
+                .collect();
+            let all_selected = !visible_indices.is_empty()
+                && visible_indices
+                    .iter()
+                    .all(|idx| app.multi_select.contains(idx));
+            if all_selected {
+                app.multi_select.clear();
+            } else {
+                for idx in visible_indices {
+                    app.multi_select.insert(idx);
+                }
             }
         }
         KeyCode::Char('a') => {
@@ -491,6 +536,7 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
             }
             if !app.ping_status.is_empty() {
                 app.ping_status.clear();
+                app.ping_generation += 1;
                 app.status = None;
             } else {
                 ping_selected_host(app, events_tx, true);
@@ -499,6 +545,7 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
         KeyCode::Char('P') => {
             if !app.ping_status.is_empty() {
                 app.ping_status.clear();
+                app.ping_generation += 1;
                 app.status = None;
             } else {
                 let hosts_to_ping: Vec<(String, String, u16)> = app
@@ -520,7 +567,7 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
                             .insert(alias.clone(), crate::app::PingStatus::Checking);
                     }
                     app.set_status("Pinging all the things...", false);
-                    ping::ping_all(&hosts_to_ping, events_tx.clone());
+                    ping::ping_all(&hosts_to_ping, events_tx.clone(), app.ping_generation);
                 }
             }
         }
@@ -567,6 +614,10 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
             match &app.group_by {
                 GroupBy::None => {
                     app.group_by = GroupBy::Provider;
+                    app.collapsed_groups.clear();
+                    if let Err(e) = preferences::save_collapsed_groups(&app.collapsed_groups) {
+                        app.set_status(format!("Collapse save failed: {}", e), true);
+                    }
                     app.apply_sort();
                     if let Err(e) = preferences::save_group_by(&app.group_by) {
                         app.set_status(
@@ -593,6 +644,10 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
                     };
                     if user_tags.is_empty() {
                         app.group_by = GroupBy::None;
+                        app.collapsed_groups.clear();
+                        if let Err(e) = preferences::save_collapsed_groups(&app.collapsed_groups) {
+                            app.set_status(format!("Collapse save failed: {}", e), true);
+                        }
                         app.apply_sort();
                         if let Err(e) = preferences::save_group_by(&app.group_by) {
                             app.set_status(format!("Ungrouped. (save failed: {})", e), true);
@@ -600,6 +655,7 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
                             app.set_status("Ungrouped.", false);
                         }
                     } else {
+                        app.collapsed_groups.clear();
                         app.tag_list = user_tags;
                         app.ui.tag_picker_state = ratatui::widgets::ListState::default();
                         app.ui.tag_picker_state.select(Some(0));
@@ -608,6 +664,10 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
                 }
                 GroupBy::Tag(_) => {
                     app.group_by = GroupBy::None;
+                    app.collapsed_groups.clear();
+                    if let Err(e) = preferences::save_collapsed_groups(&app.collapsed_groups) {
+                        app.set_status(format!("Collapse save failed: {}", e), true);
+                    }
                     app.apply_sort();
                     if let Err(e) = preferences::save_group_by(&app.group_by) {
                         app.set_status(format!("Ungrouped. (save failed: {})", e), true);
@@ -1008,6 +1068,7 @@ fn handle_host_list_search(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sende
         KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             if !app.ping_status.is_empty() {
                 app.ping_status.clear();
+                app.ping_generation += 1;
                 app.status = None;
             } else {
                 ping_selected_host(app, events_tx, false);
@@ -1018,6 +1079,20 @@ fn handle_host_list_search(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sende
                 if app.multi_select.contains(&idx) {
                     app.multi_select.remove(&idx);
                 } else {
+                    app.multi_select.insert(idx);
+                }
+            }
+        }
+        KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            let visible_indices: Vec<usize> = app.search.filtered_indices.clone();
+            let all_selected = !visible_indices.is_empty()
+                && visible_indices
+                    .iter()
+                    .all(|idx| app.multi_select.contains(idx));
+            if all_selected {
+                app.multi_select.clear();
+            } else {
+                for idx in visible_indices {
                     app.multi_select.insert(idx);
                 }
             }
@@ -1660,6 +1735,10 @@ fn handle_group_tag_picker(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') => {
             app.group_by = crate::app::GroupBy::None;
+            app.collapsed_groups.clear();
+            if let Err(e) = preferences::save_collapsed_groups(&app.collapsed_groups) {
+                app.set_status(format!("Collapse save failed: {}", e), true);
+            }
             app.screen = Screen::HostList;
             app.apply_sort();
             if let Err(e) = preferences::save_group_by(&app.group_by) {
@@ -1685,6 +1764,10 @@ fn handle_group_tag_picker(app: &mut App, key: KeyEvent) {
                 if let Some(tag) = app.tag_list.get(index) {
                     let tag = tag.clone();
                     app.group_by = crate::app::GroupBy::Tag(tag);
+                    app.collapsed_groups.clear();
+                    if let Err(e) = preferences::save_collapsed_groups(&app.collapsed_groups) {
+                        app.set_status(format!("Collapse save failed: {}", e), true);
+                    }
                     app.screen = Screen::HostList;
                     app.apply_sort();
                     if let Err(e) = preferences::save_group_by(&app.group_by) {
@@ -2563,7 +2646,13 @@ fn ping_selected_host(app: &mut App, events_tx: &mpsc::Sender<AppEvent>, show_hi
             } else {
                 app.set_status(format!("Pinging {}...", alias), false);
             }
-            ping::ping_host(alias, hostname, port, events_tx.clone());
+            ping::ping_host(
+                alias,
+                hostname,
+                port,
+                events_tx.clone(),
+                app.ping_generation,
+            );
         }
     }
 }
@@ -9636,5 +9725,113 @@ Host db1
         // Press Esc to close help — should return to GroupTagPicker
         let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
         assert!(matches!(app.screen, Screen::GroupTagPicker));
+    }
+
+    // =========================================================================
+    // Group header collapse tests
+    // =========================================================================
+
+    #[test]
+    fn test_enter_on_group_header_toggles_collapse() {
+        // Create app with grouped hosts: one with production tag, one without.
+        // GroupBy::Tag puts untagged hosts first, then the group header, then tagged hosts.
+        let mut app = make_app(
+            "Host web1\n  HostName 1.1.1.1\n  # purple:tags production\n\nHost web2\n  HostName 2.2.2.2\n  # purple:tags staging\n",
+        );
+        app.group_by = crate::app::GroupBy::Tag("production".to_string());
+        app.sort_mode = crate::app::SortMode::AlphaAlias;
+        app.apply_sort();
+
+        // Find the group header position (untagged hosts come first, then header)
+        let header_pos = app
+            .display_list
+            .iter()
+            .position(|item| {
+                matches!(item, crate::app::HostListItem::GroupHeader(t) if t == "production")
+            })
+            .expect("should have a production group header");
+        app.ui.list_state.select(Some(header_pos));
+        assert!(matches!(
+            app.display_list.get(header_pos),
+            Some(crate::app::HostListItem::GroupHeader(_))
+        ));
+
+        // Press Enter to collapse
+        let (tx, _rx) = mpsc::channel();
+        handle_key_event(&mut app, key(KeyCode::Enter), &tx).unwrap();
+
+        // Group should be collapsed
+        assert!(app.collapsed_groups.contains("production"));
+
+        // Selection should still be on the group header
+        let sel = app.ui.list_state.selected().unwrap();
+        assert!(
+            matches!(app.display_list.get(sel), Some(crate::app::HostListItem::GroupHeader(t)) if t == "production")
+        );
+
+        // Press Enter again to expand
+        handle_key_event(&mut app, key(KeyCode::Enter), &tx).unwrap();
+        assert!(!app.collapsed_groups.contains("production"));
+    }
+
+    // =========================================================================
+    // Ctrl+A select all tests
+    // =========================================================================
+
+    #[test]
+    fn test_ctrl_a_selects_all_visible_hosts() {
+        let mut app = make_app(
+            "Host web1\n  HostName 1.1.1.1\n\nHost web2\n  HostName 2.2.2.2\n\nHost web3\n  HostName 3.3.3.3\n",
+        );
+        app.apply_sort();
+        assert!(app.multi_select.is_empty());
+
+        let (tx, _rx) = mpsc::channel();
+        handle_key_event(&mut app, ctrl_key('a'), &tx).unwrap();
+
+        // All 3 hosts should be selected
+        assert_eq!(app.multi_select.len(), 3);
+
+        // Press Ctrl+A again to deselect all
+        handle_key_event(&mut app, ctrl_key('a'), &tx).unwrap();
+        assert!(app.multi_select.is_empty());
+    }
+
+    #[test]
+    fn test_ctrl_a_in_search_mode_selects_filtered() {
+        let mut app = make_app(
+            "Host prod-web\n  HostName 1.1.1.1\n\nHost prod-db\n  HostName 2.2.2.2\n\nHost staging-app\n  HostName 3.3.3.3\n",
+        );
+        app.apply_sort();
+
+        // Enter search mode and filter to "prod"
+        app.search.query = Some("prod".to_string());
+        app.apply_filter();
+        assert_eq!(app.search.filtered_indices.len(), 2);
+        assert!(app.multi_select.is_empty());
+
+        // Ctrl+A should select only the 2 filtered hosts
+        let (tx, _rx) = mpsc::channel();
+        handle_key_event(&mut app, ctrl_key('a'), &tx).unwrap();
+        assert_eq!(app.multi_select.len(), 2);
+
+        // Press Ctrl+A again to deselect
+        handle_key_event(&mut app, ctrl_key('a'), &tx).unwrap();
+        assert!(app.multi_select.is_empty());
+    }
+
+    #[test]
+    fn test_p_key_clears_ping_increments_generation() {
+        let mut app = make_app("Host web1\n  HostName 1.1.1.1\n");
+        // Pre-populate ping status to simulate completed pings
+        app.ping_status
+            .insert("web1".to_string(), crate::app::PingStatus::Reachable);
+        assert_eq!(app.ping_generation, 0);
+
+        let (tx, _rx) = std::sync::mpsc::channel();
+        handle_key_event(&mut app, key(KeyCode::Char('P')), &tx).unwrap();
+
+        assert!(app.ping_status.is_empty());
+        assert_eq!(app.ping_generation, 1);
     }
 }

@@ -177,9 +177,9 @@ const LANDING_PAGE = `<!DOCTYPE html>
   "url": "https://getpurple.sh",
   "downloadUrl": "https://getpurple.sh",
   "installUrl": "https://github.com/erickochen/purple/releases",
-  "softwareVersion": "2.23.0",
+  "softwareVersion": "2.24.0",
   "datePublished": "2024-10-01",
-  "dateModified": "2026-03-26",
+  "dateModified": "2026-04-01",
   "softwareRequirements": "macOS or Linux",
   "programmingLanguage": "Rust",
   "license": "https://opensource.org/licenses/MIT",
@@ -1140,7 +1140,7 @@ footer a:hover { color: var(--accent); }
 </main>
 
 <footer>
-  <a href="https://github.com/erickochen/purple" rel="noopener">GitHub</a> · <a href="https://crates.io/crates/purple-ssh" rel="noopener">crates.io</a> · MIT License · v2.23.0
+  <a href="https://github.com/erickochen/purple" rel="noopener">GitHub</a> · <a href="https://crates.io/crates/purple-ssh" rel="noopener">crates.io</a> · MIT License · v2.24.0
 </footer>
 
 <script>
@@ -1313,7 +1313,7 @@ Provider-specific details:
 - Azure: multi-subscription sync via the Azure Resource Manager API. Authenticate with a service principal JSON file (tenantId, clientId, clientSecret -> OAuth2 client credentials) or a raw Bearer token (e.g. from az account get-access-token). Requires subscription IDs via --regions. Batch IP resolution (3 list calls: VMs, NICs, Public IPs). VM tags synced as host tags
 - GCP (Compute Engine): multi-zone sync via the aggregatedList API. Authenticate with a service account JSON key file (JWT RS256, scope: compute.readonly) or a raw access token (e.g. from gcloud auth print-access-token). Requires a GCP project ID. Empty zone filter syncs all zones. Network tags and labels are synced as host tags
 - Oracle Cloud Infrastructure (OCI): multi-region sync, reads ~/.oci/config for authentication, RSA-SHA256 HTTP Signature request signing, recursive compartment sync (enumerates sub-compartments via Identity API), IP priority (public > private), freeform tags only. Required IAM: read instance-family, read virtual-network-family and inspect compartments in tenancy
-- Proxmox VE: self-signed TLS certificates supported. Per-VM detail API calls. Guest agent and LXC interface detection
+- Proxmox VE: self-signed TLS certificates supported. Per-VM detail API calls. Guest agent OS detection (shows real OS like "Debian 13" instead of generic kernel version) and LXC interface detection
 - Scaleway: multi-zone sync across Paris, Amsterdam, Warsaw and Milan
 - i3D.net: syncs dedicated/game servers and FlexMetal on-demand bare metal via the i3D.net REST API v3. Static API key via PRIVATE-TOKEN header. Cursor-based pagination for dedicated hosts, offset-based for FlexMetal. FlexMetal tags synced as provider tags
 - Tailscale: dual mode. Without a token it uses the local \`tailscale status --json\` CLI (no API key needed). With a token it uses the Tailscale HTTP API. Tags are synced (tag: prefix stripped). IPv4 (100.x) preferred over IPv6
@@ -1502,7 +1502,7 @@ A: Yes. purple uses the Bitwarden CLI (bw) for Bitwarden password sources. If yo
 
 ## Status
 
-- Current version: 2.23.0 (March 2026)
+- Current version: 2.24.0 (April 2026)
 - Release cadence: approximately bi-weekly
 - Test suite: 5000+ tests (unit, integration, property-based and HTTP mocking)
 - CI: fmt, clippy, test on macOS and Linux, cargo-deny, MSRV 1.86 check

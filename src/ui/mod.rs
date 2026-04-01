@@ -351,6 +351,30 @@ pub fn footer_sep<'a>() -> Span<'a> {
     Span::styled("\u{2502} ", theme::muted())
 }
 
+/// Render footer with shortcuts on the left and "? more" pinned to the right edge.
+/// When a status message is active, falls back to `render_footer_with_status` behavior.
+pub fn render_footer_with_help(
+    frame: &mut Frame,
+    area: Rect,
+    footer_spans: Vec<Span<'_>>,
+    app: &App,
+) {
+    if app.status.is_some() {
+        render_footer_with_status(frame, area, footer_spans, app);
+        return;
+    }
+    let right_spans = vec![
+        Span::styled("\u{2502} ", theme::muted()),
+        Span::styled("?", theme::accent_bold()),
+        Span::styled(" more", theme::muted()),
+    ];
+    let right_width: u16 = right_spans.iter().map(|s| s.width()).sum::<usize>() as u16;
+    let [left, right] =
+        Layout::horizontal([Constraint::Fill(1), Constraint::Length(right_width)]).areas(area);
+    frame.render_widget(Paragraph::new(Line::from(footer_spans)), left);
+    frame.render_widget(Paragraph::new(Line::from(right_spans)), right);
+}
+
 /// Render footer with shortcuts always visible and optional status right-aligned.
 pub fn render_footer_with_status(
     frame: &mut Frame,
