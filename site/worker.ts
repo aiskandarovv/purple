@@ -1117,7 +1117,7 @@ footer a:hover { color: var(--accent); }
       </div>
       <div class="terminal-body">
         <div class="prompt-line">
-          <span class="prompt-char">$</span>
+          <span class="prompt-char">\$</span>
           <span class="typed-text" id="typed-cmd"></span><span class="cursor" id="typing-cursor"></span>
           <button class="copy-btn copy-inline" id="copy-btn" onclick="copy(this)" style="display:none">copy</button>
         </div>
@@ -1126,8 +1126,8 @@ footer a:hover { color: var(--accent); }
           <div>Installing to /usr/local/bin/purple... <span class="success">done.</span></div>
         </div>
         <div class="alt-installs" id="alt-installs" style="display:none">
-          <div><span class="prompt-char-dim">$</span> brew install erickochen/purple/purple</div>
-          <div><span class="prompt-char-dim">$</span> cargo install purple-ssh</div>
+          <div><span class="prompt-char-dim">\$</span> brew install erickochen/purple/purple</div>
+          <div><span class="prompt-char-dim">\$</span> cargo install purple-ssh</div>
         </div>
         <div class="tui-wrap" aria-hidden="true">
           <div class="tui-box">
@@ -1202,7 +1202,7 @@ footer a:hover { color: var(--accent); }
     <div class="term-block">
       <div class="term-block-bar"><span>features</span></div>
       <div class="term-block-body">
-        <div class="term-prompt"><span class="pc">$</span> purple --features</div>
+        <div class="term-prompt"><span class="pc">\$</span> purple --features</div>
         <div class="feat-list">
           <div class="feat-row"><span class="feat-check">&#10003;</span><span class="feat-name">search</span><span class="feat-desc">Fuzzy search across aliases, hostnames, users and tags</span></div>
           <div class="feat-row"><span class="feat-check">&#10003;</span><span class="feat-name">snippets</span><span class="feat-desc">Run the same command on 50 servers. Sequential or parallel</span></div>
@@ -1373,7 +1373,7 @@ footer a:hover { color: var(--accent); }
 
   <div class="cta">
     <div class="cta-install">
-      <code><span class="dim">$</span> curl -fsSL getpurple.sh | sh</code>
+      <code><span class="dim">\$</span> curl -fsSL getpurple.sh | sh</code>
       <button class="copy-btn" onclick="copy(this)">copy</button>
     </div>
     <div class="links">
@@ -1428,7 +1428,6 @@ function copy(btn) {
 </script>
 </body>
 </html>
-
 `;
 
 const LLMS_TXT = `# purple
