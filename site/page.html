@@ -43,7 +43,7 @@
   "installUrl": "https://github.com/erickochen/purple/releases",
   "softwareVersion": "2.25.0",
   "datePublished": "2024-10-01",
-  "dateModified": "2026-04-01",
+  "dateModified": "2026-04-02",
   "softwareRequirements": "macOS or Linux",
   "programmingLanguage": "Rust",
   "license": "https://opensource.org/licenses/MIT",
@@ -293,6 +293,7 @@ body {
   line-height: 1.65;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
 }
 
 /* ── Entrance ── */
@@ -317,6 +318,13 @@ body {
   background: var(--fg);
   vertical-align: text-bottom;
   animation: blink 1s step-end infinite;
+}
+.h1-cursor {
+  width: 0.06em;
+  height: 0.75em;
+  background: var(--accent);
+  margin-left: 0.04em;
+  vertical-align: baseline;
 }
 
 /* ── Terminal frame ── */
@@ -945,22 +953,55 @@ footer a:hover { color: var(--accent); }
 /* ── Responsive ── */
 @media (max-width: 640px) {
   body { font-size: 14px; }
-  .hero { min-height: 92svh; }
+  .hero { min-height: 92svh; padding: 0 16px; }
   .pillars { grid-template-columns: 1fr; }
   .use-cases { grid-template-columns: 1fr; }
   .qs-grid { grid-template-columns: 1fr 1fr; }
   .terminal { max-width: 100%; }
-  .preview-header, .preview-row { grid-template-columns: 100px 90px 1fr; font-size: 0.65rem; }
+  .terminal-body { padding: 16px 14px 0; }
+  .tui-wrap { margin: 12px -14px 0; padding: 10px 10px; }
+  .tui-header, .tui-row { grid-template-columns: 100px 90px 80px 1fr; font-size: 0.6rem; }
+  .tui-header { padding: 4px 8px 3px; }
+  .tui-row { padding: 2px 8px; }
+  .tui-title { padding: 5px 8px; font-size: 0.6rem; }
+  .tui-title .url { font-size: 0.5rem; }
+  .tui-footer { padding: 4px 8px; font-size: 0.5rem; gap: 6px; flex-wrap: wrap; }
+  .tui-box { font-size: 0.6rem; }
+  .prompt-line { font-size: 0.75rem; }
+  .install-output { font-size: 0.7rem; }
+  .alt-installs { font-size: 0.65rem; }
   .feat-row { grid-template-columns: 18px 90px 1fr; font-size: 0.72rem; }
   .feat-name { font-size: 0.65rem; }
   .man-page { padding: 16px; }
   .man-page details { margin-left: 12px; }
   .man-indent { padding-left: 12px; }
   .man-head, .man-foot { font-size: 0.6rem; }
+  .cta-install { padding: 12px 16px; gap: 12px; font-size: 0.8rem; }
+  .content { padding: 0 16px 60px; }
+  .intro { margin-bottom: 72px; }
+  .demo { margin-bottom: 72px; }
+  section { margin-bottom: 56px; }
+  .divider { margin: 56px 0; }
+}
+@media (max-width: 480px) {
+  h1 { margin-bottom: 12px; }
+  .tagline { margin-bottom: 32px; }
+  .tui-header, .tui-row { grid-template-columns: 90px 80px 1fr; }
+  .tui-header span:nth-child(3), .tui-row .tags { display: none; }
+  .tui-footer span:nth-child(n+4) { display: none; }
+  .prompt-line { font-size: 0.7rem; }
+  .copy-inline { display: none; }
+  .feat-row { grid-template-columns: 16px 1fr; }
+  .feat-name { display: none; }
+  .cta-install { flex-direction: column; gap: 8px; font-size: 0.75rem; }
+  .man-head span:nth-child(2), .man-foot span:nth-child(2) { display: none; }
+  .qs-grid { grid-template-columns: 1fr; }
+  .links { gap: 16px; font-size: 0.75rem; }
 }
 @media (max-width: 380px) {
-  .qs-grid { grid-template-columns: 1fr; }
-  .preview-header, .preview-row { grid-template-columns: 90px 80px 1fr; }
+  .tui-header, .tui-row { grid-template-columns: 80px 1fr; }
+  .tui-header span:nth-child(2), .tui-row .host { display: none; }
+  .tui-wrap { padding: 8px 6px; }
 }
 </style>
 </head>
@@ -968,7 +1009,7 @@ footer a:hover { color: var(--accent); }
 
 <div class="hero">
   <div class="hero-inner">
-    <h1>purple<span class="dot">.</span> <span class="h1-sub">Terminal SSH client.</span></h1>
+    <h1>purple<span class="dot">.</span><span class="cursor h1-cursor"></span> <span class="h1-sub">Terminal SSH client.</span></h1>
     <p class="tagline">Find any server. Connect in a keystroke.</p>
     <div class="terminal">
       <div class="terminal-bar">
@@ -1231,7 +1272,7 @@ footer a:hover { color: var(--accent); }
         <summary>Can AI assistants use purple?</summary>
         <div class="a-wrap"><div class="answer">Yes. Run <code>purple mcp</code> to start a Model Context Protocol server over JSON-RPC 2.0. Claude Code, Cursor and other MCP-compatible AI agents can use five tools: list_hosts, get_host, run_command, list_containers and container_action. No API keys needed. Approval behavior depends on your AI client.</div></div>
       </details>
-      <div class="man-foot"><span>purple v2.25.0</span><span>2026-04-01</span><span>PURPLE(1)</span></div>
+      <div class="man-foot"><span>purple v2.25.0</span><span>2026-04-02</span><span>PURPLE(1)</span></div>
     </div>
   </section>
 
