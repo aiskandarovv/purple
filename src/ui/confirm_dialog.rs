@@ -28,7 +28,7 @@ pub fn render(frame: &mut Frame, _app: &App, alias: &str) {
         Line::from(vec![
             Span::styled("    y", theme::danger()),
             Span::styled(" yes ", theme::muted()),
-            Span::styled("\u{2502} ", theme::muted()),
+            Span::raw("  "),
             Span::styled("Esc", theme::accent_bold()),
             Span::styled(" no", theme::muted()),
         ]),
@@ -67,7 +67,7 @@ pub fn render_host_key_reset(frame: &mut Frame, _app: &App, hostname: &str) {
         Line::from(vec![
             Span::styled("    y", theme::danger()),
             Span::styled(" yes ", theme::muted()),
-            Span::styled("\u{2502} ", theme::muted()),
+            Span::raw("  "),
             Span::styled("Esc", theme::accent_bold()),
             Span::styled(" no", theme::muted()),
         ]),
@@ -101,7 +101,7 @@ pub fn render_confirm_import(frame: &mut Frame, _app: &App, count: usize) {
         Line::from(vec![
             Span::styled("    y", theme::accent_bold()),
             Span::styled(" yes ", theme::muted()),
-            Span::styled("\u{2502} ", theme::muted()),
+            Span::raw("  "),
             Span::styled("Esc", theme::accent_bold()),
             Span::styled(" no", theme::muted()),
         ]),
@@ -177,7 +177,7 @@ pub fn render_confirm_purge_stale(
     text.push(Line::from(vec![
         Span::styled("    y", theme::danger()),
         Span::styled(" yes ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
+        Span::raw("  "),
         Span::styled("Esc", theme::accent_bold()),
         Span::styled(" no", theme::muted()),
     ]));

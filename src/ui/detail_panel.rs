@@ -3,11 +3,98 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Padding, Paragraph};
+use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
+// Box-drawing characters for section cards
+const BOX_TL: &str = "\u{256D}"; // ╭
+const BOX_TR: &str = "\u{256E}"; // ╮
+const BOX_BL: &str = "\u{2570}"; // ╰
+const BOX_BR: &str = "\u{256F}"; // ╯
+const BOX_H: &str = "\u{2500}"; // ─
+const BOX_V: &str = "\u{2502}"; // │
+
+/// Push the opening line of a section card: ╭─ TITLE ───╮
+fn section_open(lines: &mut Vec<Line<'static>>, title: &str, width: usize) {
+    // prefix: "╭─ " border, then TITLE in bold, then " " — split styling
+    let border_prefix = format!("{}\u{2500} ", BOX_TL);
+    let title_suffix = " ";
+    let prefix_width = border_prefix.width() + title.width() + title_suffix.width();
+    let fill = width.saturating_sub(prefix_width).saturating_sub(1); // -1 for TR char
+    lines.push(Line::from(vec![
+        Span::styled(border_prefix, theme::border()),
+        Span::styled(title.to_string(), theme::bold()),
+        Span::styled(title_suffix, theme::border()),
+        Span::styled(BOX_H.repeat(fill), theme::border()),
+        Span::styled(BOX_TR, theme::border()),
+    ]));
+}
+
+/// Push the opening line of a section card without a title: ╭───────╮
+fn section_open_notitle(lines: &mut Vec<Line<'static>>, width: usize) {
+    let fill = width.saturating_sub(2); // -1 for TL, -1 for TR
+    lines.push(Line::from(vec![
+        Span::styled(BOX_TL, theme::border()),
+        Span::styled(BOX_H.repeat(fill), theme::border()),
+        Span::styled(BOX_TR, theme::border()),
+    ]));
+}
+
+/// Push a content row wrapped in box side characters: │ <spans...> │
+/// Pads content to fill `width` columns (right-aligns the closing │).
+fn section_line(lines: &mut Vec<Line<'static>>, spans: Vec<Span<'static>>, width: usize) {
+    let mut full_spans: Vec<Span<'static>> =
+        vec![Span::styled(format!("{} ", BOX_V), theme::border())];
+    let content_width: usize = full_spans.iter().map(|s| s.content.width()).sum::<usize>()
+        + spans.iter().map(|s| s.content.width()).sum::<usize>();
+    full_spans.extend(spans);
+    // Pad to align the right │ border
+    let closing_offset = 1; // the │ character
+    let padding = width
+        .saturating_sub(content_width)
+        .saturating_sub(closing_offset);
+    if padding > 0 {
+        full_spans.push(Span::raw(" ".repeat(padding)));
+    }
+    full_spans.push(Span::styled(BOX_V, theme::border()));
+    lines.push(Line::from(full_spans));
+}
+
+/// Push the closing line of a section card: ╰───────╯
+fn section_close(lines: &mut Vec<Line<'static>>, width: usize) {
+    let fill = width.saturating_sub(2); // -1 for BL, -1 for BR
+    lines.push(Line::from(vec![
+        Span::styled(BOX_BL, theme::border()),
+        Span::styled(BOX_H.repeat(fill), theme::border()),
+        Span::styled(BOX_BR, theme::border()),
+    ]));
+}
+
+/// Push a label+value field row inside a section card.
+fn section_field(
+    lines: &mut Vec<Line<'static>>,
+    label: &str,
+    value: &str,
+    max_value_width: usize,
+    box_width: usize,
+) {
+    let display = if max_value_width > 0 && value.width() > max_value_width {
+        super::truncate(value, max_value_width)
+    } else {
+        value.to_string()
+    };
+    let spans = vec![
+        Span::styled(
+            format!("{:<width$}", label, width = LABEL_WIDTH),
+            theme::muted(),
+        ),
+        Span::styled(display, theme::bold()),
+    ];
+    section_line(lines, spans, box_width);
+}
+
 use super::theme;
-use crate::app::{App, PingStatus};
+use crate::app::App;
 use crate::history::ConnectionHistory;
 use crate::ssh_config::model::ConfigElement;
 
@@ -52,42 +139,87 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     let host = match app.selected_host() {
         Some(h) => h,
         None => {
-            let block = Block::bordered()
-                .border_type(BorderType::Rounded)
-                .padding(Padding::horizontal(1))
-                .border_style(theme::border());
-            let empty = Paragraph::new(" Select a host to see details.")
-                .style(theme::muted())
-                .block(block);
+            let empty = Paragraph::new(" Select a host to see details.").style(theme::muted());
             frame.render_widget(empty, area);
             return;
         }
     };
 
-    let title = format!(" {} ", host.alias);
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .padding(Padding::horizontal(1))
-        .title(Span::styled(title, theme::brand()))
-        .border_style(theme::border());
-
-    let inner_width = (area.width as usize).saturating_sub(4); // minus borders + padding
-    let max_value_width = inner_width.saturating_sub(LABEL_WIDTH); // minus label
+    // box_width = area width; each section card spans the full width.
+    // max_value_width = box_width - "│ " prefix (2) - " │" suffix (2) - LABEL_WIDTH
+    let box_width = area.width as usize;
+    let max_value_width = box_width.saturating_sub(4).saturating_sub(LABEL_WIDTH);
 
     let mut lines: Vec<Line<'static>> = Vec::new();
 
-    // Connection section
-    lines.push(Line::from(""));
-    lines.push(section_header("Connection"));
+    // Header card: alias as title, then user@host:port + status line
+    {
+        section_open(&mut lines, &host.alias.clone(), box_width);
 
-    push_field(&mut lines, "Host", &host.hostname, max_value_width);
+        let user_display = host.user.as_str();
+        let port_display = host.port;
+        let host_addr = host.hostname.as_str();
+        let addr_str = if !user_display.is_empty() && !host_addr.is_empty() {
+            format!("{}@{}:{}", user_display, host_addr, port_display)
+        } else if !host_addr.is_empty() {
+            format!("{}:{}", host_addr, port_display)
+        } else {
+            String::new()
+        };
+        if !addr_str.is_empty() {
+            // Available width inside box: box_width - 2 (│ prefix+space) - 1 (closing │)
+            let inner = box_width.saturating_sub(3);
+            let truncated = super::truncate(&addr_str, inner);
+            section_line(
+                &mut lines,
+                vec![Span::styled(truncated, theme::muted())],
+                box_width,
+            );
+        }
+
+        // Status line (tags are in the TAGS section)
+        let status_spans: Vec<Span<'static>> = match app.ping_status.get(&host.alias) {
+            Some(crate::app::PingStatus::Reachable) => {
+                vec![Span::styled("\u{25CF} online", theme::success())]
+            }
+            Some(crate::app::PingStatus::Unreachable) => {
+                vec![Span::styled("\u{2717} offline", theme::error())]
+            }
+            Some(crate::app::PingStatus::Checking) => {
+                vec![Span::styled("\u{00B7} checking", theme::muted())]
+            }
+            _ => vec![],
+        };
+        if !status_spans.is_empty() {
+            section_line(&mut lines, status_spans, box_width);
+        }
+
+        section_close(&mut lines, box_width);
+    }
+
+    // Connection section
+    section_open(&mut lines, "CONNECTION", box_width);
+
+    section_field(
+        &mut lines,
+        "Host",
+        &host.hostname,
+        max_value_width,
+        box_width,
+    );
 
     if !host.user.is_empty() {
-        push_field(&mut lines, "User", &host.user, max_value_width);
+        section_field(&mut lines, "User", &host.user, max_value_width, box_width);
     }
 
     if host.port != 22 {
-        push_field(&mut lines, "Port", &host.port.to_string(), max_value_width);
+        section_field(
+            &mut lines,
+            "Port",
+            &host.port.to_string(),
+            max_value_width,
+            box_width,
+        );
     }
 
     if !host.identity_file.is_empty() {
@@ -96,11 +228,11 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             .rsplit('/')
             .next()
             .unwrap_or(&host.identity_file);
-        push_field(&mut lines, "Key", key_display, max_value_width);
+        section_field(&mut lines, "Key", key_display, max_value_width, box_width);
     }
 
     if let Some(ref askpass) = host.askpass {
-        push_field(&mut lines, "Password", askpass, max_value_width);
+        section_field(&mut lines, "Password", askpass, max_value_width, box_width);
     }
 
     if let Some(stale_ts) = host.stale {
@@ -115,57 +247,50 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         } else {
             stale_value
         };
-        lines.push(Line::from(vec![
-            Span::styled(
-                format!("{:<width$}", "Stale", width = LABEL_WIDTH),
-                theme::muted(),
-            ),
-            Span::styled(display, theme::error()),
-        ]));
+        section_line(
+            &mut lines,
+            vec![
+                Span::styled(
+                    format!("{:<width$}", "Stale", width = LABEL_WIDTH),
+                    theme::muted(),
+                ),
+                Span::styled(display, theme::error()),
+            ],
+            box_width,
+        );
     }
+
+    section_close(&mut lines, box_width);
 
     // Activity section
     let history_entry = app.history.entries.get(&host.alias);
-    let ping = app.ping_status.get(&host.alias);
 
-    if history_entry.is_some() || ping.is_some() {
-        lines.push(Line::from(""));
-        lines.push(section_header("Activity"));
-
-        if let Some(status) = ping {
-            let (text, style) = match status {
-                PingStatus::Checking => ("checking...", theme::muted()),
-                PingStatus::Reachable => ("reachable", theme::success()),
-                PingStatus::Unreachable => ("unreachable", theme::error()),
-                PingStatus::Skipped => ("skipped", theme::muted()),
-            };
-            lines.push(Line::from(vec![
-                Span::styled(
-                    format!("{:<width$}", "Status", width = LABEL_WIDTH),
-                    theme::muted(),
-                ),
-                Span::styled(text, style),
-            ]));
-        }
+    if history_entry.is_some() {
+        // The sparkline chart width is the inner box content width: box_width - 4
+        // ("│ " prefix = 2, " │" suffix = 2)
+        let chart_width = box_width.saturating_sub(4);
+        section_open(&mut lines, "ACTIVITY", box_width);
 
         if let Some(entry) = history_entry {
             let ago = ConnectionHistory::format_time_ago(entry.last_connected);
             if !ago.is_empty() {
-                push_field(
+                section_field(
                     &mut lines,
                     "Last SSH",
                     &format!("{} ago", ago),
                     max_value_width,
+                    box_width,
                 );
             }
-            push_field(
+            section_field(
                 &mut lines,
                 "Connections",
                 &entry.count.to_string(),
                 max_value_width,
+                box_width,
             );
 
-            if !entry.timestamps.is_empty() && inner_width >= 10 {
+            if !entry.timestamps.is_empty() && chart_width >= 10 {
                 let now = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap_or_default()
@@ -193,39 +318,54 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                         .collect();
                     if !labels.is_empty() {
                         let text = labels.join(", ");
-                        lines.push(Line::from(Span::styled(
-                            super::truncate(&text, inner_width),
-                            theme::muted(),
-                        )));
+                        let truncated = super::truncate(&text, chart_width);
+                        section_line(
+                            &mut lines,
+                            vec![Span::styled(truncated, theme::muted())],
+                            box_width,
+                        );
                     }
                 } else {
-                    let chart_lines = activity_sparkline(&entry.timestamps, inner_width);
+                    let chart_lines = activity_sparkline(&entry.timestamps, chart_width);
                     if !chart_lines.is_empty() {
-                        lines.push(Line::from(""));
-                        lines.extend(chart_lines);
+                        // Empty separator row inside the box
+                        section_line(&mut lines, vec![], box_width);
+                        for chart_line in chart_lines {
+                            section_line(
+                                &mut lines,
+                                chart_line.spans.into_iter().collect(),
+                                box_width,
+                            );
+                        }
                     }
                 }
             }
         }
+
+        section_close(&mut lines, box_width);
     }
 
     // Route visualisation (only when ProxyJump resolves to known hosts)
     if !host.proxy_jump.is_empty() {
         let chain = resolve_proxy_chain(host, &app.hosts);
         if !chain.is_empty() {
-            lines.push(Line::from(""));
-            lines.push(section_header("Route"));
-            let indent = "  ";
-            let hop_width = inner_width.saturating_sub(4); // minus "  ● "
-            lines.push(Line::from(vec![
-                Span::styled(format!("{}\u{25CB} ", indent), theme::muted()),
-                Span::styled("you", theme::muted()),
-            ]));
+            section_open(&mut lines, "ROUTE", box_width);
+            // hop_width: content width minus "  ● " prefix (4 chars)
+            let hop_width = box_width.saturating_sub(4 + 4); // box borders (4) + indent+bullet (4)
+            section_line(
+                &mut lines,
+                vec![
+                    Span::styled("  \u{25CB} ", theme::muted()),
+                    Span::styled("you", theme::muted()),
+                ],
+                box_width,
+            );
             for (name, hostname, in_config) in chain.iter().rev() {
-                lines.push(Line::from(Span::styled(
-                    format!("{}  \u{2502}", indent),
-                    theme::muted(),
-                )));
+                section_line(
+                    &mut lines,
+                    vec![Span::styled("    \u{2502}", theme::muted())],
+                    box_width,
+                );
                 let name_style = if *in_config {
                     theme::bold()
                 } else {
@@ -241,16 +381,21 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                 } else {
                     String::new()
                 };
-                lines.push(Line::from(vec![
-                    Span::styled(format!("{}\u{25CF} ", indent), theme::muted()),
-                    Span::styled(name_trunc, name_style),
-                    Span::styled(ip, theme::muted()),
-                ]));
+                section_line(
+                    &mut lines,
+                    vec![
+                        Span::styled("  \u{25CF} ", theme::muted()),
+                        Span::styled(name_trunc, name_style),
+                        Span::styled(ip, theme::muted()),
+                    ],
+                    box_width,
+                );
             }
-            lines.push(Line::from(Span::styled(
-                format!("{}  \u{2502}", indent),
-                theme::muted(),
-            )));
+            section_line(
+                &mut lines,
+                vec![Span::styled("    \u{2502}", theme::muted())],
+                box_width,
+            );
             let alias_trunc = super::truncate(&host.alias, hop_width);
             let remaining = hop_width.saturating_sub(alias_trunc.width());
             let target_ip = if remaining > 4 {
@@ -261,18 +406,22 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             } else {
                 String::new()
             };
-            lines.push(Line::from(vec![
-                Span::styled(format!("{}\u{25CF} ", indent), theme::accent()),
-                Span::styled(alias_trunc, theme::bold()),
-                Span::styled(target_ip, theme::muted()),
-            ]));
+            section_line(
+                &mut lines,
+                vec![
+                    Span::styled("  \u{25CF} ", theme::accent()),
+                    Span::styled(alias_trunc, theme::bold()),
+                    Span::styled(target_ip, theme::muted()),
+                ],
+                box_width,
+            );
+            section_close(&mut lines, box_width);
         }
     }
 
     // Tags section
     if !host.tags.is_empty() || !host.provider_tags.is_empty() || host.provider.is_some() {
-        lines.push(Line::from(""));
-        lines.push(section_header("Tags"));
+        section_open(&mut lines, "TAGS", box_width);
 
         let mut all_tags: Vec<String> = host
             .provider_tags
@@ -283,45 +432,47 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         if let Some(ref provider) = host.provider {
             all_tags.push(format!("#{}", provider));
         }
-        // Inner width = area width - 2 (borders) - 2 (1-char padding each side).
-        let max_width = (area.width as usize).saturating_sub(4);
-        for row in wrap_tags(&all_tags, max_width) {
-            let mut spans = Vec::new();
+        // Tag rows fit within box content width: box_width - 4 ("│ " + " │")
+        let tag_content_width = box_width.saturating_sub(4);
+        for row in wrap_tags(&all_tags, tag_content_width) {
+            let mut spans: Vec<Span<'static>> = Vec::new();
             for (i, tag) in row.iter().enumerate() {
                 if i > 0 {
                     spans.push(Span::raw(" "));
                 }
                 spans.push(Span::styled(tag.to_string(), theme::accent()));
             }
-            lines.push(Line::from(spans));
+            section_line(&mut lines, spans, box_width);
         }
+
+        section_close(&mut lines, box_width);
     }
 
     // Provider metadata section
     if !host.provider_meta.is_empty() {
-        lines.push(Line::from(""));
         let header = match host.provider.as_deref() {
-            Some(name) => crate::providers::provider_display_name(name).to_string(),
-            None => "Provider".to_string(),
+            Some(name) => crate::providers::provider_display_name(name).to_uppercase(),
+            None => "PROVIDER".to_string(),
         };
-        lines.push(section_header(&header));
+        section_open(&mut lines, &header, box_width);
 
         for (key, value) in &host.provider_meta {
             let label = meta_label(key);
-            push_field(&mut lines, &label, value, max_value_width);
+            section_field(&mut lines, &label, value, max_value_width, box_width);
         }
+
+        section_close(&mut lines, box_width);
     }
 
     // Tunnels section
     let tunnel_active = app.active_tunnels.contains_key(&host.alias);
     if host.tunnel_count > 0 {
-        lines.push(Line::from(""));
         let tunnel_label = if tunnel_active {
-            "Tunnels (active)"
+            "TUNNELS (active)"
         } else {
-            "Tunnels"
+            "TUNNELS"
         };
-        lines.push(section_header(tunnel_label));
+        section_open(&mut lines, tunnel_label, box_width);
 
         let rules = find_tunnel_rules(&app.config.elements, &host.alias);
         let style = if tunnel_active {
@@ -329,57 +480,59 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         } else {
             theme::muted()
         };
-        for rule in rules.iter().take(5) {
-            lines.push(Line::from(Span::styled(rule.to_string(), style)));
+        let rule_content_width = box_width.saturating_sub(4);
+        for rule in &rules {
+            let truncated = super::truncate(rule, rule_content_width);
+            section_line(&mut lines, vec![Span::styled(truncated, style)], box_width);
         }
-        if rules.len() > 5 {
-            lines.push(Line::from(Span::styled(
-                format!("(and {} more. T to manage)", rules.len() - 5),
-                theme::muted(),
-            )));
-        }
+
+        section_close(&mut lines, box_width);
     }
 
     // Snippets hint
     let snippet_count = app.snippet_store.snippets.len();
     if snippet_count > 0 {
-        lines.push(Line::from(""));
-        lines.push(section_header("Snippets"));
-        lines.push(Line::from(Span::styled(
-            format!("{} available (r to run)", snippet_count),
-            theme::muted(),
-        )));
+        section_open(&mut lines, "SNIPPETS", box_width);
+        let msg = format!("{} available (r to run)", snippet_count);
+        section_line(
+            &mut lines,
+            vec![Span::styled(msg, theme::muted())],
+            box_width,
+        );
+        section_close(&mut lines, box_width);
     }
 
     // Containers section (only shown when cache data exists)
     if let Some(cache_entry) = app.container_cache.get(&host.alias) {
-        lines.push(Line::from(""));
-        lines.push(section_header("Containers"));
+        section_open(&mut lines, "CONTAINERS", box_width);
         let running = cache_entry
             .containers
             .iter()
             .filter(|c| c.state == "running")
             .count();
         let total = cache_entry.containers.len();
-        push_field(
+        section_field(
             &mut lines,
             "Total",
             &format!("{} running / {} total", running, total),
             max_value_width,
+            box_width,
         );
-        push_field(
+        section_field(
             &mut lines,
             "Runtime",
             cache_entry.runtime.as_str(),
             max_value_width,
+            box_width,
         );
-        push_field(
+        section_field(
             &mut lines,
             "Last checked",
             &crate::containers::format_relative_time(cache_entry.timestamp),
             max_value_width,
+            box_width,
         );
-        for container in cache_entry.containers.iter().take(5) {
+        for container in &cache_entry.containers {
             let (icon, icon_style) = match container.state.as_str() {
                 "running" => ("\u{2713}", theme::success()),
                 "exited" | "dead" => ("\u{2717}", theme::error()),
@@ -389,22 +542,21 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                 &container.names,
                 max_value_width.saturating_sub(2),
             );
-            lines.push(Line::from(vec![
-                Span::styled(
-                    format!("{:>width$}", "", width = LABEL_WIDTH),
-                    theme::muted(),
-                ),
-                Span::styled(icon, icon_style),
-                Span::styled(" ", theme::muted()),
-                Span::styled(name, theme::bold()),
-            ]));
+            section_line(
+                &mut lines,
+                vec![
+                    Span::styled(
+                        format!("{:>width$}", "", width = LABEL_WIDTH),
+                        theme::muted(),
+                    ),
+                    Span::styled(icon, icon_style),
+                    Span::styled(" ", theme::muted()),
+                    Span::styled(name, theme::bold()),
+                ],
+                box_width,
+            );
         }
-        if total > 5 {
-            lines.push(Line::from(Span::styled(
-                format!("(and {} more. C to manage)", total - 5),
-                theme::muted(),
-            )));
-        }
+        section_close(&mut lines, box_width);
     }
 
     // Inherited directives section — match against alias and hostname for display.
@@ -420,34 +572,60 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         }
     }
     for pattern_entry in &inherited {
-        lines.push(Line::from(""));
-        lines.push(section_header(&pattern_entry.pattern));
+        section_open(
+            &mut lines,
+            &format!("PATTERN MATCH {}", pattern_entry.pattern),
+            box_width,
+        );
         for (key, value) in &pattern_entry.directives {
-            push_field(&mut lines, key, value, max_value_width);
+            section_field(&mut lines, key, value, max_value_width, box_width);
         }
+        section_close(&mut lines, box_width);
     }
 
     // Source section (for included hosts)
     if let Some(ref source) = host.source_file {
-        lines.push(Line::from(""));
-        lines.push(Line::from(vec![
-            Span::styled(
-                format!("{:<width$}", "Source", width = LABEL_WIDTH),
-                theme::muted(),
-            ),
-            Span::styled(
-                super::truncate(&source.display().to_string(), max_value_width),
-                theme::bold(),
-            ),
-        ]));
+        section_open_notitle(&mut lines, box_width);
+        section_field(
+            &mut lines,
+            "Source",
+            &source.display().to_string(),
+            max_value_width,
+            box_width,
+        );
+        section_close(&mut lines, box_width);
     }
 
-    lines.push(Line::from(""));
+    // Stretch: give all remaining vertical space to the last section card.
+    // Insert empty bordered lines before the last section_close line.
+    let available = area.height as usize;
+    if lines.len() < available {
+        let extra = available - lines.len();
+        // Find the last section_close line (╰...╯)
+        if let Some(last_close) = lines.iter().rposition(|line| {
+            line.spans
+                .first()
+                .map(|s| s.content.starts_with(BOX_BL))
+                .unwrap_or(false)
+        }) {
+            for _ in 0..extra {
+                lines.insert(last_close, section_empty_line(box_width));
+            }
+        }
+    }
 
-    let paragraph = Paragraph::new(lines)
-        .block(block)
-        .scroll((app.ui.detail_scroll, 0));
+    let paragraph = Paragraph::new(lines).scroll((app.ui.detail_scroll, 0));
     frame.render_widget(paragraph, area);
+}
+
+/// Empty bordered line for padding: │                              │
+fn section_empty_line(width: usize) -> Line<'static> {
+    let fill = width.saturating_sub(2);
+    Line::from(vec![
+        Span::styled(BOX_V, theme::border()),
+        Span::raw(" ".repeat(fill)),
+        Span::styled(BOX_V, theme::border()),
+    ])
 }
 
 fn render_pattern_detail(
@@ -456,42 +634,46 @@ fn render_pattern_detail(
     area: Rect,
     pattern: &crate::ssh_config::model::PatternEntry,
 ) {
-    let title = format!(" {} ", pattern.pattern);
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .padding(Padding::horizontal(1))
-        .title(Span::styled(title, theme::brand()))
-        .border_style(theme::border());
-
-    let inner_width = (area.width as usize).saturating_sub(4);
-    let max_value_width = inner_width.saturating_sub(LABEL_WIDTH);
+    let box_width = area.width as usize;
+    let max_value_width = box_width.saturating_sub(4).saturating_sub(LABEL_WIDTH);
 
     let mut lines: Vec<Line<'static>> = Vec::new();
 
-    // Directives section (like Connection for hosts)
+    // Header card: PATTERN MATCH with pattern on first line
+    section_open(&mut lines, "PATTERN MATCH", box_width);
+    section_line(
+        &mut lines,
+        vec![Span::styled(pattern.pattern.clone(), theme::bold())],
+        box_width,
+    );
+    section_close(&mut lines, box_width);
+
+    // Directives section
     if !pattern.directives.is_empty() {
-        lines.push(Line::from(""));
-        lines.push(section_header("Directives"));
+        section_open(&mut lines, "DIRECTIVES", box_width);
         for (key, value) in &pattern.directives {
-            push_field(&mut lines, key, value, max_value_width);
+            section_field(&mut lines, key, value, max_value_width, box_width);
         }
+        section_close(&mut lines, box_width);
     }
 
     // Tags section
     if !pattern.tags.is_empty() {
-        lines.push(Line::from(""));
-        lines.push(section_header("Tags"));
+        section_open(&mut lines, "TAGS", box_width);
         let tag_strings: Vec<String> = pattern.tags.iter().map(|t| format!("#{}", t)).collect();
+        let inner_width = box_width.saturating_sub(4);
         let tag_rows = wrap_tags(&tag_strings, inner_width);
         for row in &tag_rows {
-            lines.push(Line::from(Span::styled(row.join(" "), theme::muted())));
+            section_line(
+                &mut lines,
+                vec![Span::styled(row.join(" "), theme::accent())],
+                box_width,
+            );
         }
+        section_close(&mut lines, box_width);
     }
 
-    // Matches section: find concrete hosts whose alias OR hostname matches this pattern.
-    // OpenSSH Host keyword matches alias only, but for display purposes we also show
-    // hosts whose HostName matches (e.g. pattern "10.30.0.*" applies when a user types
-    // the IP directly, so showing those hosts helps the user understand the pattern scope).
+    // Matches section
     let matching_aliases: Vec<String> = app
         .hosts
         .iter()
@@ -507,33 +689,55 @@ fn render_pattern_detail(
         .collect();
 
     if !matching_aliases.is_empty() {
-        lines.push(Line::from(""));
-        lines.push(section_header(&format!(
-            "Matches ({})",
-            matching_aliases.len()
-        )));
+        section_open(
+            &mut lines,
+            &format!("MATCHES ({})", matching_aliases.len()),
+            box_width,
+        );
+        let inner_width = box_width.saturating_sub(4);
         for alias in &matching_aliases {
-            lines.push(Line::from(Span::styled(
-                super::truncate(alias, inner_width),
-                theme::bold(),
-            )));
+            section_line(
+                &mut lines,
+                vec![Span::styled(
+                    super::truncate(alias, inner_width),
+                    theme::bold(),
+                )],
+                box_width,
+            );
+        }
+        section_close(&mut lines, box_width);
+    }
+
+    // Source file
+    if let Some(ref source) = pattern.source_file {
+        section_open(&mut lines, "SOURCE", box_width);
+        section_field(
+            &mut lines,
+            "File",
+            &source.display().to_string(),
+            max_value_width,
+            box_width,
+        );
+        section_close(&mut lines, box_width);
+    }
+
+    // Stretch: give all remaining vertical space to the last section card.
+    let available = area.height as usize;
+    if lines.len() < available {
+        let extra = available - lines.len();
+        if let Some(last_close) = lines.iter().rposition(|line| {
+            line.spans
+                .first()
+                .map(|s| s.content.starts_with(BOX_BL))
+                .unwrap_or(false)
+        }) {
+            for _ in 0..extra {
+                lines.insert(last_close, section_empty_line(box_width));
+            }
         }
     }
 
-    // Source file (if from Include)
-    if let Some(ref source) = pattern.source_file {
-        lines.push(Line::from(""));
-        push_field(
-            &mut lines,
-            "Source",
-            &source.display().to_string(),
-            max_value_width,
-        );
-    }
-
-    let paragraph = Paragraph::new(lines)
-        .block(block)
-        .scroll((app.ui.detail_scroll, 0));
+    let paragraph = Paragraph::new(lines).scroll((app.ui.detail_scroll, 0));
     frame.render_widget(paragraph, area);
 }
 
@@ -586,21 +790,6 @@ fn resolve_proxy_chain(
 /// Below this threshold, a compact text list is shown instead.
 const SPARKLINE_MIN_CONNECTIONS: usize = 3;
 
-fn push_field(lines: &mut Vec<Line<'static>>, label: &str, value: &str, max_value_width: usize) {
-    let display = if max_value_width > 0 {
-        super::truncate(value, max_value_width)
-    } else {
-        value.to_string()
-    };
-    lines.push(Line::from(vec![
-        Span::styled(
-            format!("{:<width$}", label, width = LABEL_WIDTH),
-            theme::muted(),
-        ),
-        Span::styled(display, theme::bold()),
-    ]));
-}
-
 /// Map metadata keys to human-readable labels.
 fn meta_label(key: &str) -> String {
     match key {
@@ -629,10 +818,6 @@ fn meta_label(key: &str) -> String {
             }
         }
     }
-}
-
-fn section_header(label: &str) -> Line<'static> {
-    Line::from(Span::styled(label.to_string(), theme::section_header()))
 }
 
 // Block sparkline using lower block elements (▁▂▃▄▅▆▇█).

@@ -503,7 +503,6 @@ fn apply_saved_sort(app: &mut App) {
     app.sort_mode = saved;
     app.group_by = group;
     app.view_mode = preferences::load_view_mode();
-    app.collapsed_groups = preferences::load_collapsed_groups();
     // Clear stale tag preference if the tag no longer exists in any host
     if app.clear_stale_group_tag() {
         if let Err(e) = preferences::save_group_by(&app.group_by) {

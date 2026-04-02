@@ -155,10 +155,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             vec![
                 Span::styled(" Enter", theme::primary_action()),
                 Span::styled(" run ", theme::muted()),
-                Span::styled("\u{2502} ", theme::muted()),
+                Span::raw("  "),
                 Span::styled("Tab", theme::accent_bold()),
                 Span::styled(" next ", theme::muted()),
-                Span::styled("\u{2502} ", theme::muted()),
+                Span::raw("  "),
                 Span::styled("Esc", theme::accent_bold()),
                 Span::styled(" cancel", theme::muted()),
             ],

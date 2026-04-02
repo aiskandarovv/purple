@@ -99,7 +99,7 @@ Save frequently used commands and run them on one host, a selection of hosts or 
 
 ### Remote file explorer
 
-Press `f` on any host to open a split-screen file explorer. Your local filesystem on the left, the remote server on the right. Navigate directories, select files and copy them between machines with `Enter`. Works through ProxyJump chains, password sources and active tunnels.
+Press `F` on any host to open a split-screen file explorer. Your local filesystem on the left, the remote server on the right. Navigate directories, select files and copy them between machines with `Enter`. Works through ProxyJump chains, password sources and active tunnels.
 
 ### SSH tunnel management
 

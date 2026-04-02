@@ -120,14 +120,14 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     if state.all_done {
         spans.push(Span::styled(" Esc", theme::accent_bold()));
         spans.push(Span::styled(" close ", theme::muted()));
-        spans.push(Span::styled("\u{2502} ", theme::muted()));
+        spans.push(Span::raw("  "));
         spans.push(Span::styled("c", theme::accent_bold()));
         spans.push(Span::styled(" copy ", theme::muted()));
     } else {
         spans.push(Span::styled(" Ctrl+C", theme::accent_bold()));
         spans.push(Span::styled(" cancel ", theme::muted()));
     }
-    spans.push(Span::styled("\u{2502} ", theme::muted()));
+    spans.push(Span::raw("  "));
     spans.push(Span::styled("j/k", theme::accent_bold()));
     spans.push(Span::styled(" scroll ", theme::muted()));
     spans.push(Span::styled("n/N", theme::accent_bold()));

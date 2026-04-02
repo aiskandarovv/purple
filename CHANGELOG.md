@@ -1,3 +1,22 @@
+## 2.25.0
+
+- Visual redesign with tab navigation, section cards and scoped search
+- Tab/Shift+Tab cycles through provider groups or tags. Esc resets to All
+- Search respects active tab: filters within the selected group only
+- Tag mode in navigation bar: when grouped by tag, top tags shown as tabs
+- Bordered host list and detail panel with section cards
+- Status indicators per host row: reachable, unreachable, checking
+- Green highlight for recent connections in Last column
+- Detail panel sections as visual cards with rounded borders
+- Last section stretches to fill panel height
+- Pattern match sections clearly labeled
+- All containers and tunnels shown (no more truncation)
+- Space-separated footer (cleaner look)
+- File explorer shortcut changed from f to F for consistency
+- Help screen updated with Tab/Shift+Tab, scoped search, aligned columns
+- Proxmox stopped VMs no longer marked stale. Stopped and no-IP VMs are included in sync with empty IP to prevent false stale detection
+- Collapsible groups removed; Tab/Shift+Tab tab navigation replaces Enter-to-collapse
+
 ## 2.24.0
 
 - Collapsible groups, Ctrl+A select all and smarter Proxmox OS detection

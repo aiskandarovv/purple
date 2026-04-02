@@ -44,8 +44,11 @@ pub fn brand_badge() -> Style {
 }
 
 /// Brand accent for dialog/popup titles.
+/// Removes DIM so border_style doesn't leak through ratatui's Style::patch().
 pub fn brand() -> Style {
-    Style::default().add_modifier(Modifier::BOLD)
+    Style::default()
+        .add_modifier(Modifier::BOLD)
+        .remove_modifier(Modifier::DIM)
 }
 
 /// Structural elements (overlay borders, tags).

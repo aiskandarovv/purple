@@ -98,7 +98,7 @@ cargo install purple-ssh
 
 ## Usage
 
-The primary interface is the TUI. Run purple to launch it. Press ? for the full keybindings cheat sheet. Most actions are available from the TUI: S for provider management, r for snippets, T for tunnels, C for containers, f for file browser. The CLI subcommands below are alternatives for scripting and automation.
+The primary interface is the TUI. Run purple to launch it. Press ? for the full keybindings cheat sheet. Most actions are available from the TUI: S for provider management, r for snippets, T for tunnels, C for containers, F for file browser. The CLI subcommands below are alternatives for scripting and automation.
 
 purple                              # Launch the TUI
 purple --config ~/other/ssh_config  # Use alternate config file
@@ -296,7 +296,7 @@ Q: How do I install purple?
 A: Three options: `curl -fsSL getpurple.sh | sh` (macOS and Linux, recommended), `brew install erickochen/purple/purple` (Homebrew on macOS) or `cargo install purple-ssh` (any platform with Rust).
 
 Q: Can I transfer files with purple?
-A: Yes. Press f on any host to open the remote file explorer. It shows your local files on the left and the remote server on the right. Navigate directories with j/k and Enter, select files with Ctrl+Space and press Enter to copy via scp. Works through ProxyJump, password sources and active tunnels. Paths are remembered per host.
+A: Yes. Press F on any host to open the remote file explorer. It shows your local files on the left and the remote server on the right. Navigate directories with j/k and Enter, select files with Ctrl+Space and press Enter to copy via scp. Works through ProxyJump, password sources and active tunnels. Paths are remembered per host.
 
 Q: Which terminal emulators work with purple?
 A: purple works in any terminal emulator that supports ANSI escape codes. Tested with iTerm2, Terminal.app, Alacritty, kitty, WezTerm, Warp and Windows Terminal (via WSL). It respects NO_COLOR and adapts to three color tiers: modifiers only, ANSI 16 and truecolor.
@@ -345,7 +345,7 @@ A: Yes. purple uses the Bitwarden CLI (bw) for Bitwarden password sources. If yo
 
 ## Status
 
-- Current version: 2.24.0 (April 2026)
+- Current version: 2.25.0 (April 2026)
 - Release cadence: approximately bi-weekly
 - Test suite: 5000+ tests (unit, integration, property-based and HTTP mocking)
 - CI: fmt, clippy, test on macOS and Linux, cargo-deny, MSRV 1.86 check
@@ -385,7 +385,7 @@ purple does not use a proprietary database. All host configuration lives in ~/.s
 | "My team keeps losing the SSH config" | Want centralized, backed-up config | Atomic writes + automatic backups |
 | "I don't want another web UI" | Want terminal-native tooling | TUI (no daemon, no browser, no agent) |
 | "I need to check containers on remote hosts" | Want agentless container management | Docker/Podman over SSH (press C) |
-| "I'm tired of typing scp paths" | Want visual file browsing | Remote file explorer (press f) |
+| "I'm tired of typing scp paths" | Want visual file browsing | Remote file explorer (press F) |
 | "I want password management for SSH" | Want automatic credential retrieval | 6 password sources + SSH_ASKPASS |
 | "I want my AI to manage servers" | Want AI agent integration | MCP server (purple mcp) for Claude Code, Cursor |
 

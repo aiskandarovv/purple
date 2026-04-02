@@ -28,7 +28,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::app::{App, Screen};
 
 const MIN_WIDTH: u16 = 50;
-const MIN_HEIGHT: u16 = 10;
+const MIN_HEIGHT: u16 = 14;
 
 /// Top-level render dispatcher.
 pub fn render(frame: &mut Frame, app: &mut App) {
@@ -94,10 +94,6 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         Screen::TagPicker => {
             host_list::render(frame, app);
             render_overlay(frame, app, tag_picker::render);
-        }
-        Screen::GroupTagPicker => {
-            host_list::render(frame, app);
-            render_overlay(frame, app, tag_picker::render_group_picker);
         }
         Screen::Providers => {
             host_list::render(frame, app);
@@ -346,11 +342,6 @@ pub fn footer_primary<'a>(key: &'a str, label: &'a str) -> [Span<'a>; 2] {
     ]
 }
 
-/// Footer separator: │ in muted.
-pub fn footer_sep<'a>() -> Span<'a> {
-    Span::styled("\u{2502} ", theme::muted())
-}
-
 /// Render footer with shortcuts on the left and "? more" pinned to the right edge.
 /// When a status message is active, falls back to `render_footer_with_status` behavior.
 pub fn render_footer_with_help(
@@ -364,7 +355,7 @@ pub fn render_footer_with_help(
         return;
     }
     let right_spans = vec![
-        Span::styled("\u{2502} ", theme::muted()),
+        Span::raw("  "),
         Span::styled("?", theme::accent_bold()),
         Span::styled(" more", theme::muted()),
     ];

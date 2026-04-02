@@ -219,13 +219,13 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // Footer
     let mut spans: Vec<Span<'_>> = Vec::new();
     let [k, l] = super::footer_action("s", " start ");
-    spans.extend([k, l, super::footer_sep()]);
+    spans.extend([k, l, Span::raw("  ")]);
     let [k, l] = super::footer_action("x", " stop ");
-    spans.extend([k, l, super::footer_sep()]);
+    spans.extend([k, l, Span::raw("  ")]);
     let [k, l] = super::footer_action("r", " restart ");
-    spans.extend([k, l, super::footer_sep()]);
+    spans.extend([k, l, Span::raw("  ")]);
     let [k, l] = super::footer_action("R", " refresh ");
-    spans.extend([k, l, super::footer_sep()]);
+    spans.extend([k, l, Span::raw("  ")]);
     let [k, l] = super::footer_action("Esc", " back");
     spans.extend([k, l]);
     super::render_footer_with_status(frame, chunks[footer_ci], spans, app);
@@ -251,7 +251,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 Line::from(vec![
                     Span::styled("    y", theme::danger()),
                     Span::styled(" yes ", theme::muted()),
-                    Span::styled("\u{2502} ", theme::muted()),
+                    Span::raw("  "),
                     Span::styled("Esc", theme::accent_bold()),
                     Span::styled(" no", theme::muted()),
                 ]),

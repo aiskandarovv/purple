@@ -79,7 +79,7 @@ pub fn render(frame: &mut Frame, app: &App, index: usize) {
         footer_spans.extend([
             Span::styled("  e", theme::accent_bold()),
             Span::styled(" edit ", theme::muted()),
-            Span::styled("\u{2502} ", theme::muted()),
+            Span::raw("  "),
         ]);
     } else {
         footer_spans.push(Span::raw("  "));
@@ -87,10 +87,10 @@ pub fn render(frame: &mut Frame, app: &App, index: usize) {
     footer_spans.extend([
         Span::styled("T", theme::accent_bold()),
         Span::styled(" tunnels ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
+        Span::raw("  "),
         Span::styled("r", theme::accent_bold()),
         Span::styled(" snippet ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
+        Span::raw("  "),
         Span::styled("Esc", theme::accent_bold()),
         Span::styled(" back", theme::muted()),
     ]);

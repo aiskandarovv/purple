@@ -84,7 +84,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             Span::styled(" Discard changes? ", theme::error()),
             Span::styled("y", theme::accent_bold()),
             Span::styled(" yes ", theme::muted()),
-            Span::styled("\u{2502} ", theme::muted()),
+            Span::raw("  "),
             Span::styled("Esc", theme::accent_bold()),
             Span::styled(" no", theme::muted()),
         ]
@@ -92,12 +92,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         vec![
             Span::styled(" Enter", theme::primary_action()),
             Span::styled(" save ", theme::muted()),
-            Span::styled("\u{2502} ", theme::muted()),
+            Span::raw("  "),
             Span::styled("Tab", theme::accent_bold()),
             Span::styled(" next ", theme::muted()),
             Span::styled("Space", theme::accent_bold()),
             Span::styled(" type ", theme::muted()),
-            Span::styled("\u{2502} ", theme::muted()),
+            Span::raw("  "),
             Span::styled("Esc", theme::accent_bold()),
             Span::styled(" cancel", theme::muted()),
         ]

@@ -30,7 +30,6 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             Screen::KeyDetail { .. } => key_detail_lines(),
             Screen::HostDetail { .. } => host_detail_lines(),
             Screen::TagPicker => tag_picker_lines(),
-            Screen::GroupTagPicker => group_tag_picker_lines(),
             _ => vec![],
         };
         (lines, vec![])
@@ -126,7 +125,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     if can_scroll {
         let [k, l] = super::footer_action(" j/k", " scroll ");
         spans.extend([k, l]);
-        spans.push(super::footer_sep());
+        spans.push(Span::raw("  "));
     } else {
         spans.push(Span::raw(" "));
     }
@@ -148,7 +147,6 @@ fn context_title(screen: &Screen) -> &'static str {
         Screen::KeyDetail { .. } => "Key Detail",
         Screen::HostDetail { .. } => "All Directives",
         Screen::TagPicker => "Tags",
-        Screen::GroupTagPicker => "Group by Tag",
         _ => "Help",
     }
 }
@@ -176,61 +174,104 @@ fn blank() -> Line<'static> {
 }
 
 fn host_list_columns() -> (Vec<Line<'static>>, Vec<Line<'static>>) {
+    // Both columns are aligned: section headers at matching heights.
+    // Each section pair has matching blank/header lines to stay in sync.
     let mut col1 = vec![blank()];
-    col1.extend(section_header("NAVIGATE"));
-    col1.push(help_line("j/k", "up / down"));
-    col1.push(help_line("PgDn/PgUp", "page down / up"));
-    col1.push(help_line("Enter", "connect (on group: collapse)"));
-    col1.push(help_line("/", "search"));
-    col1.push(help_line("#", "filter by tag"));
-    col1.push(blank());
-    col1.extend(section_header("VIEW"));
-    col1.push(help_line("v", "detail panel"));
-    col1.push(help_line("s", "cycle sort"));
-    col1.push(help_line("g", "group (off/provider/tag)"));
-    col1.push(help_line("[ / ]", "scroll detail"));
-    col1.push(help_line("tag:name", "fuzzy tag filter"));
-    col1.push(help_line("tag=name", "exact tag filter"));
-    col1.push(blank());
-    col1.extend(section_header("FORMS"));
-    col1.push(help_line("Tab", "next field"));
-    col1.push(help_line("Shift+Tab", "prev field"));
-    col1.push(help_line("Enter", "save / picker"));
-    col1.push(help_line("Space", "toggle / cycle"));
-    col1.push(help_line("^D", "set default"));
-    col1.push(help_line("Esc", "cancel"));
-    col1.push(blank());
-    col1.push(help_line("y", "copy ssh command"));
-    col1.push(help_line("x", "copy config block"));
-    col1.push(help_line("X", "purge stale"));
-
     let mut col2 = vec![blank()];
+
+    // Row 1: NAVIGATE / MANAGE HOSTS
+    col1.extend(section_header("NAVIGATE"));
     col2.extend(section_header("MANAGE HOSTS"));
+
+    col1.push(help_line("j/k", "up / down"));
     col2.push(help_line("a", "add host"));
+
+    col1.push(help_line("PgDn/PgUp", "page down / up"));
     col2.push(help_line("A", "add pattern"));
+
+    col1.push(help_line("Enter", "connect"));
     col2.push(help_line("e", "edit"));
+
+    col1.push(help_line("Tab", "next group"));
     col2.push(help_line("d", "del"));
+
+    col1.push(help_line("Shift+Tab", "prev group"));
     col2.push(help_line("c", "clone"));
+
+    col1.push(help_line("/", "search (scoped)"));
     col2.push(help_line("u", "undo del"));
+
+    col1.push(help_line("#", "filter by tag"));
     col2.push(help_line("t", "tag (inline)"));
+
+    col1.push(help_line("Esc", "clear filter / quit"));
     col2.push(help_line("i", "all directives"));
+
+    // Row 2: VIEW / CONNECT AND RUN
+    col1.push(blank());
     col2.push(blank());
+
+    col1.extend(section_header("VIEW"));
     col2.extend(section_header("CONNECT AND RUN"));
+
+    col1.push(help_line("v", "detail panel"));
     col2.push(help_line("^Space", "multi-select"));
+
+    col1.push(help_line("s", "cycle sort"));
     col2.push(help_line("^A", "select all / none"));
+
+    col1.push(help_line("g", "group (off/provider/tag)"));
     col2.push(help_line("r", "run snippet"));
+
+    col1.push(help_line("[ / ]", "scroll detail"));
     col2.push(help_line("R", "run on all visible"));
+
+    col1.push(help_line("tag:name", "fuzzy tag filter"));
     col2.push(help_line("p/P", "ping / all"));
+
+    col1.push(help_line("tag=name", "exact tag filter"));
     col2.push(blank());
+
+    // Row 3: CLIPBOARD / TOOLS
+    col1.push(blank());
+    col2.push(blank());
+
+    col1.extend(section_header("CLIPBOARD"));
     col2.extend(section_header("TOOLS"));
-    col2.push(help_line("f", "file explorer"));
+
+    col1.push(help_line("y", "copy ssh command"));
+    col2.push(help_line("F", "file explorer"));
+
+    col1.push(help_line("x", "copy config block"));
     col2.push(help_line("T", "tunnels"));
+
+    col1.push(help_line("X", "purge stale"));
     col2.push(help_line("C", "containers"));
+
+    col1.push(blank());
     col2.push(help_line("K", "SSH keys"));
+
+    // Row 4: FORMS / continued TOOLS + quit
+    col1.extend(section_header("FORMS"));
     col2.push(help_line("S", "providers"));
+
+    col1.push(help_line("Tab", "next field"));
     col2.push(help_line("I", "import known_hosts"));
+
+    col1.push(help_line("Shift+Tab", "prev field"));
     col2.push(blank());
+
+    col1.push(help_line("Enter", "save / picker"));
     col2.push(help_line("q/Esc", "quit"));
+
+    col1.push(help_line("Space", "toggle / cycle"));
+    col2.push(blank());
+
+    col1.push(help_line("^D", "set default"));
+    col2.push(blank());
+
+    col1.push(help_line("Esc", "cancel"));
+    col2.push(blank());
 
     (col1, col2)
 }
@@ -330,15 +371,6 @@ fn tag_picker_lines() -> Vec<Line<'static>> {
     lines.push(help_line("Enter", "filter by tag"));
     lines.push(help_line("PgDn/PgUp", "page down / up"));
     lines.push(help_line("q/Esc/#", "close"));
-    lines
-}
-
-fn group_tag_picker_lines() -> Vec<Line<'static>> {
-    let mut lines = vec![blank()];
-    lines.push(help_line("j/k", "up / down"));
-    lines.push(help_line("Enter", "group by tag"));
-    lines.push(help_line("PgDn/PgUp", "page down / up"));
-    lines.push(help_line("q/Esc", "cancel"));
     lines
 }
 
@@ -541,7 +573,7 @@ mod tests {
         for desc in &[
             "up / down",
             "page down / up",
-            "connect (on group: collapse)",
+            "connect",
             "search",
             "filter by tag",
             "detail panel",

@@ -101,7 +101,6 @@ pub fn handle_key_event(
         Screen::KeyDetail { .. } => handle_key_detail(app, key),
         Screen::HostDetail { .. } => handle_host_detail(app, key),
         Screen::TagPicker => handle_tag_picker_screen(app, key),
-        Screen::GroupTagPicker => handle_group_tag_picker(app, key),
         Screen::Providers => handle_provider_list(app, key, events_tx),
         Screen::ProviderForm { .. } => handle_provider_form(app, key, events_tx),
         Screen::TunnelList { .. } => handle_tunnel_list(app, key),
@@ -304,14 +303,27 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
     }
 
     match key.code {
-        KeyCode::Char('q') | KeyCode::Esc => {
+        KeyCode::Char('q') => {
             app.running = false;
         }
+        KeyCode::Esc => {
+            if app.group_filter.is_some() {
+                app.clear_group_filter();
+            } else {
+                app.running = false;
+            }
+        }
         KeyCode::Char('j') | KeyCode::Down => {
-            app.select_next();
+            app.select_next_skipping_headers();
         }
         KeyCode::Char('k') | KeyCode::Up => {
-            app.select_prev();
+            app.select_prev_skipping_headers();
+        }
+        KeyCode::Tab => {
+            app.next_group_tab();
+        }
+        KeyCode::BackTab => {
+            app.prev_group_tab();
         }
         KeyCode::PageDown => {
             app.page_down_host();
@@ -320,30 +332,6 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
             app.page_up_host();
         }
         KeyCode::Enter => {
-            // Toggle collapse if on a group header
-            if let Some(selected) = app.ui.list_state.selected() {
-                if let Some(crate::app::HostListItem::GroupHeader(text)) =
-                    app.display_list.get(selected)
-                {
-                    let text = text.clone();
-                    if app.collapsed_groups.contains(&text) {
-                        app.collapsed_groups.remove(&text);
-                    } else {
-                        app.collapsed_groups.insert(text.clone());
-                    }
-                    app.apply_sort();
-                    // Restore selection to the same group header
-                    if let Some(pos) = app.display_list.iter().position(|item| {
-                        matches!(item, crate::app::HostListItem::GroupHeader(t) if *t == text)
-                    }) {
-                        app.ui.list_state.select(Some(pos));
-                    }
-                    if let Err(e) = preferences::save_collapsed_groups(&app.collapsed_groups) {
-                        app.set_status(format!("Collapse save failed: {}", e), true);
-                    }
-                    return;
-                }
-            }
             if app.is_pattern_selected() {
                 return;
             }
@@ -614,10 +602,7 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
             match &app.group_by {
                 GroupBy::None => {
                     app.group_by = GroupBy::Provider;
-                    app.collapsed_groups.clear();
-                    if let Err(e) = preferences::save_collapsed_groups(&app.collapsed_groups) {
-                        app.set_status(format!("Collapse save failed: {}", e), true);
-                    }
+                    app.group_filter = None;
                     app.apply_sort();
                     if let Err(e) = preferences::save_group_by(&app.group_by) {
                         app.set_status(
@@ -644,10 +629,7 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
                     };
                     if user_tags.is_empty() {
                         app.group_by = GroupBy::None;
-                        app.collapsed_groups.clear();
-                        if let Err(e) = preferences::save_collapsed_groups(&app.collapsed_groups) {
-                            app.set_status(format!("Collapse save failed: {}", e), true);
-                        }
+                        app.group_filter = None;
                         app.apply_sort();
                         if let Err(e) = preferences::save_group_by(&app.group_by) {
                             app.set_status(format!("Ungrouped. (save failed: {})", e), true);
@@ -655,19 +637,21 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
                             app.set_status("Ungrouped.", false);
                         }
                     } else {
-                        app.collapsed_groups.clear();
-                        app.tag_list = user_tags;
-                        app.ui.tag_picker_state = ratatui::widgets::ListState::default();
-                        app.ui.tag_picker_state.select(Some(0));
-                        app.screen = Screen::GroupTagPicker;
+                        // Switch to tag mode directly. The nav bar shows all
+                        // tags as tabs, no picker needed.
+                        app.group_by = GroupBy::Tag(String::new());
+                        app.group_filter = None;
+                        app.apply_sort();
+                        if let Err(e) = preferences::save_group_by(&app.group_by) {
+                            app.set_status(format!("Grouped by tag. (save failed: {})", e), true);
+                        } else {
+                            app.set_status("Grouped by tag.", false);
+                        }
                     }
                 }
                 GroupBy::Tag(_) => {
                     app.group_by = GroupBy::None;
-                    app.collapsed_groups.clear();
-                    if let Err(e) = preferences::save_collapsed_groups(&app.collapsed_groups) {
-                        app.set_status(format!("Collapse save failed: {}", e), true);
-                    }
+                    app.group_filter = None;
                     app.apply_sort();
                     if let Err(e) = preferences::save_group_by(&app.group_by) {
                         app.set_status(format!("Ungrouped. (save failed: {})", e), true);
@@ -862,7 +846,7 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
                 open_snippet_picker(app, aliases);
             }
         }
-        KeyCode::Char('f') => {
+        KeyCode::Char('F') => {
             if app.is_pattern_selected() {
                 return;
             }
@@ -1726,66 +1710,6 @@ fn handle_tag_picker_screen(app: &mut App, key: KeyEvent) {
                     app.apply_filter();
                 }
             }
-        }
-        _ => {}
-    }
-}
-
-fn handle_group_tag_picker(app: &mut App, key: KeyEvent) {
-    match key.code {
-        KeyCode::Esc | KeyCode::Char('q') => {
-            app.group_by = crate::app::GroupBy::None;
-            app.collapsed_groups.clear();
-            if let Err(e) = preferences::save_collapsed_groups(&app.collapsed_groups) {
-                app.set_status(format!("Collapse save failed: {}", e), true);
-            }
-            app.screen = Screen::HostList;
-            app.apply_sort();
-            if let Err(e) = preferences::save_group_by(&app.group_by) {
-                app.set_status(format!("Ungrouped. (save failed: {})", e), true);
-            } else {
-                app.set_status("Ungrouped.", false);
-            }
-        }
-        KeyCode::Char('j') | KeyCode::Down => {
-            app.select_next_tag();
-        }
-        KeyCode::Char('k') | KeyCode::Up => {
-            app.select_prev_tag();
-        }
-        KeyCode::PageDown => {
-            crate::app::page_down(&mut app.ui.tag_picker_state, app.tag_list.len(), 10);
-        }
-        KeyCode::PageUp => {
-            crate::app::page_up(&mut app.ui.tag_picker_state, app.tag_list.len(), 10);
-        }
-        KeyCode::Enter => {
-            if let Some(index) = app.ui.tag_picker_state.selected() {
-                if let Some(tag) = app.tag_list.get(index) {
-                    let tag = tag.clone();
-                    app.group_by = crate::app::GroupBy::Tag(tag);
-                    app.collapsed_groups.clear();
-                    if let Err(e) = preferences::save_collapsed_groups(&app.collapsed_groups) {
-                        app.set_status(format!("Collapse save failed: {}", e), true);
-                    }
-                    app.screen = Screen::HostList;
-                    app.apply_sort();
-                    if let Err(e) = preferences::save_group_by(&app.group_by) {
-                        app.set_status(
-                            format!("Grouped by {}. (save failed: {})", app.group_by.label(), e),
-                            true,
-                        );
-                    } else {
-                        app.set_status(format!("Grouped by {}.", app.group_by.label()), false);
-                    }
-                }
-            }
-        }
-        KeyCode::Char('?') => {
-            let old = std::mem::replace(&mut app.screen, Screen::HostList);
-            app.screen = Screen::Help {
-                return_screen: Box::new(old),
-            };
         }
         _ => {}
     }
@@ -9556,7 +9480,7 @@ Host gamma
     }
 
     #[test]
-    fn g_key_provider_to_group_tag_picker_when_tags_exist() {
+    fn g_key_provider_to_tag_mode_when_tags_exist() {
         let content = "\
 Host web1
   HostName 1.1.1.1
@@ -9567,14 +9491,13 @@ Host web1
         let (tx, _rx) = mpsc::channel();
         let _ = handle_key_event(&mut app, key(KeyCode::Char('g')), &tx);
         assert!(
-            matches!(app.screen, Screen::GroupTagPicker),
-            "expected GroupTagPicker, got {:?}",
-            std::mem::discriminant(&app.screen)
+            matches!(app.group_by, crate::app::GroupBy::Tag(_)),
+            "expected Tag mode, got {:?}",
+            app.group_by
         );
-        assert!(!app.tag_list.is_empty(), "tag_list should be populated");
         assert!(
-            app.tag_list.contains(&"production".to_string()),
-            "tag_list should contain 'production'"
+            matches!(app.screen, Screen::HostList),
+            "should stay on HostList, not open picker"
         );
     }
 
@@ -9614,8 +9537,8 @@ Host web1
     }
 
     #[test]
-    fn g_key_full_cycle_with_tags_and_enter() {
-        // None → Provider
+    fn g_key_full_cycle_with_tags() {
+        // None → Provider → Tag → None
         let content = "\
 Host web1
   HostName 1.1.1.1
@@ -9630,65 +9553,18 @@ Host web1
         let _ = handle_key_event(&mut app, key(KeyCode::Char('g')), &tx);
         assert_eq!(app.group_by, crate::app::GroupBy::Provider);
 
-        // Provider → GroupTagPicker (tags exist)
+        // Provider → Tag (direct, no picker)
         let _ = handle_key_event(&mut app, key(KeyCode::Char('g')), &tx);
-        assert!(matches!(app.screen, Screen::GroupTagPicker));
-
-        // Select first tag with Enter → Tag("production")
-        app.ui.tag_picker_state.select(Some(0));
-        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
-        assert_eq!(
-            app.group_by,
-            crate::app::GroupBy::Tag("production".to_string())
+        assert!(
+            matches!(app.group_by, crate::app::GroupBy::Tag(_)),
+            "expected Tag mode, got {:?}",
+            app.group_by
         );
         assert!(matches!(app.screen, Screen::HostList));
 
         // Tag → None
         let _ = handle_key_event(&mut app, key(KeyCode::Char('g')), &tx);
         assert_eq!(app.group_by, crate::app::GroupBy::None);
-    }
-
-    #[test]
-    fn esc_from_group_tag_picker_resets_to_none() {
-        let content = "\
-Host web1
-  HostName 1.1.1.1
-  # purple:tags production
-";
-        let mut app = make_app(content);
-        app.group_by = crate::app::GroupBy::Provider;
-        app.screen = Screen::GroupTagPicker;
-        app.tag_list = vec!["production".to_string()];
-
-        let (tx, _rx) = mpsc::channel();
-        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
-
-        assert_eq!(app.group_by, crate::app::GroupBy::None);
-        assert!(matches!(app.screen, Screen::HostList));
-    }
-
-    #[test]
-    fn g_key_cycle_no_tags_stays_none_provider_none() {
-        // With no user tags: None → Provider → None (skips GroupTagPicker)
-        let content = "\
-Host db1
-  HostName 10.0.0.1
-  # purple:provider digitalocean:99
-";
-        let mut app = make_app(content);
-        let (tx, _rx) = mpsc::channel();
-
-        // Step 1: None → Provider
-        let _ = handle_key_event(&mut app, key(KeyCode::Char('g')), &tx);
-        assert_eq!(app.group_by, crate::app::GroupBy::Provider);
-
-        // Step 2: Provider → None (no user tags, skips picker)
-        let _ = handle_key_event(&mut app, key(KeyCode::Char('g')), &tx);
-        assert_eq!(app.group_by, crate::app::GroupBy::None);
-        assert!(
-            !matches!(app.screen, Screen::GroupTagPicker),
-            "should not open GroupTagPicker when no user tags"
-        );
     }
 
     #[test]
@@ -9704,37 +9580,14 @@ Host db1
         assert!(matches!(app.screen, Screen::HostList));
     }
 
-    #[test]
-    fn help_from_group_tag_picker_returns_to_picker() {
-        let (tx, _rx) = mpsc::channel();
-        let mut app = make_app("Host web1\n  HostName 1.1.1.1\n  # purple:tags prod\n");
-        app.tag_list = vec!["prod".to_string()];
-        app.ui.tag_picker_state = ratatui::widgets::ListState::default();
-        app.ui.tag_picker_state.select(Some(0));
-        app.screen = Screen::GroupTagPicker;
-
-        // Press ? to open help
-        let _ = handle_key_event(&mut app, key(KeyCode::Char('?')), &tx);
-        match &app.screen {
-            Screen::Help { return_screen } => {
-                assert!(matches!(**return_screen, Screen::GroupTagPicker));
-            }
-            other => panic!("expected Help, got {:?}", std::mem::discriminant(other)),
-        }
-
-        // Press Esc to close help — should return to GroupTagPicker
-        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
-        assert!(matches!(app.screen, Screen::GroupTagPicker));
-    }
-
     // =========================================================================
     // Group header collapse tests
     // =========================================================================
 
     #[test]
-    fn test_enter_on_group_header_toggles_collapse() {
-        // Create app with grouped hosts: one with production tag, one without.
-        // GroupBy::Tag puts untagged hosts first, then the group header, then tagged hosts.
+    fn test_enter_on_group_header_does_not_connect() {
+        // Enter on a group header should not crash or connect — group headers are
+        // no longer collapsible. Navigation happens via Tab (group_filter).
         let mut app = make_app(
             "Host web1\n  HostName 1.1.1.1\n  # purple:tags production\n\nHost web2\n  HostName 2.2.2.2\n  # purple:tags staging\n",
         );
@@ -9742,7 +9595,7 @@ Host db1
         app.sort_mode = crate::app::SortMode::AlphaAlias;
         app.apply_sort();
 
-        // Find the group header position (untagged hosts come first, then header)
+        // Find the group header position
         let header_pos = app
             .display_list
             .iter()
@@ -9751,27 +9604,15 @@ Host db1
             })
             .expect("should have a production group header");
         app.ui.list_state.select(Some(header_pos));
-        assert!(matches!(
-            app.display_list.get(header_pos),
-            Some(crate::app::HostListItem::GroupHeader(_))
-        ));
 
-        // Press Enter to collapse
+        // Press Enter — should not panic and group_filter should remain None
         let (tx, _rx) = mpsc::channel();
         handle_key_event(&mut app, key(KeyCode::Enter), &tx).unwrap();
 
-        // Group should be collapsed
-        assert!(app.collapsed_groups.contains("production"));
-
-        // Selection should still be on the group header
-        let sel = app.ui.list_state.selected().unwrap();
         assert!(
-            matches!(app.display_list.get(sel), Some(crate::app::HostListItem::GroupHeader(t)) if t == "production")
+            app.group_filter.is_none(),
+            "group_filter should not be set by Enter on header"
         );
-
-        // Press Enter again to expand
-        handle_key_event(&mut app, key(KeyCode::Enter), &tx).unwrap();
-        assert!(!app.collapsed_groups.contains("production"));
     }
 
     // =========================================================================
@@ -9818,6 +9659,121 @@ Host db1
         // Press Ctrl+A again to deselect
         handle_key_event(&mut app, ctrl_key('a'), &tx).unwrap();
         assert!(app.multi_select.is_empty());
+    }
+
+    // =========================================================================
+    // Tab / Shift+Tab / Esc group-filter tests (HostList screen)
+    // =========================================================================
+
+    /// Build an app with two provider-tagged hosts so that group_by=Provider
+    /// produces a non-empty group_tab_order after apply_sort().
+    fn make_provider_grouped_app() -> App {
+        let content = "\
+Host aws-web1
+  HostName 1.1.1.1
+  # purple:provider aws:i-123
+
+Host do-web2
+  HostName 2.2.2.2
+  # purple:provider digitalocean:abc
+";
+        let mut app = make_app(content);
+        app.group_by = crate::app::GroupBy::Provider;
+        app.apply_sort();
+        app
+    }
+
+    #[test]
+    fn tab_on_host_list_filters_to_first_group() {
+        let mut app = make_provider_grouped_app();
+        assert!(
+            !app.group_tab_order.is_empty(),
+            "expected non-empty group_tab_order after apply_sort with Provider grouping"
+        );
+        assert!(app.group_filter.is_none(), "filter should start as None");
+
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
+
+        assert!(
+            app.group_filter.is_some(),
+            "group_filter should be Some after Tab"
+        );
+        assert_eq!(
+            app.group_filter.as_deref(),
+            Some(app.group_tab_order[0].as_str())
+        );
+        assert!(matches!(app.screen, Screen::HostList));
+    }
+
+    #[test]
+    fn shift_tab_on_host_list_filters_to_last_group() {
+        let mut app = make_provider_grouped_app();
+        let last_group = app.group_tab_order.last().unwrap().clone();
+        assert!(app.group_filter.is_none(), "filter should start as None");
+
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+            &tx,
+        );
+
+        assert_eq!(
+            app.group_filter.as_deref(),
+            Some(last_group.as_str()),
+            "BackTab from All should land on the last group"
+        );
+        assert!(matches!(app.screen, Screen::HostList));
+    }
+
+    #[test]
+    fn tab_cycles_back_to_all() {
+        let mut app = make_provider_grouped_app();
+        // There are exactly 2 groups (aws, digitalocean). Set filter to the last one.
+        let last_group = app.group_tab_order.last().unwrap().clone();
+        app.group_filter = Some(last_group);
+        app.apply_sort();
+
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
+
+        assert!(
+            app.group_filter.is_none(),
+            "Tab past the last group should wrap back to All (None)"
+        );
+        assert!(matches!(app.screen, Screen::HostList));
+    }
+
+    #[test]
+    fn esc_clears_group_filter() {
+        let mut app = make_provider_grouped_app();
+        let first_group = app.group_tab_order[0].clone();
+        app.group_filter = Some(first_group);
+        app.apply_sort();
+        assert!(app.running);
+
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+
+        assert!(
+            app.group_filter.is_none(),
+            "Esc with active group_filter should clear it"
+        );
+        assert!(app.running, "Esc with active filter should NOT quit");
+        assert!(matches!(app.screen, Screen::HostList));
+    }
+
+    #[test]
+    fn esc_quits_when_no_filter() {
+        let mut app = make_app("Host test\n  HostName test.com\n");
+        assert!(app.group_filter.is_none());
+        assert!(app.running);
+
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+
+        assert!(!app.running, "Esc with no group_filter should quit");
     }
 
     #[test]

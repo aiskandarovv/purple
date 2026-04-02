@@ -154,6 +154,7 @@ struct LxcInterface {
 }
 
 /// Outcome of resolving an IP for a single VM/container.
+#[derive(Debug)]
 enum ResolveOutcome {
     /// Successfully resolved an IP address (ip, optional ostype).
     Resolved(String, Option<String>),
@@ -598,12 +599,15 @@ impl Provider for Proxmox {
                     (ip, ostype)
                 }
                 ResolveOutcome::Stopped => {
+                    // Include stopped VMs with empty IP so they stay in
+                    // remote_ids and don't get marked stale. The sync engine
+                    // skips config updates for empty IPs.
                     skipped_stopped += 1;
-                    continue;
+                    (String::new(), None)
                 }
                 ResolveOutcome::NoIp => {
                     skipped_no_ip += 1;
-                    continue;
+                    (String::new(), None)
                 }
                 ResolveOutcome::Failed => {
                     fetch_failures += 1;
@@ -3981,5 +3985,68 @@ mod tests {
             "Debian GNU/Linux 13 (trixie)"
         );
         assert_eq!(map_qemu_ostype("Ubuntu 24.04.1 LTS"), "Ubuntu 24.04.1 LTS");
+    }
+
+    // =========================================================================
+    // Stopped VM inclusion test
+    // =========================================================================
+
+    #[test]
+    fn test_stopped_vm_included_with_empty_ip() {
+        // A stopped QEMU VM must produce ResolveOutcome::Stopped, which the main
+        // loop maps to an empty IP string. This keeps the VM in remote_ids so
+        // the sync engine does not mark it stale while it is powered off.
+        let mut server = mockito::Server::new();
+
+        // resolve_qemu_ip fetches the VM config first, then checks the status.
+        // Return a minimal config (no ipconfig directives) so the code falls
+        // through to the status check and returns Stopped.
+        let config_mock = server
+            .mock("GET", "/api2/json/nodes/pve1/qemu/101/config")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"data": {"ostype": "l26"}}"#)
+            .create();
+
+        let proxmox = Proxmox {
+            base_url: server.url(),
+            verify_tls: false,
+        };
+
+        let agent = super::super::http_agent();
+        let resource = ClusterResource {
+            resource_type: "qemu".to_string(),
+            vmid: 101,
+            name: "stopped-vm".to_string(),
+            node: "pve1".to_string(),
+            status: "stopped".to_string(),
+            template: 0,
+            tags: None,
+            ip: None,
+            maxcpu: None,
+            maxmem: None,
+        };
+
+        let base = server.url();
+        let auth = "PVEAPIToken=user@pam!tok=secret";
+
+        let outcome = proxmox.resolve_qemu_ip(&agent, &base, auth, &resource);
+        assert!(
+            matches!(outcome, ResolveOutcome::Stopped),
+            "stopped QEMU VM should produce ResolveOutcome::Stopped, got {:?}",
+            outcome
+        );
+
+        // Confirm the main loop's mapping: Stopped -> empty IP (not skipped).
+        let (ip, _ostype): (String, Option<String>) = match outcome {
+            ResolveOutcome::Stopped => (String::new(), None),
+            other => panic!("unexpected outcome: {:?}", other),
+        };
+        assert!(
+            ip.is_empty(),
+            "stopped VM should produce an empty IP string so it is not marked stale"
+        );
+
+        config_mock.assert();
     }
 }

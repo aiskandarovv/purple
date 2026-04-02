@@ -2,11 +2,11 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, List, ListItem, Paragraph};
+use ratatui::widgets::{Block, BorderType, List, ListItem, Paragraph, Tabs};
 use unicode_width::UnicodeWidthStr;
 
 use super::theme;
-use crate::app::{self, App, HostListItem, PingStatus, ViewMode};
+use crate::app::{self, App, GroupBy, HostListItem, PingStatus, ViewMode};
 use crate::ssh_config::model::ConfigElement;
 
 /// Minimum terminal width to show the detail panel in detailed view mode.
@@ -135,8 +135,8 @@ impl Columns {
                 w + gaps
             };
 
-        // Left cluster: highlight_symbol(1) + marker + NAME + gap + HOST
-        let left = MARKER_WIDTH + 1 + alias + gap + host;
+        // Left cluster: highlight_symbol(1) + marker + status(2) + NAME + gap + HOST
+        let left = MARKER_WIDTH + 1 + 2 + alias + gap + host;
 
         // Total with minimum flex_gap = gap
         let mut rw = right_cluster(tags, tunnel, auth, show_ping, history);
@@ -165,14 +165,14 @@ impl Columns {
         }
 
         // Still too wide: shrink HOST
-        let needed = MARKER_WIDTH + 1 + alias + gap + host + gap + rw;
+        let needed = MARKER_WIDTH + 1 + 2 + alias + gap + host + gap + rw;
         if needed > content {
             host = host.saturating_sub(needed - content);
         }
         host = host.max(HOST_MIN);
 
         // Flex gap: remaining space between left and right clusters
-        let left_final = MARKER_WIDTH + 1 + alias + gap + host;
+        let left_final = MARKER_WIDTH + 1 + 2 + alias + gap + host;
         let flex_gap = if rw > 0 {
             content.saturating_sub(left_final + rw)
         } else {
@@ -298,26 +298,34 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     let is_searching = app.search.query.is_some();
     let is_tagging = app.tag_input.is_some();
+    // Group bar: bordered block with tabs (top + content + bottom = 3 rows).
+    // Only shown when grouping is active and there are groups to display.
+    let show_group_bar = !matches!(app.group_by, GroupBy::None);
+    let group_bar_height: u16 = if show_group_bar { 3 } else { 0 };
 
-    // Layout: host list + optional input bar + spacer + footer/status
+    // Layout: optional group bar + host list + optional input bar + footer/status
     let chunks = if is_searching || is_tagging {
         Layout::vertical([
-            Constraint::Min(5),    // Host list (maximized)
-            Constraint::Length(1), // Search/tag bar
-            Constraint::Length(1), // Spacer
-            Constraint::Length(1), // Footer or status message
+            Constraint::Length(group_bar_height), // Group bar (0 when hidden)
+            Constraint::Min(5),                   // Host list (maximized)
+            Constraint::Length(1),                // Search/tag bar
+            Constraint::Length(1),                // Footer or status message
         ])
         .split(area)
     } else {
         Layout::vertical([
-            Constraint::Min(5),    // Host list (maximized)
-            Constraint::Length(1), // Spacer
-            Constraint::Length(1), // Footer or status message
+            Constraint::Length(group_bar_height), // Group bar (0 when hidden)
+            Constraint::Min(5),                   // Host list (maximized)
+            Constraint::Length(1),                // Footer or status message
         ])
         .split(area)
     };
 
-    let content_area = chunks[0];
+    if show_group_bar {
+        render_group_bar(frame, app, chunks[0]);
+    }
+
+    let content_area = chunks[1];
     let target_detail =
         app.view_mode == ViewMode::Detailed && content_area.width >= DETAIL_MIN_WIDTH;
     let full_detail_width = if content_area.width >= 140 {
@@ -355,21 +363,23 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     if is_searching {
         render_search_list(frame, app, list_area);
-        render_search_bar(frame, app, chunks[1]);
+        render_search_bar(frame, app, chunks[2]);
         super::render_footer_with_status(frame, chunks[3], search_footer_spans(), app);
     } else if is_tagging {
         render_display_list(frame, app, list_area);
-        render_tag_bar(frame, app, chunks[1]);
+        render_tag_bar(frame, app, chunks[2]);
         super::render_footer_with_status(frame, chunks[3], tag_footer_spans(), app);
     } else {
         render_display_list(frame, app, list_area);
+        let is_filtered = app.group_filter.is_some();
         let spans = if app.is_pattern_selected() {
-            pattern_footer_spans(target_detail)
+            pattern_footer_spans(target_detail, is_filtered)
         } else {
             footer_spans(
                 target_detail,
                 app.multi_select.len(),
                 app.hosts.iter().filter(|h| h.stale.is_some()).count(),
+                is_filtered,
             )
         };
         super::render_footer_with_help(frame, chunks[2], spans, app);
@@ -388,44 +398,100 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 }
 
-fn render_display_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
-    // Build multi-span title: brand badge + position counter
-    let host_count = app.hosts.len() + app.patterns.len();
-    let title = if host_count == 0 {
-        Line::from(Span::styled(" purple. ", theme::brand_badge()))
-    } else {
-        let pos = if let Some(sel) = app.ui.list_state.selected() {
-            app.display_list
-                .get(..=sel)
-                .map(|slice| {
-                    slice
-                        .iter()
-                        .filter(|item| {
-                            matches!(
-                                item,
-                                HostListItem::Host { .. } | HostListItem::Pattern { .. }
-                            )
-                        })
-                        .count()
-                })
-                .unwrap_or(0)
-        } else {
-            0
-        };
-        let mut title_spans = vec![
-            Span::styled(" purple. ", theme::brand_badge()),
-            Span::raw(format!(" {}/{} ", pos, host_count)),
-        ];
-        if app.tag_input.is_some() {
-            title_spans.push(Span::styled(" TAGGING ", theme::brand_badge()));
-        } else if !app.multi_select.is_empty() {
-            title_spans.push(Span::styled(
-                format!(" {} SELECTED ", app.multi_select.len()),
-                theme::brand_badge(),
-            ));
-        }
-        Line::from(title_spans)
+fn render_group_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+    let total = app.hosts.len() + app.patterns.len();
+
+    let titles: Vec<Line> = match &app.group_by {
+        GroupBy::Tag(_) => std::iter::once(Line::from(vec![
+            Span::styled(" All ", theme::bold()),
+            Span::styled(format!("({})", total), theme::muted()),
+        ]))
+        .chain(app.group_tab_order.iter().map(|tag| {
+            let count = app
+                .group_host_counts
+                .get(tag.as_str())
+                .copied()
+                .unwrap_or(0);
+            Line::from(vec![
+                Span::styled(format!(" #{} ", tag), theme::bold()),
+                Span::styled(format!("({})", count), theme::muted()),
+            ])
+        }))
+        .collect(),
+        _ => std::iter::once(("All".to_string(), total))
+            .chain(app.group_tab_order.iter().map(|name| {
+                let count = app
+                    .group_host_counts
+                    .get(name.as_str())
+                    .copied()
+                    .unwrap_or(0);
+                (name.to_uppercase(), count)
+            }))
+            .map(|(name, count)| {
+                Line::from(vec![
+                    Span::styled(format!(" {} ", name), theme::bold()),
+                    Span::styled(format!("({})", count), theme::muted()),
+                ])
+            })
+            .collect(),
     };
+
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .title(Span::styled(" purple ", theme::brand()))
+        .border_style(theme::border());
+
+    let tabs = Tabs::new(titles)
+        .select(app.group_tab_index)
+        .highlight_style(theme::brand_badge())
+        .divider(Span::raw("  "))
+        .block(block);
+
+    frame.render_widget(tabs, area);
+}
+
+/// Returns "purple" branding when group bar is hidden, "hosts" when grouped.
+fn brand_label_for_group(group_by: &GroupBy) -> &'static str {
+    if matches!(group_by, GroupBy::None) {
+        " purple "
+    } else {
+        " HOSTS "
+    }
+}
+
+fn render_display_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
+    // Build multi-span title: hosts count + optional state badges.
+    // Show "purple" branding when group bar is hidden, "hosts" otherwise.
+    let visible_count = app
+        .display_list
+        .iter()
+        .filter(|i| matches!(i, HostListItem::Host { .. } | HostListItem::Pattern { .. }))
+        .count();
+    let brand_label = brand_label_for_group(&app.group_by);
+    let brand_style = if matches!(app.group_by, GroupBy::None) {
+        theme::brand_badge()
+    } else {
+        theme::brand()
+    };
+    let mut title_spans = vec![
+        Span::styled(brand_label, brand_style),
+        Span::styled("── ", theme::muted()),
+        Span::styled(format!("{} ", visible_count), theme::bold()),
+    ];
+    if app.tag_input.is_some() {
+        title_spans.push(Span::styled("── ", theme::muted()));
+        title_spans.push(Span::styled(" TAGGING ", theme::brand_badge()));
+    } else if !app.multi_select.is_empty() {
+        title_spans.push(Span::styled("── ", theme::muted()));
+        title_spans.push(Span::styled(
+            format!(" {} SELECTED ", app.multi_select.len()),
+            theme::brand_badge(),
+        ));
+    } else if let Some(ref filter) = app.group_filter {
+        title_spans.push(Span::styled("── ", theme::muted()));
+        title_spans.push(Span::styled(format!("{} ", filter), theme::muted()));
+    }
+    let title = Line::from(title_spans);
 
     let update_title = app.update_available.as_ref().map(|ver| {
         let label = build_update_label(
@@ -482,7 +548,7 @@ fn render_display_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::
     let tunnel_summaries = &app.tunnel_summaries_cache;
 
     // Compute column layout
-    let content_width = (inner.width as usize).saturating_sub(2); // -1 highlight, -1 right margin
+    let content_width = (inner.width as usize).saturating_sub(2); // -1 right margin, -1 left margin
     let alias_w = app.hosts.iter().map(|h| h.alias.width()).max().unwrap_or(8);
     let host_w = app
         .hosts
@@ -540,25 +606,19 @@ fn render_display_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::
         underline_area,
     );
 
-    // Use pre-computed group host counts (computed before collapse filtering)
-    let group_counts = &app.group_host_counts;
-
     let mut items: Vec<ListItem> = Vec::new();
     for item in &app.display_list {
         match item {
             HostListItem::GroupHeader(text) => {
                 let upper = text.to_uppercase();
-                let count = group_counts.get(text.as_str()).copied().unwrap_or(0);
-                let collapsed = app.collapsed_groups.contains(text);
-                let arrow = if collapsed { "\u{25B6} " } else { "\u{25BC} " };
-                let name_part = format!("{}{}  ", arrow, upper);
-                let count_part = format!("{} ", count);
-                let label_width = name_part.width() + count_part.width();
-                let fill = content_width.saturating_sub(label_width);
+                let prefix = format!("── {} ", upper);
+                // Subtract 1 for the highlight symbol gutter that ratatui
+                // prepends to every ListItem.
+                let available = content_width.saturating_sub(1);
+                let fill_width = available.saturating_sub(prefix.width());
                 let line = Line::from(vec![
-                    Span::styled(name_part, theme::bold()),
-                    Span::styled(count_part, theme::muted()),
-                    Span::styled("─".repeat(fill), theme::muted()),
+                    Span::styled(prefix, theme::bold()),
+                    Span::styled("─".repeat(fill_width), theme::muted()),
                 ]);
                 items.push(ListItem::new(line));
             }
@@ -602,8 +662,12 @@ fn render_search_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::R
         app.search.filtered_indices.len() + app.search.filtered_pattern_indices.len();
     let total = app.hosts.len() + app.patterns.len();
     let title = Line::from(vec![
-        Span::styled(" purple. ", theme::brand_badge()),
-        Span::raw(format!(" search: {}/{} ", total_results, total)),
+        Span::styled(" HOSTS ", theme::brand()),
+        Span::styled("── ", theme::muted()),
+        Span::styled(
+            format!("search: {}/{} ", total_results, total),
+            theme::bold(),
+        ),
     ]);
 
     let update_title = app.update_available.as_ref().map(|ver| {
@@ -656,7 +720,7 @@ fn render_search_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::R
     }
     let tunnel_summaries = &app.tunnel_summaries_cache;
 
-    let content_width = (inner.width as usize).saturating_sub(2); // -1 highlight, -1 right margin
+    let content_width = (inner.width as usize).saturating_sub(2); // -1 right margin, -1 left margin
     let filtered_hosts = || {
         app.search
             .filtered_indices
@@ -764,7 +828,7 @@ fn render_header(
         Span::styled(
             format!(
                 "{}{:<width$}",
-                " ".repeat(MARKER_WIDTH + 1),
+                " ".repeat(MARKER_WIDTH + 1 + 2),
                 if name_sort { "NAME \u{25BE}" } else { "NAME" },
                 width = cols.alias
             ),
@@ -883,9 +947,20 @@ fn build_host_item<'a>(
         theme::bold()
     };
     let marker = if multi_selected { " \u{2713}" } else { "  " };
+    spans.push(Span::styled(marker, alias_style));
+
+    // Status indicator (2 chars wide): ping reachability
+    let status_span = match ping_status.get(&host.alias) {
+        Some(PingStatus::Reachable) => Span::styled("\u{25CF} ", theme::success()),
+        Some(PingStatus::Unreachable) => Span::styled("\u{2717} ", theme::error()),
+        Some(PingStatus::Checking) => Span::styled("\u{00B7} ", theme::muted()),
+        Some(PingStatus::Skipped) | None => Span::raw("  "),
+    };
+    spans.push(status_span);
+
     let alias_truncated = super::truncate(&host.alias, cols.alias);
     spans.push(Span::styled(
-        format!("{}{:<width$}", marker, alias_truncated, width = cols.alias),
+        format!("{:<width$}", alias_truncated, width = cols.alias),
         alias_style,
     ));
     spans.push(Span::raw(gap.clone()));
@@ -1026,7 +1101,7 @@ fn build_host_item<'a>(
         }
     }
 
-    // === LAST column (right-aligned) ===
+    // === LAST column (right-aligned, always muted) ===
     if cols.history > 0 {
         if let Some(entry) = history.entries.get(&host.alias) {
             let ago = crate::history::ConnectionHistory::format_time_ago(entry.last_connected);
@@ -1059,15 +1134,13 @@ fn build_pattern_item<'a>(
     let gap = " ".repeat(cols.gap);
     let mut spans: Vec<Span> = Vec::new();
 
-    // NAME column: * prefix in accent, pattern text in muted
-    let prefix = "* ";
-    let prefix_w = UnicodeWidthStr::width(prefix);
-    let alias_budget = cols.alias.saturating_sub(prefix_w);
-    let pattern_trunc = super::truncate(&pattern.pattern, alias_budget);
-
-    spans.push(Span::styled(format!("  {}", prefix), theme::accent()));
+    // NAME column: marker(2) + status area used as "* "(2) + alias at full width.
+    // This matches host item layout: marker(2) + status(2) + alias(cols.alias).
+    let pattern_trunc = super::truncate(&pattern.pattern, cols.alias);
+    spans.push(Span::styled("  ", theme::muted())); // marker area (2 chars)
+    spans.push(Span::styled("* ", theme::accent())); // status area reused for * prefix (2 chars)
     spans.push(Span::styled(
-        format!("{:<width$}", pattern_trunc, width = alias_budget),
+        format!("{:<width$}", pattern_trunc, width = cols.alias),
         theme::muted(),
     ));
     spans.push(Span::raw(gap.clone()));
@@ -1229,16 +1302,24 @@ fn build_tag_column(
 
 fn render_search_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     let query = app.search.query.as_deref().unwrap_or("");
-    let total = app.hosts.len() + app.patterns.len();
+    let total = if let Some(ref scope) = app.search.scope_indices {
+        scope.len()
+    } else {
+        app.hosts.len() + app.patterns.len()
+    };
     let match_info = if query.is_empty() {
         String::new()
     } else {
         let count = app.search.filtered_indices.len() + app.search.filtered_pattern_indices.len();
         format!(" ({} of {})", count, total)
     };
+    let scope_span = match &app.group_filter {
+        Some(group) => Span::styled(format!(" {} ", group.to_uppercase()), theme::muted()),
+        None => Span::raw(" "),
+    };
     let search_line = Line::from(vec![
         Span::styled(" / ", theme::brand_badge()),
-        Span::raw(" "),
+        scope_span,
         Span::raw(query),
         Span::styled("_", theme::accent()),
         Span::styled(match_info, theme::muted()),
@@ -1246,7 +1327,12 @@ fn render_search_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) 
     frame.render_widget(Paragraph::new(search_line), area);
 }
 
-fn footer_spans(detail_active: bool, multi_count: usize, stale_count: usize) -> Vec<Span<'static>> {
+fn footer_spans(
+    detail_active: bool,
+    multi_count: usize,
+    stale_count: usize,
+    is_filtered: bool,
+) -> Vec<Span<'static>> {
     let view_label = if detail_active {
         " compact "
     } else {
@@ -1255,49 +1341,56 @@ fn footer_spans(detail_active: bool, multi_count: usize, stale_count: usize) -> 
     let mut spans = vec![
         Span::styled(" Enter", theme::primary_action()),
         Span::styled(" connect ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
+        Span::raw("  "),
         Span::styled("/", theme::accent_bold()),
         Span::styled(" search ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
+        Span::raw("  "),
         Span::styled("#", theme::accent_bold()),
         Span::styled(" tag ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
+        Span::raw("  "),
         Span::styled("a", theme::accent_bold()),
         Span::styled(" add ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
-        Span::styled("e", theme::accent_bold()),
-        Span::styled(" edit ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
+        Span::raw("  "),
+    ];
+    if is_filtered {
+        spans.push(Span::styled("Esc", theme::accent_bold()));
+        spans.push(Span::styled(" back ", theme::muted()));
+    } else {
+        spans.push(Span::styled("e", theme::accent_bold()));
+        spans.push(Span::styled(" edit ", theme::muted()));
+    }
+    spans.extend([
+        Span::raw("  "),
         Span::styled("d", theme::accent_bold()),
         Span::styled(" del ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
+        Span::raw("  "),
         Span::styled("r", theme::accent_bold()),
         Span::styled(" run ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
-        Span::styled("f", theme::accent_bold()),
+        Span::raw("  "),
+        Span::styled("F", theme::accent_bold()),
         Span::styled(" files ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
+        Span::raw("  "),
         Span::styled("T", theme::accent_bold()),
         Span::styled(" tunnels ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
+        Span::raw("  "),
         Span::styled("C", theme::accent_bold()),
         Span::styled(" containers ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
+        Span::raw("  "),
         Span::styled("S", theme::accent_bold()),
         Span::styled(" sync ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
+        Span::raw("  "),
         Span::styled("v", theme::accent_bold()),
         Span::styled(view_label, theme::muted()),
-    ];
+    ]);
     if multi_count > 0 {
-        spans.push(Span::styled("\u{2502} ", theme::muted()));
+        spans.push(Span::raw("  "));
         spans.push(Span::styled(
             format!("{} selected ", multi_count),
             theme::accent_bold(),
         ));
     }
     if stale_count > 0 {
-        spans.push(Span::styled("\u{2502} ", theme::muted()));
+        spans.push(Span::raw("  "));
         spans.push(Span::styled("X", theme::accent_bold()));
         spans.push(Span::styled(
             format!(" purge {} stale ", stale_count),
@@ -1307,47 +1400,53 @@ fn footer_spans(detail_active: bool, multi_count: usize, stale_count: usize) -> 
     spans
 }
 
-fn pattern_footer_spans(detail_active: bool) -> Vec<Span<'static>> {
+fn pattern_footer_spans(detail_active: bool, is_filtered: bool) -> Vec<Span<'static>> {
     let view_label = if detail_active {
         " compact "
     } else {
         " detail "
     };
-    vec![
+    let mut spans = vec![
         Span::styled(" /", theme::accent_bold()),
         Span::styled(" search ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
+        Span::raw("  "),
         Span::styled("#", theme::accent_bold()),
         Span::styled(" tag ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
+        Span::raw("  "),
         Span::styled("A", theme::accent_bold()),
         Span::styled(" add pattern ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
+        Span::raw("  "),
         Span::styled("e", theme::accent_bold()),
         Span::styled(" edit ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
+        Span::raw("  "),
         Span::styled("d", theme::accent_bold()),
         Span::styled(" del ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
+        Span::raw("  "),
         Span::styled("c", theme::accent_bold()),
         Span::styled(" clone ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
+        Span::raw("  "),
         Span::styled("v", theme::accent_bold()),
         Span::styled(view_label, theme::muted()),
-    ]
+    ];
+    if is_filtered {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled("Esc", theme::accent_bold()));
+        spans.push(Span::styled(" back ", theme::muted()));
+    }
+    spans
 }
 
 fn search_footer_spans<'a>() -> Vec<Span<'a>> {
     vec![
         Span::styled(" Enter", theme::primary_action()),
         Span::styled(" connect ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
+        Span::raw("  "),
         Span::styled("Ctrl+E", theme::accent_bold()),
         Span::styled(" edit ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
+        Span::raw("  "),
         Span::styled("Esc", theme::accent_bold()),
         Span::styled(" cancel ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
+        Span::raw("  "),
         Span::styled("tag:", theme::accent_bold()),
         Span::styled("fuzzy ", theme::muted()),
         Span::styled("tag=", theme::accent_bold()),
@@ -1374,10 +1473,10 @@ fn tag_footer_spans<'a>() -> Vec<Span<'a>> {
     vec![
         Span::styled(" Enter", theme::primary_action()),
         Span::styled(" save ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
+        Span::raw("  "),
         Span::styled("Esc", theme::accent_bold()),
         Span::styled(" cancel ", theme::muted()),
-        Span::styled("\u{2502} ", theme::muted()),
+        Span::raw("  "),
         Span::styled("comma-separated", theme::muted()),
     ]
 }
@@ -1385,6 +1484,7 @@ fn tag_footer_spans<'a>() -> Vec<Span<'a>> {
 #[cfg(test)]
 mod tests {
     use super::build_update_label;
+    use crate::app::GroupBy;
 
     #[test]
     fn label_fits_fully() {
@@ -1476,7 +1576,7 @@ mod tests {
     // Columns tests
     // =========================================================================
 
-    use super::{Columns, HOST_MIN, MARKER_WIDTH, footer_spans};
+    use super::{Columns, HOST_MIN, MARKER_WIDTH, footer_spans, pattern_footer_spans};
 
     #[test]
     fn test_padded_zero() {
@@ -1528,7 +1628,7 @@ mod tests {
         );
         // Total consumed should not exceed content width
         let gap = if 200 >= 120 { 3 } else { 2 };
-        let left = MARKER_WIDTH + 1 + cols.alias + gap + cols.host;
+        let left = MARKER_WIDTH + 1 + 2 + cols.alias + gap + cols.host; // +2 for status indicator
         let mut right = 0;
         if cols.auth > 0 {
             right += cols.auth;
@@ -1573,7 +1673,7 @@ mod tests {
     #[test]
     fn test_footer_spans_with_grouping_no_indicator() {
         // "grouped" indicator was removed (redundant with status bar)
-        let spans = footer_spans(false, 0, 0);
+        let spans = footer_spans(false, 0, 0, false);
         let text: String = spans.iter().map(|s| s.content.to_string()).collect();
         assert!(
             !text.contains("grouped"),
@@ -1584,7 +1684,7 @@ mod tests {
 
     #[test]
     fn test_footer_spans_with_stale_hosts() {
-        let spans = footer_spans(false, 0, 5);
+        let spans = footer_spans(false, 0, 5, false);
         let text: String = spans.iter().map(|s| s.content.to_string()).collect();
         assert!(text.contains("X"));
         assert!(text.contains("purge 5 stale"));
@@ -1592,7 +1692,7 @@ mod tests {
 
     #[test]
     fn test_footer_spans_no_stale() {
-        let spans = footer_spans(false, 0, 0);
+        let spans = footer_spans(false, 0, 0, false);
         let text: String = spans.iter().map(|s| s.content.to_string()).collect();
         assert!(!text.contains("stale"));
         assert!(!text.contains("purge"));
@@ -1600,40 +1700,107 @@ mod tests {
 
     #[test]
     fn test_footer_spans_stale_single() {
-        let spans = footer_spans(false, 0, 1);
+        let spans = footer_spans(false, 0, 1, false);
         let text: String = spans.iter().map(|s| s.content.to_string()).collect();
         assert!(text.contains("purge 1 stale"));
     }
 
     #[test]
-    fn layout_has_spacer_between_list_and_footer() {
-        use ratatui::layout::{Constraint, Layout, Rect};
-        let area = Rect::new(0, 0, 120, 40);
-        let chunks = Layout::vertical([
-            Constraint::Min(5),
-            Constraint::Length(1), // spacer
-            Constraint::Length(1), // footer
-        ])
-        .split(area);
-        assert_eq!(chunks[1].height, 1);
-        assert_eq!(chunks[2].height, 1);
-        assert!(chunks[2].y > chunks[0].y + chunks[0].height);
+    fn test_footer_spans_filtered_shows_esc_back() {
+        let spans = footer_spans(false, 0, 0, true);
+        let text: String = spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(text.contains("Esc"), "filtered footer should show Esc");
+        assert!(text.contains("back"), "filtered footer should show back");
+        assert!(
+            !text.contains(" edit "),
+            "filtered footer should not show edit"
+        );
     }
 
     #[test]
-    fn layout_with_search_has_spacer() {
+    fn brand_label_purple_when_ungrouped_hosts_when_grouped() {
+        use super::brand_label_for_group;
+        assert_eq!(brand_label_for_group(&GroupBy::None), " purple ");
+        assert_eq!(brand_label_for_group(&GroupBy::Provider), " HOSTS ");
+        assert_eq!(
+            brand_label_for_group(&GroupBy::Tag("env".to_string())),
+            " HOSTS "
+        );
+    }
+
+    #[test]
+    fn pattern_footer_filtered_shows_esc_back() {
+        let spans = pattern_footer_spans(false, true);
+        let text: String = spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(
+            text.contains("Esc"),
+            "pattern footer should show Esc when filtered"
+        );
+        assert!(
+            text.contains("back"),
+            "pattern footer should show back when filtered"
+        );
+    }
+
+    #[test]
+    fn pattern_footer_unfiltered_no_esc() {
+        let spans = pattern_footer_spans(false, false);
+        let text: String = spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(
+            !text.contains("Esc"),
+            "pattern footer should not show Esc when unfiltered"
+        );
+    }
+
+    #[test]
+    fn layout_has_group_bar_and_footer() {
         use ratatui::layout::{Constraint, Layout, Rect};
         let area = Rect::new(0, 0, 120, 40);
+        // Matches render() layout when grouping is active and not searching
         let chunks = Layout::vertical([
-            Constraint::Min(5),
-            Constraint::Length(1), // search bar
-            Constraint::Length(1), // spacer
-            Constraint::Length(1), // footer
+            Constraint::Length(3), // Group bar
+            Constraint::Min(5),    // Host list
+            Constraint::Length(1), // Footer
         ])
         .split(area);
-        assert_eq!(chunks[2].height, 1);
-        assert_eq!(chunks[3].height, 1);
-        assert!(chunks[3].y > chunks[0].y + chunks[0].height);
+        assert_eq!(chunks[0].height, 3, "group bar should be 3 rows");
+        assert_eq!(chunks[2].height, 1, "footer should be 1 row");
+        assert!(chunks[2].y > chunks[1].y + chunks[1].height - 1);
+    }
+
+    #[test]
+    fn layout_no_group_bar_when_ungrouped() {
+        use ratatui::layout::{Constraint, Layout, Rect};
+        let area = Rect::new(0, 0, 120, 40);
+        // Matches render() layout when GroupBy::None (group_bar_height = 0)
+        let chunks = Layout::vertical([
+            Constraint::Length(0), // Group bar hidden
+            Constraint::Min(5),    // Host list
+            Constraint::Length(1), // Footer
+        ])
+        .split(area);
+        assert_eq!(chunks[0].height, 0, "group bar should be hidden");
+        assert_eq!(
+            chunks[1].height, 39,
+            "host list should get all remaining rows"
+        );
+    }
+
+    #[test]
+    fn layout_with_search_has_group_bar() {
+        use ratatui::layout::{Constraint, Layout, Rect};
+        let area = Rect::new(0, 0, 120, 40);
+        // Matches render() layout when grouping is active and searching
+        let chunks = Layout::vertical([
+            Constraint::Length(3), // Group bar
+            Constraint::Min(5),    // Host list
+            Constraint::Length(1), // Search bar
+            Constraint::Length(1), // Footer
+        ])
+        .split(area);
+        assert_eq!(chunks[0].height, 3, "group bar should be 3 rows");
+        assert_eq!(chunks[2].height, 1, "search bar should be 1 row");
+        assert_eq!(chunks[3].height, 1, "footer should be 1 row");
     }
 
     // =========================================================================
