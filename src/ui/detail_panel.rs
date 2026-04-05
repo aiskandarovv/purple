@@ -6,6 +6,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
+use super::host_list::format_rtt;
+
 // Box-drawing characters for section cards
 const BOX_TL: &str = "\u{256D}"; // ╭
 const BOX_TR: &str = "\u{256E}"; // ╮
@@ -179,16 +181,25 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
 
         // Status line (tags are in the TAGS section)
         let status_spans: Vec<Span<'static>> = match app.ping_status.get(&host.alias) {
-            Some(crate::app::PingStatus::Reachable) => {
-                vec![Span::styled("\u{25CF} online", theme::success())]
+            Some(crate::app::PingStatus::Reachable { rtt_ms }) => {
+                vec![Span::styled(
+                    format!("\u{25CF} online ({})", format_rtt(*rtt_ms)),
+                    theme::success(),
+                )]
+            }
+            Some(crate::app::PingStatus::Slow { rtt_ms }) => {
+                vec![Span::styled(
+                    format!("\u{25CF} slow ({})", format_rtt(*rtt_ms)),
+                    theme::warning(),
+                )]
             }
             Some(crate::app::PingStatus::Unreachable) => {
-                vec![Span::styled("\u{2717} offline", theme::error())]
+                vec![Span::styled("\u{25CF} offline", theme::error())]
             }
             Some(crate::app::PingStatus::Checking) => {
-                vec![Span::styled("\u{00B7} checking", theme::muted())]
+                vec![Span::styled("\u{25CF} checking", theme::muted())]
             }
-            _ => vec![],
+            Some(crate::app::PingStatus::Skipped) | None => vec![],
         };
         if !status_spans.is_empty() {
             section_line(&mut lines, status_spans, box_width);

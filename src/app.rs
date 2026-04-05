@@ -1149,7 +1149,8 @@ pub enum HostListItem {
 #[derive(Debug, Clone, PartialEq)]
 pub enum PingStatus {
     Checking,
-    Reachable,
+    Reachable { rtt_ms: u32 },
+    Slow { rtt_ms: u32 },
     Unreachable,
     Skipped,
 }
@@ -1191,6 +1192,7 @@ pub enum SortMode {
     AlphaHostname,
     Frecency,
     MostRecent,
+    Status,
 }
 
 impl SortMode {
@@ -1200,7 +1202,8 @@ impl SortMode {
             SortMode::AlphaAlias => SortMode::AlphaHostname,
             SortMode::AlphaHostname => SortMode::Frecency,
             SortMode::Frecency => SortMode::MostRecent,
-            SortMode::MostRecent => SortMode::Original,
+            SortMode::MostRecent => SortMode::Status,
+            SortMode::Status => SortMode::Original,
         }
     }
 
@@ -1211,6 +1214,7 @@ impl SortMode {
             SortMode::AlphaHostname => "A-Z hostname",
             SortMode::Frecency => "most used",
             SortMode::MostRecent => "most recent",
+            SortMode::Status => "down first",
         }
     }
 
@@ -1221,6 +1225,7 @@ impl SortMode {
             SortMode::AlphaHostname => "alpha_hostname",
             SortMode::Frecency => "frecency",
             SortMode::MostRecent => "most_recent",
+            SortMode::Status => "status",
         }
     }
 
@@ -1231,8 +1236,29 @@ impl SortMode {
             "alpha_hostname" => SortMode::AlphaHostname,
             "frecency" => SortMode::Frecency,
             "most_recent" => SortMode::MostRecent,
+            "status" => SortMode::Status,
             _ => SortMode::MostRecent,
         }
+    }
+}
+
+/// Classify a ping result into a PingStatus based on RTT and threshold.
+pub fn classify_ping(rtt_ms: Option<u32>, slow_threshold_ms: u16) -> PingStatus {
+    match rtt_ms {
+        Some(ms) if ms >= slow_threshold_ms as u32 => PingStatus::Slow { rtt_ms: ms },
+        Some(ms) => PingStatus::Reachable { rtt_ms: ms },
+        None => PingStatus::Unreachable,
+    }
+}
+
+/// Sort key for ping status: unreachable first, slow, reachable, unchecked last.
+fn ping_sort_key(status: Option<&PingStatus>) -> u8 {
+    match status {
+        Some(PingStatus::Unreachable) => 0,
+        Some(PingStatus::Slow { .. }) => 1,
+        Some(PingStatus::Reachable { .. }) => 2,
+        Some(PingStatus::Checking) => 3,
+        Some(PingStatus::Skipped) | None => 4,
     }
 }
 
@@ -1464,6 +1490,12 @@ pub struct App {
     pub ping_status: HashMap<String, PingStatus>,
     pub has_pinged: bool,
     pub ping_generation: u64,
+    pub slow_threshold_ms: u16,
+    pub auto_ping: bool,
+    /// When true, only show hosts with PingStatus::Unreachable.
+    pub filter_down_only: bool,
+    /// Timestamp of last ping completion (for TTL display). None if no pings done.
+    pub ping_checked_at: Option<std::time::Instant>,
 
     // Tunnels
     pub tunnel_list: Vec<TunnelRule>,
@@ -1620,6 +1652,10 @@ impl App {
             ping_status: HashMap::new(),
             has_pinged: false,
             ping_generation: 0,
+            slow_threshold_ms: crate::preferences::load_slow_threshold(),
+            auto_ping: crate::preferences::load_auto_ping(),
+            filter_down_only: false,
+            ping_checked_at: None,
             tunnel_list: Vec::new(),
             tunnel_form: TunnelForm::new(),
             active_tunnels: HashMap::new(),
@@ -1922,6 +1958,17 @@ impl App {
                             let ts_a = self.history.last_connected(&self.hosts[*a].alias);
                             let ts_b = self.history.last_connected(&self.hosts[*b].alias);
                             ts_b.cmp(&ts_a)
+                        })
+                    });
+                }
+                SortMode::Status => {
+                    indices.sort_by(|a, b| {
+                        let sa = self.hosts[*a].stale.is_some();
+                        let sb = self.hosts[*b].stale.is_some();
+                        sa.cmp(&sb).then_with(|| {
+                            let pa = self.ping_status.get(&self.hosts[*a].alias);
+                            let pb = self.ping_status.get(&self.hosts[*b].alias);
+                            ping_sort_key(pa).cmp(&ping_sort_key(pb))
                         })
                     });
                 }
@@ -2464,6 +2511,7 @@ impl App {
 
     /// Cancel search mode and restore normal view.
     pub fn cancel_search(&mut self) {
+        self.filter_down_only = false;
         self.search.query = None;
         self.search.filtered_indices.clear();
         self.search.filtered_pattern_indices.clear();
@@ -2494,16 +2542,33 @@ impl App {
                 if let Some(ref scope) = self.search.scope_indices {
                     self.search.filtered_indices.retain(|i| scope.contains(i));
                 }
-                let total =
-                    self.search.filtered_indices.len() + self.search.filtered_pattern_indices.len();
-                if total == 0 {
-                    self.ui.list_state.select(None);
-                } else {
-                    self.ui.list_state.select(Some(0));
+                if !self.filter_down_only {
+                    let total = self.search.filtered_indices.len()
+                        + self.search.filtered_pattern_indices.len();
+                    if total == 0 {
+                        self.ui.list_state.select(None);
+                    } else {
+                        self.ui.list_state.select(Some(0));
+                    }
+                    return;
                 }
-                return;
+                // Fall through to down-only filtering below
+                String::new()
             }
-            None => return,
+            None => {
+                if !self.filter_down_only {
+                    return;
+                }
+                // No search query but down-only is active: start with all hosts
+                self.search.filtered_indices = (0..self.hosts.len()).collect();
+                self.search.filtered_pattern_indices = Vec::new();
+                // Scope to group if active
+                if let Some(ref scope) = self.search.scope_indices {
+                    self.search.filtered_indices.retain(|i| scope.contains(i));
+                }
+                // Fall through to down-only filtering below
+                String::new()
+            }
         };
 
         if let Some(tag_exact) = query.strip_prefix("tag=") {
@@ -2590,6 +2655,16 @@ impl App {
         // Scope results to the active group if set
         if let Some(ref scope) = self.search.scope_indices {
             self.search.filtered_indices.retain(|i| scope.contains(i));
+        }
+
+        // Post-filter: keep only unreachable hosts when down-only mode is active
+        if self.filter_down_only {
+            self.search.filtered_indices.retain(|&idx| {
+                let alias = &self.hosts[idx].alias;
+                matches!(self.ping_status.get(alias), Some(PingStatus::Unreachable))
+            });
+            // Patterns can't be pinged, so hide them in down-only mode
+            self.search.filtered_pattern_indices.clear();
         }
 
         // Reset selection
@@ -2767,6 +2842,10 @@ impl App {
 
     /// Tick the status message timer. Errors show for 5s, success for 3s.
     pub fn tick_status(&mut self) {
+        // Don't expire status while providers are still syncing
+        if !self.syncing_providers.is_empty() {
+            return;
+        }
         if let Some(ref mut status) = self.status {
             status.tick_count += 1;
             let timeout = if status.is_error { 20 } else { 12 };
@@ -2827,6 +2906,8 @@ impl App {
                 self.undo_stack.clear();
                 // Clear stale ping status — hosts may have changed
                 self.ping_status.clear();
+                self.filter_down_only = false;
+                self.ping_checked_at = None;
                 self.reload_hosts();
                 self.reload.last_modified = current_mtime;
                 self.reload.include_mtimes = Self::snapshot_include_mtimes(&self.config);
@@ -8095,5 +8176,132 @@ Host aws1
         let key = gb.to_key();
         let restored = GroupBy::from_key(&key);
         assert_eq!(restored, gb);
+    }
+
+    #[test]
+    fn ping_sort_key_ordering() {
+        assert!(
+            super::ping_sort_key(Some(&PingStatus::Unreachable))
+                < super::ping_sort_key(Some(&PingStatus::Slow { rtt_ms: 300 }))
+        );
+        assert!(
+            super::ping_sort_key(Some(&PingStatus::Slow { rtt_ms: 300 }))
+                < super::ping_sort_key(Some(&PingStatus::Reachable { rtt_ms: 10 }))
+        );
+        assert!(
+            super::ping_sort_key(Some(&PingStatus::Reachable { rtt_ms: 10 }))
+                < super::ping_sort_key(Some(&PingStatus::Checking))
+        );
+        assert!(
+            super::ping_sort_key(Some(&PingStatus::Checking))
+                < super::ping_sort_key(Some(&PingStatus::Skipped))
+        );
+        assert_eq!(
+            super::ping_sort_key(Some(&PingStatus::Skipped)),
+            super::ping_sort_key(None)
+        );
+    }
+
+    #[test]
+    fn sort_mode_status_round_trips() {
+        assert_eq!(SortMode::from_key("status"), SortMode::Status);
+        assert_eq!(SortMode::Status.to_key(), "status");
+    }
+
+    #[test]
+    fn sort_mode_status_in_cycle() {
+        assert_eq!(SortMode::MostRecent.next(), SortMode::Status);
+        assert_eq!(SortMode::Status.next(), SortMode::Original);
+    }
+
+    #[test]
+    fn classify_ping_reachable_below_threshold() {
+        let status = super::classify_ping(Some(199), 200);
+        assert_eq!(status, PingStatus::Reachable { rtt_ms: 199 });
+    }
+
+    #[test]
+    fn classify_ping_slow_at_threshold() {
+        let status = super::classify_ping(Some(200), 200);
+        assert_eq!(status, PingStatus::Slow { rtt_ms: 200 });
+    }
+
+    #[test]
+    fn classify_ping_slow_above_threshold() {
+        let status = super::classify_ping(Some(201), 200);
+        assert_eq!(status, PingStatus::Slow { rtt_ms: 201 });
+    }
+
+    #[test]
+    fn classify_ping_unreachable() {
+        let status = super::classify_ping(None, 200);
+        assert_eq!(status, PingStatus::Unreachable);
+    }
+
+    #[test]
+    fn classify_ping_zero_rtt() {
+        let status = super::classify_ping(Some(0), 200);
+        assert_eq!(status, PingStatus::Reachable { rtt_ms: 0 });
+    }
+
+    #[test]
+    fn cancel_search_clears_filter_down_only() {
+        let mut app = make_app("Host web1\n  HostName 1.1.1.1\n");
+        app.filter_down_only = true;
+        app.search.query = Some(String::new());
+        app.cancel_search();
+        assert!(!app.filter_down_only);
+        assert!(app.search.query.is_none());
+    }
+
+    #[test]
+    fn filter_down_only_keeps_unreachable_hosts() {
+        let mut app = make_app(
+            "Host web1\n  HostName 1.1.1.1\nHost web2\n  HostName 2.2.2.2\nHost web3\n  HostName 3.3.3.3\n",
+        );
+        app.ping_status
+            .insert("web1".to_string(), PingStatus::Unreachable);
+        app.ping_status
+            .insert("web2".to_string(), PingStatus::Reachable { rtt_ms: 10 });
+        app.ping_status
+            .insert("web3".to_string(), PingStatus::Slow { rtt_ms: 300 });
+        app.filter_down_only = true;
+        app.search.query = Some(String::new());
+        app.apply_filter();
+        // Only web1 (Unreachable) should remain
+        assert_eq!(app.search.filtered_indices.len(), 1);
+        let alias = &app.hosts[app.search.filtered_indices[0]].alias;
+        assert_eq!(alias, "web1");
+        // Patterns should be cleared
+        assert!(app.search.filtered_pattern_indices.is_empty());
+    }
+
+    #[test]
+    fn sort_mode_status_orders_by_ping() {
+        let mut app = make_app(
+            "Host web1\n  HostName 1.1.1.1\nHost web2\n  HostName 2.2.2.2\nHost web3\n  HostName 3.3.3.3\n",
+        );
+        app.ping_status
+            .insert("web1".to_string(), PingStatus::Reachable { rtt_ms: 10 });
+        app.ping_status
+            .insert("web2".to_string(), PingStatus::Unreachable);
+        app.ping_status
+            .insert("web3".to_string(), PingStatus::Slow { rtt_ms: 300 });
+        app.sort_mode = SortMode::Status;
+        app.group_by = GroupBy::None;
+        app.apply_sort();
+        let aliases: Vec<&str> = app
+            .display_list
+            .iter()
+            .filter_map(|item| {
+                if let HostListItem::Host { index } = item {
+                    Some(app.hosts[*index].alias.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        // Unreachable first, then Slow, then Reachable
+        assert_eq!(aliases, vec!["web2", "web3", "web1"]);
     }
 }

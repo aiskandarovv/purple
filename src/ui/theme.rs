@@ -105,6 +105,19 @@ pub fn success() -> Style {
     }
 }
 
+/// Warning message. Yellow/amber when color is available.
+pub fn warning() -> Style {
+    match COLOR_MODE.load(Ordering::Acquire) {
+        0 => Style::default().add_modifier(Modifier::BOLD),
+        2 => Style::default()
+            .fg(Color::Rgb(234, 179, 8))
+            .add_modifier(Modifier::BOLD),
+        _ => Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    }
+}
+
 /// Danger action key (delete confirmation). Red when color is available.
 pub fn danger() -> Style {
     match COLOR_MODE.load(Ordering::Acquire) {

@@ -230,7 +230,7 @@ fn host_list_columns() -> (Vec<Line<'static>>, Vec<Line<'static>>) {
     col2.push(help_line("p/P", "ping / all"));
 
     col1.push(help_line("tag=name", "exact tag filter"));
-    col2.push(blank());
+    col2.push(help_line("!", "down-only filter"));
 
     // Row 3: CLIPBOARD / TOOLS
     col1.push(blank());

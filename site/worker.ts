@@ -177,9 +177,9 @@ const LANDING_PAGE = `<!DOCTYPE html>
   "url": "https://getpurple.sh",
   "downloadUrl": "https://getpurple.sh",
   "installUrl": "https://github.com/erickochen/purple/releases",
-  "softwareVersion": "2.25.0",
+  "softwareVersion": "2.26.0",
   "datePublished": "2024-10-01",
-  "dateModified": "2026-04-02",
+  "dateModified": "2026-04-05",
   "softwareRequirements": "macOS or Linux",
   "programmingLanguage": "Rust",
   "license": "https://opensource.org/licenses/MIT",
@@ -1163,7 +1163,7 @@ footer a:hover { color: var(--accent); }
           <button class="copy-btn copy-inline" id="copy-btn" onclick="copy(this)" style="display:none">copy</button>
         </div>
         <div class="install-output" id="install-output" style="display:none">
-          <div>Downloading purple v2.25.0 for darwin-arm64...</div>
+          <div>Downloading purple v2.26.0 for darwin-arm64...</div>
           <div>Installing to /usr/local/bin/purple... <span class="success">done.</span></div>
         </div>
         <div class="alt-installs" id="alt-installs" style="display:none">
@@ -1408,7 +1408,7 @@ footer a:hover { color: var(--accent); }
         <summary>Can AI assistants use purple?</summary>
         <div class="a-wrap"><div class="answer">Yes. Run <code>purple mcp</code> to start a Model Context Protocol server over JSON-RPC 2.0. Claude Code, Cursor and other MCP-compatible AI agents can use five tools: list_hosts, get_host, run_command, list_containers and container_action. No API keys needed. Approval behavior depends on your AI client.</div></div>
       </details>
-      <div class="man-foot"><span>purple v2.25.0</span><span>2026-04-02</span><span>PURPLE(1)</span></div>
+      <div class="man-foot"><span>purple v2.26.0</span><span>2026-04-05</span><span>PURPLE(1)</span></div>
     </div>
   </section>
 
@@ -1427,7 +1427,7 @@ footer a:hover { color: var(--accent); }
 </main>
 
 <footer>
-  <a href="https://github.com/erickochen/purple" rel="noopener">GitHub</a> · <a href="https://crates.io/crates/purple-ssh" rel="noopener">crates.io</a> · MIT License · v2.25.0
+  <a href="https://github.com/erickochen/purple" rel="noopener">GitHub</a> · <a href="https://crates.io/crates/purple-ssh" rel="noopener">crates.io</a> · MIT License · v2.26.0
 </footer>
 
 <script>
@@ -1554,7 +1554,7 @@ purple is a terminal SSH client that turns your ~/.ssh/config into a searchable,
 - Bulk import from hosts files or ~/.ssh/known_hosts
 - SSH key browsing with metadata (type, bits, fingerprint) and host linking
 - Split-pane detail panel showing connection info, activity sparkline, tags, provider metadata, tunnels and snippets
-- TCP ping / connectivity check per host or all at once
+- Health status: TCP ping with RTT measurement. Status dot (green online, amber slow, red offline) before each host alias. PING column shows RTT values (42ms, 1.2s, 10s+). Detail panel shows "online (42ms)" / "slow (1.2s)" / "offline". Slow threshold configurable (default 200ms). Press p to ping selected host, P to ping all, ! to filter unreachable only, s to cycle sort including "down first" (unreachable hosts at top). Results expire after 60 seconds. Auto-ping on startup (default enabled, disable with auto_ping=false in preferences)
 - Atomic writes with automatic backups (last 5). Temp file, chmod 600, rename
 - Include file support (read-only, recursive up to depth 16, tilde + glob expansion)
 - Host key reset: detects changed host keys after server reinstalls and offers to remove the old key and reconnect
@@ -1818,7 +1818,7 @@ A: Yes. purple uses the Bitwarden CLI (bw) for Bitwarden password sources. If yo
 
 ## Status
 
-- Current version: 2.25.0 (April 2026)
+- Current version: 2.26.0 (April 2026)
 - Release cadence: approximately bi-weekly
 - Test suite: 5000+ tests (unit, integration, property-based and HTTP mocking)
 - CI: fmt, clippy, test on macOS and Linux, cargo-deny, MSRV 1.86 check
@@ -1826,7 +1826,7 @@ A: Yes. purple uses the Bitwarden CLI (bw) for Bitwarden password sources. If yo
 
 ## Data storage
 
-purple does not use a proprietary database. All host configuration lives in ~/.ssh/config. Tags, provider tracking and metadata are stored as comments in the same file. Provider credentials are stored in ~/.purple/providers. Snippets are stored in ~/.purple/snippets. Connection history is stored in ~/.purple/history.tsv. Preferences (sort mode, view mode) are stored in ~/.purple/preferences. Nothing is transmitted to external servers.
+purple does not use a proprietary database. All host configuration lives in ~/.ssh/config. Tags, provider tracking and metadata are stored as comments in the same file. Provider credentials are stored in ~/.purple/providers. Snippets are stored in ~/.purple/snippets. Connection history is stored in ~/.purple/history.tsv. Preferences (sort mode, view mode, slow_threshold_ms, auto_ping) are stored in ~/.purple/preferences. Nothing is transmitted to external servers.
 
 ## Limitations
 

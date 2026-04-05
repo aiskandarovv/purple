@@ -619,6 +619,29 @@ fn run_tui(mut app: App) -> Result<()> {
         }
     }
 
+    // Auto-ping all hosts on startup if enabled in preferences
+    if app.auto_ping {
+        let hosts_to_ping: Vec<(String, String, u16)> = app
+            .hosts
+            .iter()
+            .filter(|h| !h.hostname.is_empty() && h.proxy_jump.is_empty())
+            .map(|h| (h.alias.clone(), h.hostname.clone(), h.port))
+            .collect();
+        for h in &app.hosts {
+            if !h.proxy_jump.is_empty() {
+                app.ping_status
+                    .insert(h.alias.clone(), app::PingStatus::Skipped);
+            }
+        }
+        if !hosts_to_ping.is_empty() {
+            for (alias, _, _) in &hosts_to_ping {
+                app.ping_status
+                    .insert(alias.clone(), app::PingStatus::Checking);
+            }
+            ping::ping_all(&hosts_to_ping, events.sender(), app.ping_generation);
+        }
+    }
+
     // Background version check
     update::spawn_version_check(events_tx.clone());
 
@@ -644,6 +667,18 @@ fn run_tui(mut app: App) -> Result<()> {
             }
             Some(AppEvent::Tick) | None => {
                 app.tick_status();
+                // Expire ping results after 60s TTL
+                if let Some(checked_at) = app.ping_checked_at {
+                    if checked_at.elapsed() > std::time::Duration::from_secs(60) {
+                        app.ping_status.clear();
+                        app.ping_checked_at = None;
+                        app.ping_generation += 1;
+                        if app.filter_down_only {
+                            app.cancel_search();
+                        }
+                        app.set_status("Ping expired. Press P to refresh.", false);
+                    }
+                }
                 // Throttle config file stat() to every 4 seconds
                 if last_config_check.elapsed() >= std::time::Duration::from_secs(4) {
                     app.check_config_changed();
@@ -657,22 +692,34 @@ fn run_tui(mut app: App) -> Result<()> {
             }
             Some(AppEvent::PingResult {
                 alias,
-                reachable,
+                rtt_ms,
                 generation,
             }) => {
                 if generation == app.ping_generation {
-                    let status = if reachable {
-                        app::PingStatus::Reachable
-                    } else {
-                        app::PingStatus::Unreachable
-                    };
+                    let status = app::classify_ping(rtt_ms, app.slow_threshold_ms);
                     app.ping_status.insert(alias, status);
+                    // Update live filter/sort as results arrive
+                    if app.filter_down_only {
+                        app.apply_filter();
+                    }
+                    if app.sort_mode == app::SortMode::Status {
+                        app.apply_sort();
+                    }
+                    // Update "last checked" timestamp when all pings are done
+                    if !app.ping_status.is_empty()
+                        && app
+                            .ping_status
+                            .values()
+                            .all(|s| !matches!(s, app::PingStatus::Checking))
+                    {
+                        app.ping_checked_at = Some(std::time::Instant::now());
+                    }
                 }
             }
             Some(AppEvent::SyncProgress { provider, message }) => {
-                // Only show per-provider progress if no providers have completed yet,
-                // otherwise the rolling summary is more useful.
-                if app.sync_done.is_empty() {
+                // Only show per-provider progress while that provider is still syncing.
+                // Late progress events (arriving after SyncComplete) are discarded.
+                if app.syncing_providers.contains_key(&provider) && app.sync_done.is_empty() {
                     let name = providers::provider_display_name(&provider);
                     app.set_status(format!("{}: {}", name, message), false);
                 }
@@ -715,6 +762,9 @@ fn run_tui(mut app: App) -> Result<()> {
                 app.syncing_providers.remove(&provider);
                 app.sync_done.push(display_name.to_string());
                 set_sync_summary(&mut app);
+                // Reset config check timer so auto-reload doesn't immediately
+                // detect our own write as an "external" change
+                last_config_check = std::time::Instant::now();
             }
             Some(AppEvent::SyncPartial {
                 provider,
@@ -760,6 +810,7 @@ fn run_tui(mut app: App) -> Result<()> {
                 app.syncing_providers.remove(&provider);
                 app.sync_done.push(display_name.to_string());
                 set_sync_summary(&mut app);
+                last_config_check = std::time::Instant::now();
             }
             Some(AppEvent::SyncError { provider, message }) => {
                 let now = std::time::SystemTime::now()
@@ -779,6 +830,7 @@ fn run_tui(mut app: App) -> Result<()> {
                 app.syncing_providers.remove(&provider);
                 app.sync_done.push(display_name.to_string());
                 set_sync_summary(&mut app);
+                last_config_check = std::time::Instant::now();
             }
             Some(AppEvent::UpdateAvailable { version, headline }) => {
                 app.update_available = Some(version);

@@ -179,6 +179,32 @@ pub fn save_askpass_default(source: &str) -> io::Result<()> {
     save_value("askpass", source)
 }
 
+/// Load slow threshold from ~/.purple/preferences. Returns 200 if missing or invalid.
+pub fn load_slow_threshold() -> u16 {
+    load_value("slow_threshold_ms")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(200)
+}
+
+/// Save slow threshold to ~/.purple/preferences.
+#[allow(dead_code)]
+pub fn save_slow_threshold(ms: u16) -> io::Result<()> {
+    save_value("slow_threshold_ms", &ms.to_string())
+}
+
+/// Load auto_ping preference. Returns true if missing (default: enabled).
+pub fn load_auto_ping() -> bool {
+    load_value("auto_ping")
+        .map(|v| v != "false")
+        .unwrap_or(true)
+}
+
+/// Save auto_ping preference.
+#[allow(dead_code)]
+pub fn save_auto_ping(enabled: bool) -> io::Result<()> {
+    save_value("auto_ping", if enabled { "true" } else { "false" })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -668,5 +694,82 @@ mod tests {
             let mode = load_view_mode();
             assert_eq!(mode, ViewMode::Compact);
         });
+    }
+
+    // --- slow_threshold_ms ---
+
+    #[test]
+    fn load_slow_threshold_default() {
+        let content = "sort_mode=alpha\n";
+        let val = parse_value(content, "slow_threshold_ms");
+        let threshold: u16 = val.and_then(|v| v.parse().ok()).unwrap_or(200);
+        assert_eq!(threshold, 200);
+    }
+
+    #[test]
+    fn load_slow_threshold_custom() {
+        let content = "slow_threshold_ms=500\n";
+        let val = parse_value(content, "slow_threshold_ms");
+        let threshold: u16 = val.and_then(|v| v.parse().ok()).unwrap_or(200);
+        assert_eq!(threshold, 500);
+    }
+
+    #[test]
+    fn load_auto_ping_default_true() {
+        let content = "sort_mode=alpha\n";
+        let val = parse_value(content, "auto_ping");
+        let auto_ping = val.map(|v| v != "false").unwrap_or(true);
+        assert!(auto_ping);
+    }
+
+    #[test]
+    fn load_auto_ping_explicit_true() {
+        let content = "auto_ping=true\n";
+        let val = parse_value(content, "auto_ping");
+        let auto_ping = val.map(|v| v != "false").unwrap_or(true);
+        assert!(auto_ping);
+    }
+
+    #[test]
+    fn save_and_load_slow_threshold_roundtrip() {
+        with_temp_prefs("slow_threshold", |_path| {
+            save_slow_threshold(500).unwrap();
+            let loaded = load_slow_threshold();
+            assert_eq!(loaded, 500);
+        });
+    }
+
+    #[test]
+    fn save_and_load_auto_ping_roundtrip_true() {
+        with_temp_prefs("auto_ping_true", |_path| {
+            save_auto_ping(true).unwrap();
+            let loaded = load_auto_ping();
+            assert!(loaded);
+        });
+    }
+
+    #[test]
+    fn save_and_load_auto_ping_roundtrip_false() {
+        with_temp_prefs("auto_ping_false", |_path| {
+            save_auto_ping(false).unwrap();
+            let loaded = load_auto_ping();
+            assert!(!loaded);
+        });
+    }
+
+    #[test]
+    fn load_slow_threshold_invalid_defaults() {
+        let content = "slow_threshold_ms=abc\n";
+        let val = parse_value(content, "slow_threshold_ms");
+        let threshold: u16 = val.and_then(|v| v.parse().ok()).unwrap_or(200);
+        assert_eq!(threshold, 200);
+    }
+
+    #[test]
+    fn load_auto_ping_explicit_false() {
+        let content = "auto_ping=false\n";
+        let val = parse_value(content, "auto_ping");
+        let auto_ping = val.map(|v| v != "false").unwrap_or(true);
+        assert!(!auto_ping);
     }
 }

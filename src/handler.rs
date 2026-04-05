@@ -524,6 +524,8 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
             }
             if !app.ping_status.is_empty() {
                 app.ping_status.clear();
+                app.filter_down_only = false;
+                app.ping_checked_at = None;
                 app.ping_generation += 1;
                 app.status = None;
             } else {
@@ -533,6 +535,8 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
         KeyCode::Char('P') => {
             if !app.ping_status.is_empty() {
                 app.ping_status.clear();
+                app.filter_down_only = false;
+                app.ping_checked_at = None;
                 app.ping_generation += 1;
                 app.status = None;
             } else {
@@ -556,6 +560,39 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
                     }
                     app.set_status("Pinging all the things...", false);
                     ping::ping_all(&hosts_to_ping, events_tx.clone(), app.ping_generation);
+                }
+            }
+        }
+        KeyCode::Char('!') => {
+            if app.ping_status.is_empty() {
+                app.set_status("Ping first (p/P), then filter with !.", true);
+            } else {
+                app.filter_down_only = !app.filter_down_only;
+                if app.filter_down_only {
+                    // Activate search mode to trigger filtering
+                    if app.search.query.is_none() {
+                        app.search.query = Some(String::new());
+                    }
+                    app.apply_filter();
+                    let count = app.search.filtered_indices.len();
+                    app.set_status(
+                        format!(
+                            "Showing {} unreachable host{}.",
+                            count,
+                            if count == 1 { "" } else { "s" }
+                        ),
+                        false,
+                    );
+                } else {
+                    // If search was only active for down-only, clear it
+                    if app.search.query.as_ref().is_some_and(|q| q.is_empty()) {
+                        app.search.query = None;
+                        app.search.filtered_indices.clear();
+                        app.search.filtered_pattern_indices.clear();
+                    } else {
+                        app.apply_filter();
+                    }
+                    app.status = None;
                 }
             }
         }
@@ -1052,7 +1089,13 @@ fn handle_host_list_search(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sende
         KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             if !app.ping_status.is_empty() {
                 app.ping_status.clear();
+                app.ping_checked_at = None;
                 app.ping_generation += 1;
+                if app.filter_down_only {
+                    app.cancel_search();
+                } else {
+                    app.filter_down_only = false;
+                }
                 app.status = None;
             } else {
                 ping_selected_host(app, events_tx, false);
@@ -1085,6 +1128,15 @@ fn handle_host_list_search(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sende
             if let Some(host) = app.selected_host().cloned() {
                 open_edit_form(app, host);
             }
+        }
+        KeyCode::Char('!') if app.filter_down_only => {
+            app.filter_down_only = false;
+            if app.search.query.as_ref().is_some_and(|q| q.is_empty()) {
+                app.cancel_search();
+            } else {
+                app.apply_filter();
+            }
+            app.status = None;
         }
         KeyCode::Char(c) => {
             if let Some(ref mut query) = app.search.query {
@@ -9780,8 +9832,12 @@ Host do-web2
     fn test_p_key_clears_ping_increments_generation() {
         let mut app = make_app("Host web1\n  HostName 1.1.1.1\n");
         // Pre-populate ping status to simulate completed pings
-        app.ping_status
-            .insert("web1".to_string(), crate::app::PingStatus::Reachable);
+        app.ping_status.insert(
+            "web1".to_string(),
+            crate::app::PingStatus::Reachable { rtt_ms: 10 },
+        );
+        app.filter_down_only = true;
+        app.ping_checked_at = Some(std::time::Instant::now());
         assert_eq!(app.ping_generation, 0);
 
         let (tx, _rx) = std::sync::mpsc::channel();
@@ -9789,5 +9845,53 @@ Host do-web2
 
         assert!(app.ping_status.is_empty());
         assert_eq!(app.ping_generation, 1);
+        assert!(!app.filter_down_only);
+        assert!(app.ping_checked_at.is_none());
+    }
+
+    #[test]
+    fn test_bang_key_without_pings_shows_error() {
+        let mut app = make_app("Host web1\n  HostName 1.1.1.1\n");
+        assert!(app.ping_status.is_empty());
+        let (tx, _rx) = std::sync::mpsc::channel();
+        handle_key_event(&mut app, key(KeyCode::Char('!')), &tx).unwrap();
+        assert!(!app.filter_down_only);
+        assert!(app.status.as_ref().unwrap().is_error);
+    }
+
+    #[test]
+    fn test_bang_key_toggles_down_only_on() {
+        let mut app = make_app("Host web1\n  HostName 1.1.1.1\nHost web2\n  HostName 2.2.2.2\n");
+        app.ping_status
+            .insert("web1".to_string(), crate::app::PingStatus::Unreachable);
+        app.ping_status.insert(
+            "web2".to_string(),
+            crate::app::PingStatus::Reachable { rtt_ms: 10 },
+        );
+        let (tx, _rx) = std::sync::mpsc::channel();
+        handle_key_event(&mut app, key(KeyCode::Char('!')), &tx).unwrap();
+        assert!(app.filter_down_only);
+        assert!(app.search.query.is_some());
+        // Only web1 (Unreachable) should be in filtered results
+        assert_eq!(app.search.filtered_indices.len(), 1);
+    }
+
+    #[test]
+    fn test_bang_key_toggles_down_only_off() {
+        let mut app = make_app("Host web1\n  HostName 1.1.1.1\nHost web2\n  HostName 2.2.2.2\n");
+        app.ping_status
+            .insert("web1".to_string(), crate::app::PingStatus::Unreachable);
+        app.ping_status.insert(
+            "web2".to_string(),
+            crate::app::PingStatus::Reachable { rtt_ms: 10 },
+        );
+        let (tx, _rx) = std::sync::mpsc::channel();
+        // Toggle on
+        handle_key_event(&mut app, key(KeyCode::Char('!')), &tx).unwrap();
+        assert!(app.filter_down_only);
+        // Toggle off
+        handle_key_event(&mut app, key(KeyCode::Char('!')), &tx).unwrap();
+        assert!(!app.filter_down_only);
+        assert!(app.search.query.is_none());
     }
 }

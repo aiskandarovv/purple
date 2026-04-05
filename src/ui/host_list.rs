@@ -12,6 +12,17 @@ use crate::ssh_config::model::ConfigElement;
 /// Minimum terminal width to show the detail panel in detailed view mode.
 const DETAIL_MIN_WIDTH: u16 = 95;
 
+/// Format an RTT value in milliseconds for the PING column.
+pub(crate) fn format_rtt(ms: u32) -> String {
+    if ms >= 9_950 {
+        "10s+".to_string()
+    } else if ms >= 1_000 {
+        format!("{:.1}s", ms as f64 / 1000.0)
+    } else {
+        format!("{}ms", ms)
+    }
+}
+
 /// Build the update badge label, truncating the headline with ellipsis if needed.
 /// `max_width` is the border area width (including border chars).
 fn build_update_label(ver: &str, headline: Option<&str>, hint: &str, max_width: u16) -> String {
@@ -120,7 +131,7 @@ impl Columns {
                     n += 1;
                 }
                 if ping {
-                    w += 4;
+                    w += 5;
                     n += 1;
                 }
                 if tags > 0 {
@@ -380,6 +391,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 app.multi_select.len(),
                 app.hosts.iter().filter(|h| h.stale.is_some()).count(),
                 is_filtered,
+                app.filter_down_only,
             )
         };
         super::render_footer_with_help(frame, chunks[2], spans, app);
@@ -863,7 +875,7 @@ fn render_header(
         spans.push(Span::raw(gap.clone()));
     }
     if cols.show_ping {
-        spans.push(Span::styled("PING", style));
+        spans.push(Span::styled(format!("{:>5}", "PING"), style));
         spans.push(Span::raw(gap.clone()));
     }
     if cols.tags > 0 {
@@ -951,10 +963,12 @@ fn build_host_item<'a>(
 
     // Status indicator (2 chars wide): ping reachability
     let status_span = match ping_status.get(&host.alias) {
-        Some(PingStatus::Reachable) => Span::styled("\u{25CF} ", theme::success()),
-        Some(PingStatus::Unreachable) => Span::styled("\u{2717} ", theme::error()),
-        Some(PingStatus::Checking) => Span::styled("\u{00B7} ", theme::muted()),
-        Some(PingStatus::Skipped) | None => Span::raw("  "),
+        Some(PingStatus::Reachable { .. }) => Span::styled("\u{25CF} ", theme::success()),
+        Some(PingStatus::Slow { .. }) => Span::styled("\u{25CF} ", theme::warning()),
+        Some(PingStatus::Unreachable) => Span::styled("\u{25CF} ", theme::error()),
+        Some(PingStatus::Checking) => Span::styled("\u{25CF} ", theme::muted()),
+        Some(PingStatus::Skipped) => Span::raw("  "),
+        None => Span::styled("\u{25CF} ", theme::muted()),
     };
     spans.push(status_span);
 
@@ -1078,16 +1092,15 @@ fn build_host_item<'a>(
     if cols.show_ping {
         if let Some(status) = ping_status.get(&host.alias) {
             let (indicator, style) = match status {
-                PingStatus::Checking => ("..", theme::muted()),
-                PingStatus::Reachable => ("ok", theme::success()),
-                PingStatus::Unreachable => ("--", theme::error()),
-                PingStatus::Skipped => ("??", theme::muted()),
+                PingStatus::Checking => ("..".to_string(), theme::muted()),
+                PingStatus::Reachable { rtt_ms } => (format_rtt(*rtt_ms), theme::success()),
+                PingStatus::Slow { rtt_ms } => (format_rtt(*rtt_ms), theme::warning()),
+                PingStatus::Unreachable => ("--".to_string(), theme::error()),
+                PingStatus::Skipped => ("--".to_string(), theme::muted()),
             };
-            spans.push(Span::raw(" "));
-            spans.push(Span::styled(indicator, style));
-            spans.push(Span::raw(" "));
+            spans.push(Span::styled(format!("{:>5}", indicator), style));
         } else {
-            spans.push(Span::raw("    "));
+            spans.push(Span::raw("     "));
         }
         spans.push(Span::raw(gap.clone()));
     }
@@ -1190,7 +1203,7 @@ fn build_pattern_item<'a>(
         spans.push(Span::raw(gap.clone()));
     }
     if cols.show_ping {
-        spans.push(Span::raw("    "));
+        spans.push(Span::raw("     "));
         spans.push(Span::raw(gap.clone()));
     }
     if cols.tags > 0 {
@@ -1332,6 +1345,7 @@ fn footer_spans(
     multi_count: usize,
     stale_count: usize,
     is_filtered: bool,
+    filter_down_only: bool,
 ) -> Vec<Span<'static>> {
     let view_label = if detail_active {
         " compact "
@@ -1396,6 +1410,10 @@ fn footer_spans(
             format!(" purge {} stale ", stale_count),
             theme::muted(),
         ));
+    }
+    if filter_down_only {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled("DOWN ONLY", theme::warning()));
     }
     spans
 }
@@ -1673,7 +1691,7 @@ mod tests {
     #[test]
     fn test_footer_spans_with_grouping_no_indicator() {
         // "grouped" indicator was removed (redundant with status bar)
-        let spans = footer_spans(false, 0, 0, false);
+        let spans = footer_spans(false, 0, 0, false, false);
         let text: String = spans.iter().map(|s| s.content.to_string()).collect();
         assert!(
             !text.contains("grouped"),
@@ -1684,7 +1702,7 @@ mod tests {
 
     #[test]
     fn test_footer_spans_with_stale_hosts() {
-        let spans = footer_spans(false, 0, 5, false);
+        let spans = footer_spans(false, 0, 5, false, false);
         let text: String = spans.iter().map(|s| s.content.to_string()).collect();
         assert!(text.contains("X"));
         assert!(text.contains("purge 5 stale"));
@@ -1692,7 +1710,7 @@ mod tests {
 
     #[test]
     fn test_footer_spans_no_stale() {
-        let spans = footer_spans(false, 0, 0, false);
+        let spans = footer_spans(false, 0, 0, false, false);
         let text: String = spans.iter().map(|s| s.content.to_string()).collect();
         assert!(!text.contains("stale"));
         assert!(!text.contains("purge"));
@@ -1700,14 +1718,14 @@ mod tests {
 
     #[test]
     fn test_footer_spans_stale_single() {
-        let spans = footer_spans(false, 0, 1, false);
+        let spans = footer_spans(false, 0, 1, false, false);
         let text: String = spans.iter().map(|s| s.content.to_string()).collect();
         assert!(text.contains("purge 1 stale"));
     }
 
     #[test]
     fn test_footer_spans_filtered_shows_esc_back() {
-        let spans = footer_spans(false, 0, 0, true);
+        let spans = footer_spans(false, 0, 0, true, false);
         let text: String = spans.iter().map(|s| s.content.to_string()).collect();
         assert!(text.contains("Esc"), "filtered footer should show Esc");
         assert!(text.contains("back"), "filtered footer should show back");
@@ -1715,6 +1733,13 @@ mod tests {
             !text.contains(" edit "),
             "filtered footer should not show edit"
         );
+    }
+
+    #[test]
+    fn footer_down_only_indicator() {
+        let spans = footer_spans(false, 0, 0, false, true);
+        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains("DOWN ONLY"));
     }
 
     #[test]
@@ -1846,5 +1871,55 @@ mod tests {
         assert_eq!(cols_no_tags.history, 0);
         assert!(!cols_no_tags.show_ping);
         assert_eq!(cols_no_tags.tags, 0, "tags should hide last");
+    }
+
+    #[test]
+    fn format_rtt_millis() {
+        assert_eq!(super::format_rtt(42), "42ms");
+    }
+
+    #[test]
+    fn format_rtt_zero() {
+        assert_eq!(super::format_rtt(0), "0ms");
+    }
+
+    #[test]
+    fn format_rtt_boundary_999() {
+        assert_eq!(super::format_rtt(999), "999ms");
+    }
+
+    #[test]
+    fn format_rtt_boundary_1000() {
+        assert_eq!(super::format_rtt(1000), "1.0s");
+    }
+
+    #[test]
+    fn format_rtt_seconds() {
+        assert_eq!(super::format_rtt(1500), "1.5s");
+    }
+
+    #[test]
+    fn format_rtt_capped() {
+        assert_eq!(super::format_rtt(12000), "10s+");
+    }
+
+    #[test]
+    fn format_rtt_boundary_9949() {
+        assert_eq!(super::format_rtt(9949), "9.9s");
+    }
+
+    #[test]
+    fn format_rtt_boundary_9950() {
+        assert_eq!(super::format_rtt(9950), "10s+");
+    }
+
+    #[test]
+    fn format_rtt_boundary_10000() {
+        assert_eq!(super::format_rtt(10000), "10s+");
+    }
+
+    #[test]
+    fn format_rtt_u32_max() {
+        assert_eq!(super::format_rtt(u32::MAX), "10s+");
     }
 }

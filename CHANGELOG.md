@@ -1,3 +1,15 @@
+## 2.26.0
+
+- Live host health status with RTT measurement and auto-ping on startup
+- Status dots before each host: ● online, ▲ slow, ✖ down, ○ unchecked (color + shape for accessibility)
+- PING column shows response time (42ms, 1.2s, 10s+). Detail panel shows RTT under CONNECTION
+- Slow host detection with configurable threshold (default 200ms, set slow_threshold_ms in preferences)
+- Sort by health status: press s to cycle to "down first" (unreachable hosts at top)
+- Down-only filter: press ! to show only unreachable hosts
+- Ping results expire after 60 seconds with automatic cleanup
+- Auto-ping enabled by default (disable with auto_ping=false in preferences)
+- Provider sync status no longer flickers between updates
+
 ## 2.25.0
 
 - Visual redesign with tab navigation, section cards and scoped search

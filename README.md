@@ -134,7 +134,7 @@ The client starts `purple mcp` automatically. No manual server process needed. F
 - **Bulk import** From hosts files or `~/.ssh/known_hosts`. Press `I` in the TUI or use `purple import` from the CLI
 - **SSH key management** Browse keys with metadata (type, bits, fingerprint) and see which hosts use each key
 - **Round-trip fidelity** Comments, indentation, unknown directives, CRLF line endings and Include files all preserved
-- **TCP ping** Connectivity check per host or all at once
+- **Health status** TCP ping with RTT measurement. Status dot and response time per host. Auto-ping on startup
 - **Clipboard** Copy the SSH command (`y`) or full config block (`x`)
 - **Atomic writes** Temp file, chmod 600, rename. Automatic backups (last 5)
 - **Host key reset** Detects changed host keys after a server reinstall and offers to remove the old key and reconnect

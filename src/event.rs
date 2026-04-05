@@ -12,7 +12,7 @@ pub enum AppEvent {
     Tick,
     PingResult {
         alias: String,
-        reachable: bool,
+        rtt_ms: Option<u32>,
         generation: u64,
     },
     SyncComplete {
