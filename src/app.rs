@@ -2173,7 +2173,7 @@ impl App {
             GroupBy::Tag(_) => {
                 let mut tag_counts: HashMap<String, usize> = HashMap::new();
                 for host in &self.hosts {
-                    for tag in host.tags.iter().chain(host.provider_tags.iter()) {
+                    for tag in host.tags.iter() {
                         *tag_counts.entry(tag.clone()).or_insert(0) += 1;
                     }
                 }
@@ -3778,7 +3778,33 @@ impl App {
             return;
         }
         let selected = self.ui.list_state.selected().unwrap_or(0);
-        // Walk backwards to find the nearest GroupHeader and its tab index
+
+        // In tag mode, match the selected host's tags against the tab order
+        // directly, because the display list only has one GroupHeader (the
+        // active GroupBy tag) while the tab bar shows the top-10 tags.
+        if matches!(self.group_by, GroupBy::Tag(_)) {
+            let tags: Option<&[String]> = match self.display_list.get(selected) {
+                Some(HostListItem::Host { index }) => {
+                    self.hosts.get(*index).map(|h| h.tags.as_slice())
+                }
+                Some(HostListItem::Pattern { index }) => {
+                    self.patterns.get(*index).map(|p| p.tags.as_slice())
+                }
+                _ => None,
+            };
+            if let Some(item_tags) = tags {
+                for (idx, tab_tag) in self.group_tab_order.iter().enumerate() {
+                    if item_tags.iter().any(|t| t == tab_tag) {
+                        self.group_tab_index = idx + 1;
+                        return;
+                    }
+                }
+            }
+            self.group_tab_index = 0;
+            return;
+        }
+
+        // Provider/none mode: walk backwards to find the nearest GroupHeader
         for i in (0..=selected).rev() {
             if let HostListItem::GroupHeader(name) = &self.display_list[i] {
                 self.group_tab_index = self
@@ -8039,6 +8065,237 @@ Host web1
 
         // Should stay at the same position since there is no next host
         assert_eq!(app.ui.list_state.selected(), Some(host_pos));
+    }
+
+    // --- update_group_tab_follow ---
+
+    #[test]
+    fn tag_mode_tab_follows_selected_host() {
+        let content = "\
+Host web1
+  HostName 1.1.1.1
+  # purple:tags production
+
+Host web2
+  HostName 2.2.2.2
+  # purple:tags staging
+
+Host web3
+  HostName 3.3.3.3
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Tag("production".to_string());
+        app.apply_sort();
+
+        // Find a host with "staging" tag and select it
+        for (i, item) in app.display_list.iter().enumerate() {
+            if let HostListItem::Host { index } = item {
+                if app.hosts[*index].alias == "web2" {
+                    app.ui.list_state.select(Some(i));
+                    break;
+                }
+            }
+        }
+        app.update_group_tab_follow();
+        let staging_pos = app
+            .group_tab_order
+            .iter()
+            .position(|t| t == "staging")
+            .unwrap();
+        assert_eq!(app.group_tab_index, staging_pos + 1);
+    }
+
+    #[test]
+    fn tag_mode_tab_follows_first_tab_tag() {
+        let content = "\
+Host web1
+  HostName 1.1.1.1
+  # purple:tags production
+
+Host web2
+  HostName 2.2.2.2
+  # purple:tags staging
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Tag("production".to_string());
+        app.apply_sort();
+
+        // Select the "production" host
+        for (i, item) in app.display_list.iter().enumerate() {
+            if let HostListItem::Host { index } = item {
+                if app.hosts[*index].alias == "web1" {
+                    app.ui.list_state.select(Some(i));
+                    break;
+                }
+            }
+        }
+        app.update_group_tab_follow();
+        let prod_pos = app
+            .group_tab_order
+            .iter()
+            .position(|t| t == "production")
+            .unwrap();
+        assert_eq!(app.group_tab_index, prod_pos + 1);
+    }
+
+    #[test]
+    fn tag_mode_tab_fallback_for_untagged_host() {
+        let content = "\
+Host web1
+  HostName 1.1.1.1
+  # purple:tags production
+
+Host web2
+  HostName 2.2.2.2
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Tag("production".to_string());
+        app.apply_sort();
+
+        // Select the untagged host
+        for (i, item) in app.display_list.iter().enumerate() {
+            if let HostListItem::Host { index } = item {
+                if app.hosts[*index].alias == "web2" {
+                    app.ui.list_state.select(Some(i));
+                    break;
+                }
+            }
+        }
+        app.update_group_tab_follow();
+        assert_eq!(app.group_tab_index, 0);
+    }
+
+    #[test]
+    fn tag_mode_tab_ignores_provider_tags() {
+        let content = "\
+Host do-web
+  HostName 1.1.1.1
+  # purple:provider_tags cloud
+  # purple:provider digitalocean:1
+
+Host manual
+  HostName 2.2.2.2
+  # purple:tags cloud
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Tag("cloud".to_string());
+        app.apply_sort();
+
+        // "cloud" should only appear once in tab order (from manual's user tag)
+        assert_eq!(
+            app.group_host_counts.get("cloud").copied().unwrap_or(0),
+            1,
+            "provider_tags should not count toward group tab"
+        );
+
+        // Select the provider-tagged host (do-web has no user tags)
+        for (i, item) in app.display_list.iter().enumerate() {
+            if let HostListItem::Host { index } = item {
+                if app.hosts[*index].alias == "do-web" {
+                    app.ui.list_state.select(Some(i));
+                    break;
+                }
+            }
+        }
+        app.update_group_tab_follow();
+        // do-web has no user tags matching the tab bar, should fall back to All
+        assert_eq!(app.group_tab_index, 0);
+    }
+
+    #[test]
+    fn provider_mode_tab_follows_across_groups() {
+        let content = "\
+Host do-web
+  HostName 1.1.1.1
+  # purple:provider digitalocean:1
+
+Host aws-web
+  HostName 2.2.2.2
+  # purple:provider aws:2
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Provider;
+        app.apply_sort();
+
+        // Navigate to the last host
+        let last_host = app
+            .display_list
+            .iter()
+            .enumerate()
+            .rfind(|(_, item)| matches!(item, HostListItem::Host { .. }))
+            .unwrap()
+            .0;
+        app.ui.list_state.select(Some(last_host));
+        app.update_group_tab_follow();
+
+        // Should be on the group that contains the last host (non-zero)
+        assert_ne!(app.group_tab_index, 0);
+
+        // Navigate to the first host
+        let first_host = app
+            .display_list
+            .iter()
+            .enumerate()
+            .find(|(_, item)| matches!(item, HostListItem::Host { .. }))
+            .unwrap()
+            .0;
+        app.ui.list_state.select(Some(first_host));
+        app.update_group_tab_follow();
+
+        // First host has no provider header before it (non-provider hosts first)
+        // or is in the first provider group
+        let first_idx = app.group_tab_index;
+        assert_ne!(first_idx, app.group_tab_order.len() + 1);
+    }
+
+    #[test]
+    fn group_filter_active_prevents_tab_follow() {
+        let content = "\
+Host web1
+  HostName 1.1.1.1
+  # purple:tags production
+
+Host web2
+  HostName 2.2.2.2
+  # purple:tags staging
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Tag("production".to_string());
+        app.apply_sort();
+
+        // Set a filter and record the tab index
+        app.next_group_tab();
+        let fixed_index = app.group_tab_index;
+
+        // Navigate to a different host
+        for (i, item) in app.display_list.iter().enumerate() {
+            if matches!(item, HostListItem::Host { .. }) {
+                app.ui.list_state.select(Some(i));
+                break;
+            }
+        }
+        app.update_group_tab_follow();
+
+        // Tab index should not change when filter is active
+        assert_eq!(app.group_tab_index, fixed_index);
+    }
+
+    #[test]
+    fn ungrouped_mode_tab_index_stays_zero() {
+        let content = "\
+Host web1
+  HostName 1.1.1.1
+
+Host web2
+  HostName 2.2.2.2
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::None;
+        app.apply_sort();
+
+        app.ui.list_state.select(Some(1));
+        app.update_group_tab_follow();
+        assert_eq!(app.group_tab_index, 0);
     }
 
     // --- Scoped search ---

@@ -1,3 +1,8 @@
+## 2.27.1
+
+- Fix group bar selector not following selected host in tagged view
+- Tagged view group bar now shows only user tags. Provider tags no longer appear as tabs
+
 ## 2.27.0
 
 - Cleaner host list and keycap-style footer keys
