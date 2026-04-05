@@ -325,20 +325,25 @@ fn scale_clip_rect(area: Rect, progress: f32) -> (u16, u16, u16, u16) {
     (left, right, top, bottom)
 }
 
-/// Build a footer action span: key in accent_bold, label in muted.
+/// Build a padded footer keycap span: ` key ` with reversed style.
+pub fn footer_key_span(key: &str) -> Span<'static> {
+    Span::styled(format!(" {} ", key), theme::footer_key())
+}
+
+/// Build a footer action span: padded keycap + muted label.
 /// Use this for consistent footers across all screens.
-pub fn footer_action<'a>(key: &'a str, label: &'a str) -> [Span<'a>; 2] {
+pub fn footer_action(key: &str, label: &str) -> [Span<'static>; 2] {
     [
-        Span::styled(key, theme::accent_bold()),
-        Span::styled(label, theme::muted()),
+        footer_key_span(key),
+        Span::styled(label.to_string(), theme::muted()),
     ]
 }
 
-/// Build a primary footer action span: key in primary_action, label in muted.
-pub fn footer_primary<'a>(key: &'a str, label: &'a str) -> [Span<'a>; 2] {
+/// Build a primary footer action span: padded keycap + muted label.
+pub fn footer_primary(key: &str, label: &str) -> [Span<'static>; 2] {
     [
-        Span::styled(key, theme::primary_action()),
-        Span::styled(label, theme::muted()),
+        footer_key_span(key),
+        Span::styled(label.to_string(), theme::muted()),
     ]
 }
 
@@ -356,7 +361,7 @@ pub fn render_footer_with_help(
     }
     let right_spans = vec![
         Span::raw("  "),
-        Span::styled("?", theme::accent_bold()),
+        Span::styled(" ? ", theme::footer_key()),
         Span::styled(" more", theme::muted()),
     ];
     let right_width: u16 = right_spans.iter().map(|s| s.width()).sum::<usize>() as u16;

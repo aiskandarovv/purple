@@ -66,9 +66,16 @@ pub fn highlight_bold() -> Style {
     Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED)
 }
 
-/// Primary action key (connect/Enter).
-pub fn primary_action() -> Style {
-    Style::default().add_modifier(Modifier::BOLD)
+/// Footer keycap style: background matches the dim border tone.
+/// Truecolor: explicit gray bg matching typical DIM rendering.
+/// ANSI 16: DarkGray bg approximates DIM borders.
+/// NO_COLOR: REVERSED fallback.
+pub fn footer_key() -> Style {
+    match COLOR_MODE.load(Ordering::Acquire) {
+        0 => Style::default().add_modifier(Modifier::REVERSED),
+        2 => Style::default().fg(Color::White).bg(Color::Rgb(88, 88, 88)),
+        _ => Style::default().fg(Color::White).bg(Color::DarkGray),
+    }
 }
 
 /// Muted/secondary text.
@@ -102,6 +109,20 @@ pub fn success() -> Style {
         _ => Style::default()
             .fg(Color::Green)
             .add_modifier(Modifier::BOLD),
+    }
+}
+
+/// Style for online status dot. Three urgency tiers:
+/// NO_COLOR = normal (no modifier), ANSI 16 = Green + DIM, truecolor = muted green + DIM.
+pub fn online_dot() -> Style {
+    match COLOR_MODE.load(Ordering::Acquire) {
+        0 => Style::default(), // normal (no modifier)
+        2 => Style::default()
+            .fg(Color::Rgb(34, 197, 94))
+            .add_modifier(Modifier::DIM),
+        _ => Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::DIM),
     }
 }
 

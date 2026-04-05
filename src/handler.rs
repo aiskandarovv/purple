@@ -546,11 +546,12 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
                     .filter(|h| !h.hostname.is_empty() && h.proxy_jump.is_empty())
                     .map(|h| (h.alias.clone(), h.hostname.clone(), h.port))
                     .collect();
-                // Mark ProxyJump hosts as skipped (can't ping directly)
+                // Mark ProxyJump hosts as Checking (their status will be
+                // inherited from the bastion once it responds).
                 for h in &app.hosts {
                     if !h.proxy_jump.is_empty() {
                         app.ping_status
-                            .insert(h.alias.clone(), crate::app::PingStatus::Skipped);
+                            .insert(h.alias.clone(), crate::app::PingStatus::Checking);
                     }
                 }
                 if !hosts_to_ping.is_empty() {
@@ -2604,32 +2605,46 @@ fn handle_proxyjump_picker(app: &mut App, key: KeyEvent) {
 fn ping_selected_host(app: &mut App, events_tx: &mpsc::Sender<AppEvent>, show_hint: bool) {
     if let Some(host) = app.selected_host() {
         let alias = host.alias.clone();
-        if !host.proxy_jump.is_empty() {
-            app.ping_status
-                .insert(alias.clone(), crate::app::PingStatus::Skipped);
-            app.set_status(
-                format!("{} uses ProxyJump. Can't ping directly.", alias),
-                true,
-            );
-        } else {
-            let hostname = host.hostname.clone();
-            let port = host.port;
-            app.ping_status
-                .insert(alias.clone(), crate::app::PingStatus::Checking);
-            if show_hint && !app.has_pinged {
-                app.set_status(format!("Pinging {}... (Shift+P pings all)", alias), false);
-                app.has_pinged = true;
+        // For ProxyJump hosts, ping the bastion instead and propagate the
+        // result to all dependents (handled in main.rs PingResult handler).
+        let (ping_alias, hostname, port) = if !host.proxy_jump.is_empty() {
+            let bastion_alias = host.proxy_jump.clone();
+            if let Some(bastion) = app.hosts.iter().find(|h| h.alias == bastion_alias) {
+                app.ping_status
+                    .insert(alias.clone(), crate::app::PingStatus::Checking);
+                (
+                    bastion.alias.clone(),
+                    bastion.hostname.clone(),
+                    bastion.port,
+                )
             } else {
-                app.set_status(format!("Pinging {}...", alias), false);
+                app.set_status(
+                    format!("Bastion {} not found in config.", bastion_alias),
+                    true,
+                );
+                return;
             }
-            ping::ping_host(
-                alias,
-                hostname,
-                port,
-                events_tx.clone(),
-                app.ping_generation,
+        } else {
+            (alias.clone(), host.hostname.clone(), host.port)
+        };
+        app.ping_status
+            .insert(ping_alias.clone(), crate::app::PingStatus::Checking);
+        if show_hint && !app.has_pinged {
+            app.set_status(
+                format!("Pinging {}... (Shift+P pings all)", ping_alias),
+                false,
             );
+            app.has_pinged = true;
+        } else {
+            app.set_status(format!("Pinging {}...", ping_alias), false);
         }
+        ping::ping_host(
+            ping_alias,
+            hostname,
+            port,
+            events_tx.clone(),
+            app.ping_generation,
+        );
     }
 }
 
@@ -3405,11 +3420,32 @@ fn handle_snippet_param_form(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sen
         None => return,
     };
 
+    // Handle discard confirmation dialog
+    if app.pending_discard_confirm {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                app.pending_discard_confirm = false;
+                app.snippet_param_form = None;
+                app.pending_snippet_terminal = false;
+                app.screen = Screen::SnippetPicker { target_aliases };
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                app.pending_discard_confirm = false;
+            }
+            _ => {}
+        }
+        return;
+    }
+
     match key.code {
         KeyCode::Esc => {
-            app.snippet_param_form = None;
-            app.pending_snippet_terminal = false;
-            app.screen = Screen::SnippetPicker { target_aliases };
+            if form.is_dirty() {
+                app.pending_discard_confirm = true;
+            } else {
+                app.snippet_param_form = None;
+                app.pending_snippet_terminal = false;
+                app.screen = Screen::SnippetPicker { target_aliases };
+            }
         }
         KeyCode::Tab | KeyCode::Down => {
             if form.focused_index + 1 < form.params.len() {

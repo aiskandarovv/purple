@@ -26,10 +26,10 @@ pub fn render(frame: &mut Frame, _app: &App, alias: &str) {
         )),
         Line::from(""),
         Line::from(vec![
-            Span::styled("    y", theme::danger()),
+            Span::styled(" y ", theme::footer_key()),
             Span::styled(" yes ", theme::muted()),
             Span::raw("  "),
-            Span::styled("Esc", theme::accent_bold()),
+            Span::styled(" Esc ", theme::footer_key()),
             Span::styled(" no", theme::muted()),
         ]),
     ];
@@ -65,10 +65,10 @@ pub fn render_host_key_reset(frame: &mut Frame, _app: &App, hostname: &str) {
         )),
         Line::from(""),
         Line::from(vec![
-            Span::styled("    y", theme::danger()),
+            Span::styled(" y ", theme::footer_key()),
             Span::styled(" yes ", theme::muted()),
             Span::raw("  "),
-            Span::styled("Esc", theme::accent_bold()),
+            Span::styled(" Esc ", theme::footer_key()),
             Span::styled(" no", theme::muted()),
         ]),
     ];
@@ -99,10 +99,10 @@ pub fn render_confirm_import(frame: &mut Frame, _app: &App, count: usize) {
         )),
         Line::from(""),
         Line::from(vec![
-            Span::styled("    y", theme::accent_bold()),
+            Span::styled(" y ", theme::footer_key()),
             Span::styled(" yes ", theme::muted()),
             Span::raw("  "),
-            Span::styled("Esc", theme::accent_bold()),
+            Span::styled(" Esc ", theme::footer_key()),
             Span::styled(" no", theme::muted()),
         ]),
     ];
@@ -175,10 +175,10 @@ pub fn render_confirm_purge_stale(
     text.extend(host_lines);
     text.push(Line::from(""));
     text.push(Line::from(vec![
-        Span::styled("    y", theme::danger()),
+        Span::styled(" y ", theme::footer_key()),
         Span::styled(" yes ", theme::muted()),
         Span::raw("  "),
-        Span::styled("Esc", theme::accent_bold()),
+        Span::styled(" Esc ", theme::footer_key()),
         Span::styled(" no", theme::muted()),
     ]));
 
@@ -345,7 +345,7 @@ pub fn render_welcome(
     text.push(Line::from(""));
     let hint_spans = vec![
         Span::styled("Press ", theme::muted()),
-        Span::styled("?", theme::accent_bold()),
+        Span::styled(" ? ", theme::footer_key()),
         Span::styled(" anytime for help.", theme::muted()),
     ];
     text.push(
@@ -380,7 +380,7 @@ pub fn render_welcome(
         text.push(Line::from(""));
         let hint_spans = vec![
             Span::styled("Press ", theme::muted()),
-            Span::styled("I", theme::accent_bold()),
+            Span::styled(" I ", theme::footer_key()),
             Span::styled(" to import them.", theme::muted()),
         ];
         text.push(
@@ -403,7 +403,7 @@ pub fn render_welcome(
     if char_budget > 0 {
         text.push(
             Line::from(vec![
-                Span::styled("Enter", theme::accent_bold()),
+                Span::styled(" Enter ", theme::footer_key()),
                 Span::styled(" continue", theme::muted()),
             ])
             .alignment(Alignment::Center),

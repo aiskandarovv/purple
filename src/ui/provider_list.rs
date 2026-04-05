@@ -142,10 +142,10 @@ pub fn render_provider_list(frame: &mut Frame, app: &mut App) {
             chunks[2],
             vec![
                 Span::styled(format!(" Remove {}? ", display), theme::bold()),
-                Span::styled("y", theme::accent_bold()),
+                Span::styled(" y ", theme::footer_key()),
                 Span::styled(" yes ", theme::muted()),
                 Span::raw("  "),
-                Span::styled("Esc", theme::accent_bold()),
+                Span::styled(" Esc ", theme::footer_key()),
                 Span::styled(" no", theme::muted()),
             ],
             app,
@@ -166,25 +166,25 @@ pub fn render_provider_list(frame: &mut Frame, app: &mut App) {
             .unwrap_or(0);
 
         let mut footer = vec![
-            Span::styled(" Enter", theme::primary_action()),
-            Span::styled(" configure ", theme::muted()),
+            Span::styled(" Enter ", theme::footer_key()),
+            Span::styled(" edit ", theme::muted()),
             Span::raw("  "),
-            Span::styled("s", theme::accent_bold()),
+            Span::styled(" s ", theme::footer_key()),
             Span::styled(" sync ", theme::muted()),
             Span::raw("  "),
-            Span::styled("d", theme::accent_bold()),
+            Span::styled(" d ", theme::footer_key()),
             Span::styled(" remove ", theme::muted()),
         ];
         if selected_stale_count > 0 {
             footer.push(Span::raw("  "));
-            footer.push(Span::styled("X", theme::accent_bold()));
+            footer.push(Span::styled(" X ", theme::footer_key()));
             footer.push(Span::styled(
                 format!(" purge {} stale ", selected_stale_count),
                 theme::muted(),
             ));
         }
         footer.push(Span::raw("  "));
-        footer.push(Span::styled("Esc", theme::accent_bold()));
+        footer.push(Span::styled(" Esc ", theme::footer_key()));
         footer.push(Span::styled(" back", theme::muted()));
 
         super::render_footer_with_status(frame, chunks[2], footer, app);
@@ -275,21 +275,21 @@ pub fn render_provider_form(frame: &mut Frame, app: &mut App, provider_name: &st
     let footer_spans = if app.pending_discard_confirm {
         vec![
             Span::styled(" Discard changes? ", theme::error()),
-            Span::styled("y", theme::accent_bold()),
+            Span::styled(" y ", theme::footer_key()),
             Span::styled(" yes ", theme::muted()),
             Span::raw("  "),
-            Span::styled("Esc", theme::accent_bold()),
+            Span::styled(" Esc ", theme::footer_key()),
             Span::styled(" no", theme::muted()),
         ]
     } else {
         vec![
-            Span::styled(" Enter", theme::primary_action()),
+            Span::styled(" Enter ", theme::footer_key()),
             Span::styled(" save ", theme::muted()),
             Span::raw("  "),
-            Span::styled("Tab", theme::accent_bold()),
+            Span::styled(" Tab ", theme::footer_key()),
             Span::styled(" next ", theme::muted()),
             Span::raw("  "),
-            Span::styled("Esc", theme::accent_bold()),
+            Span::styled(" Esc ", theme::footer_key()),
             Span::styled(" cancel", theme::muted()),
         ]
     };
@@ -614,13 +614,13 @@ fn render_region_picker_overlay(frame: &mut Frame, app: &mut App) {
         frame,
         footer_area,
         vec![
-            Span::styled(" Space", theme::primary_action()),
+            Span::styled(" Space ", theme::footer_key()),
             Span::styled(" toggle ", theme::muted()),
             Span::raw("  "),
-            Span::styled("Enter", theme::accent_bold()),
+            Span::styled(" Enter ", theme::footer_key()),
             Span::styled(" done ", theme::muted()),
             Span::raw("  "),
-            Span::styled("Esc", theme::accent_bold()),
+            Span::styled(" Esc ", theme::footer_key()),
             Span::styled(" back", theme::muted()),
         ],
         app,

@@ -1,3 +1,17 @@
+## 2.27.0
+
+- Cleaner host list and keycap-style footer keys
+- Streamlined columns: NAME, ADDRESS, TAGS (up to 3) and LAST. Auth, tunnel and ping moved to detail panel
+- ADDRESS column shows hostname:port (user moved to detail panel). Hidden when detail panel is open
+- ProxyJump hosts now inherit ping status from their bastion host instead of showing "can't ping directly"
+- Tags displayed without # prefix throughout the UI
+- Snippet parameter form shows discard confirmation when pressing Esc with modified values
+- Detail panel shows friendly password source labels (keychain, 1password, bitwarden, pass, vault) and ping RTT
+- Proxmox no longer injects resource type (qemu/lxc) as provider tag. Type is already in metadata
+- SSH key detail overlay now shows Esc/close footer
+- Online status dots use dimmed green to distinguish from success messages
+- Health summary spans (●23 ▲2 ✖1) available for group headers
+
 ## 2.26.0
 
 - Live host health status with RTT measurement and auto-ping on startup

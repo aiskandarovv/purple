@@ -102,6 +102,23 @@ use crate::ssh_config::model::ConfigElement;
 
 const LABEL_WIDTH: usize = 14;
 
+/// Short label for a password source.
+fn password_label(source: &str) -> &'static str {
+    if source == "keychain" {
+        "keychain"
+    } else if source.starts_with("op://") {
+        "1password"
+    } else if source.starts_with("bw:") {
+        "bitwarden"
+    } else if source.starts_with("pass:") {
+        "pass"
+    } else if source.starts_with("vault:") {
+        "vault"
+    } else {
+        "custom"
+    }
+}
+
 /// Wrap tags into rows that fit within `max_width` display columns.
 /// Each row is a Vec of references into the input slice.
 fn wrap_tags<'a>(tags: &'a [String], max_width: usize) -> Vec<Vec<&'a str>> {
@@ -179,25 +196,39 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             );
         }
 
-        // Status line (tags are in the TAGS section)
+        // Status line using dual-encoded glyphs (consistent with host list)
         let status_spans: Vec<Span<'static>> = match app.ping_status.get(&host.alias) {
-            Some(crate::app::PingStatus::Reachable { rtt_ms }) => {
+            Some(status @ crate::app::PingStatus::Reachable { rtt_ms }) => {
                 vec![Span::styled(
-                    format!("\u{25CF} online ({})", format_rtt(*rtt_ms)),
+                    format!(
+                        "{} online ({})",
+                        crate::app::status_glyph(Some(status)),
+                        format_rtt(*rtt_ms)
+                    ),
                     theme::success(),
                 )]
             }
-            Some(crate::app::PingStatus::Slow { rtt_ms }) => {
+            Some(status @ crate::app::PingStatus::Slow { rtt_ms }) => {
                 vec![Span::styled(
-                    format!("\u{25CF} slow ({})", format_rtt(*rtt_ms)),
+                    format!(
+                        "{} slow ({})",
+                        crate::app::status_glyph(Some(status)),
+                        format_rtt(*rtt_ms)
+                    ),
                     theme::warning(),
                 )]
             }
-            Some(crate::app::PingStatus::Unreachable) => {
-                vec![Span::styled("\u{25CF} offline", theme::error())]
+            Some(status @ crate::app::PingStatus::Unreachable) => {
+                vec![Span::styled(
+                    format!("{} offline", crate::app::status_glyph(Some(status))),
+                    theme::error(),
+                )]
             }
-            Some(crate::app::PingStatus::Checking) => {
-                vec![Span::styled("\u{25CF} checking", theme::muted())]
+            Some(status @ crate::app::PingStatus::Checking) => {
+                vec![Span::styled(
+                    format!("{} checking", crate::app::status_glyph(Some(status))),
+                    theme::muted(),
+                )]
             }
             Some(crate::app::PingStatus::Skipped) | None => vec![],
         };
@@ -243,7 +274,24 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     if let Some(ref askpass) = host.askpass {
-        section_field(&mut lines, "Password", askpass, max_value_width, box_width);
+        section_field(
+            &mut lines,
+            "Password",
+            password_label(askpass),
+            max_value_width,
+            box_width,
+        );
+    }
+
+    if let Some(status) = app.ping_status.get(&host.alias) {
+        let ping_text = match status {
+            crate::app::PingStatus::Reachable { rtt_ms }
+            | crate::app::PingStatus::Slow { rtt_ms } => format_rtt(*rtt_ms),
+            crate::app::PingStatus::Unreachable => "--".to_string(),
+            crate::app::PingStatus::Skipped => "-- (proxied)".to_string(),
+            crate::app::PingStatus::Checking => "...".to_string(),
+        };
+        section_field(&mut lines, "Ping", &ping_text, max_value_width, box_width);
     }
 
     if let Some(stale_ts) = host.stale {
@@ -438,10 +486,10 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             .provider_tags
             .iter()
             .chain(host.tags.iter())
-            .map(|t| format!("#{}", t))
+            .cloned()
             .collect();
         if let Some(ref provider) = host.provider {
-            all_tags.push(format!("#{}", provider));
+            all_tags.push(provider.clone());
         }
         // Tag rows fit within box content width: box_width - 4 ("│ " + " │")
         let tag_content_width = box_width.saturating_sub(4);
@@ -583,9 +631,13 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         }
     }
     for pattern_entry in &inherited {
-        section_open(
+        section_open(&mut lines, "PATTERN MATCH", box_width);
+        section_line(
             &mut lines,
-            &format!("PATTERN MATCH {}", pattern_entry.pattern),
+            vec![Span::styled(
+                super::truncate(&pattern_entry.pattern, box_width.saturating_sub(4)),
+                theme::bold(),
+            )],
             box_width,
         );
         for (key, value) in &pattern_entry.directives {
@@ -671,7 +723,7 @@ fn render_pattern_detail(
     // Tags section
     if !pattern.tags.is_empty() {
         section_open(&mut lines, "TAGS", box_width);
-        let tag_strings: Vec<String> = pattern.tags.iter().map(|t| format!("#{}", t)).collect();
+        let tag_strings: Vec<String> = pattern.tags.to_vec();
         let inner_width = box_width.saturating_sub(4);
         let tag_rows = wrap_tags(&tag_strings, inner_width);
         for row in &tag_rows {
@@ -1248,34 +1300,34 @@ mod tests {
     // =========================================================================
 
     fn tags(names: &[&str]) -> Vec<String> {
-        names.iter().map(|n| format!("#{}", n)).collect()
+        names.iter().map(|n| n.to_string()).collect()
     }
 
     #[test]
     fn wrap_tags_single_row() {
         let t = tags(&["prod", "web"]);
         let rows = wrap_tags(&t, 32);
-        assert_eq!(rows, vec![vec!["#prod", "#web"]]);
+        assert_eq!(rows, vec![vec!["prod", "web"]]);
     }
 
     #[test]
     fn wrap_tags_wraps_to_second_row() {
         let t = tags(&["production", "web", "europe", "api"]);
-        // "#production #web" = 16 cols, "#europe" would make 24 > 20
+        // "production web" = 14 cols, "europe" would make 21 > 20
         let rows = wrap_tags(&t, 20);
         assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0], vec!["#production", "#web"]);
-        assert_eq!(rows[1], vec!["#europe", "#api"]);
+        assert_eq!(rows[0], vec!["production", "web"]);
+        assert_eq!(rows[1], vec!["europe", "api"]);
     }
 
     #[test]
     fn wrap_tags_one_per_row_when_narrow() {
         let t = tags(&["production", "staging"]);
-        // Each tag is 11 chars, panel only 12 wide — no room for two
-        let rows = wrap_tags(&t, 12);
+        // Each tag is 10 chars, panel only 10 wide — no room for two
+        let rows = wrap_tags(&t, 10);
         assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0], vec!["#production"]);
-        assert_eq!(rows[1], vec!["#staging"]);
+        assert_eq!(rows[0], vec!["production"]);
+        assert_eq!(rows[1], vec!["staging"]);
     }
 
     #[test]
@@ -1287,16 +1339,16 @@ mod tests {
     #[test]
     fn wrap_tags_exact_fit() {
         let t = tags(&["ab", "cd"]);
-        // "#ab #cd" = 7 cols
-        let rows = wrap_tags(&t, 7);
-        assert_eq!(rows, vec![vec!["#ab", "#cd"]]);
+        // "ab cd" = 5 cols
+        let rows = wrap_tags(&t, 5);
+        assert_eq!(rows, vec![vec!["ab", "cd"]]);
     }
 
     #[test]
     fn wrap_tags_exact_overflow() {
         let t = tags(&["ab", "cd"]);
-        // "#ab #cd" = 7 cols, max 6 → wraps
-        let rows = wrap_tags(&t, 6);
+        // "ab cd" = 5 cols, max 4 → wraps
+        let rows = wrap_tags(&t, 4);
         assert_eq!(rows.len(), 2);
     }
 
@@ -1426,5 +1478,39 @@ mod tests {
         hosts.push(target.clone());
         let chain = resolve_proxy_chain(&target, &hosts);
         assert!(chain.len() <= 10);
+    }
+
+    // =========================================================================
+    // password_label tests
+    // =========================================================================
+
+    #[test]
+    fn password_label_keychain() {
+        assert_eq!(password_label("keychain"), "keychain");
+    }
+
+    #[test]
+    fn password_label_1password() {
+        assert_eq!(password_label("op://vault/item"), "1password");
+    }
+
+    #[test]
+    fn password_label_bitwarden() {
+        assert_eq!(password_label("bw:some-id"), "bitwarden");
+    }
+
+    #[test]
+    fn password_label_pass() {
+        assert_eq!(password_label("pass:entry"), "pass");
+    }
+
+    #[test]
+    fn password_label_vault() {
+        assert_eq!(password_label("vault:secret/path"), "vault");
+    }
+
+    #[test]
+    fn password_label_custom() {
+        assert_eq!(password_label("/usr/bin/my-askpass"), "custom");
     }
 }

@@ -123,7 +123,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let can_scroll = total_lines > max_body;
     let mut spans: Vec<Span<'_>> = Vec::new();
     if can_scroll {
-        let [k, l] = super::footer_action(" j/k", " scroll ");
+        let [k, l] = super::footer_action("j/k", " scroll ");
         spans.extend([k, l]);
         spans.push(Span::raw("  "));
     } else {

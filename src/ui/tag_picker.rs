@@ -56,7 +56,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         .map(|tag| {
             let count = tag_counts.get(tag.as_str()).copied().unwrap_or(0);
             let line = Line::from(vec![
-                Span::styled(format!(" #{}", tag), theme::bold()),
+                Span::styled(format!(" {}", tag), theme::bold()),
                 Span::styled(format!(" ({})", count), theme::muted()),
             ]);
             ListItem::new(line)
@@ -85,10 +85,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     frame.render_stateful_widget(list, chunks[0], &mut app.ui.tag_picker_state);
 
     let spans = vec![
-        Span::styled(" Enter", theme::primary_action()),
+        Span::styled(" Enter ", theme::footer_key()),
         Span::styled(" select ", theme::muted()),
         Span::raw("  "),
-        Span::styled("Esc", theme::accent_bold()),
+        Span::styled(" Esc ", theme::footer_key()),
         Span::styled(" back", theme::muted()),
     ];
     super::render_footer_with_status(frame, chunks[2], spans, app);

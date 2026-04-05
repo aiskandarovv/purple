@@ -620,9 +620,8 @@ impl Provider for Proxmox {
                 }
             };
 
-            // Build tags: PVE tags + resource type (dedup in case type already appears as a PVE tag)
+            // Build tags from PVE tags (resource type is already in metadata)
             let mut tags = parse_pve_tags(resource.tags.as_deref());
-            tags.push(resource.resource_type.clone());
             tags.sort();
             tags.dedup();
 
@@ -1489,31 +1488,28 @@ mod tests {
         );
     }
 
-    // --- resource type tag injection ---
+    // --- PVE tags (resource type is in metadata, not tags) ---
 
     #[test]
-    fn test_resource_type_tag_added() {
+    fn test_pve_tags_parsed() {
         let mut tags = parse_pve_tags(Some("prod;web"));
-        tags.push("qemu".to_string());
         tags.sort();
         tags.dedup();
-        assert_eq!(tags, vec!["prod", "qemu", "web"]);
+        assert_eq!(tags, vec!["prod", "web"]);
     }
 
     #[test]
-    fn test_resource_type_tag_no_duplicate_when_pve_tag_matches() {
-        // VM with PVE tag "qemu" must not produce ["prod", "qemu", "qemu"]
+    fn test_pve_tags_with_resource_type_name() {
+        // PVE tag that happens to be "qemu" is kept as a regular tag
         let mut tags = parse_pve_tags(Some("prod;qemu"));
-        tags.push("qemu".to_string());
         tags.sort();
         tags.dedup();
         assert_eq!(tags, vec!["prod", "qemu"]);
     }
 
     #[test]
-    fn test_lxc_resource_type_tag_no_duplicate() {
+    fn test_pve_tags_with_lxc_name() {
         let mut tags = parse_pve_tags(Some("lxc;db"));
-        tags.push("lxc".to_string());
         tags.sort();
         tags.dedup();
         assert_eq!(tags, vec!["db", "lxc"]);

@@ -249,10 +249,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 )),
                 Line::from(""),
                 Line::from(vec![
-                    Span::styled("    y", theme::danger()),
+                    Span::styled(" y ", theme::footer_key()),
                     Span::styled(" yes ", theme::muted()),
                     Span::raw("  "),
-                    Span::styled("Esc", theme::accent_bold()),
+                    Span::styled(" Esc ", theme::footer_key()),
                     Span::styled(" no", theme::muted()),
                 ]),
             ];

@@ -697,7 +697,16 @@ fn run_tui(mut app: App) -> Result<()> {
             }) => {
                 if generation == app.ping_generation {
                     let status = app::classify_ping(rtt_ms, app.slow_threshold_ms);
-                    app.ping_status.insert(alias, status);
+                    app.ping_status.insert(alias.clone(), status.clone());
+                    // Propagate bastion status to all ProxyJump dependents.
+                    // If this host is a bastion for other hosts, they inherit
+                    // its reachability (one check per bastion, not per host).
+                    app::propagate_ping_to_dependents(
+                        &app.hosts,
+                        &mut app.ping_status,
+                        &alias,
+                        &status,
+                    );
                     // Update live filter/sort as results arrive
                     if app.filter_down_only {
                         app.apply_filter();
@@ -3221,10 +3230,10 @@ mod tests {
         let rounded_count = source.matches("BorderType::Rounded").count();
         assert!(rounded_count >= 4, "all dialogs should use rounded borders");
 
-        // ConfirmImport uses accent_bold for y (not danger, since import is not destructive)
+        // ConfirmImport uses footer_key for y (not danger, since import is not destructive)
         assert!(
-            source.contains(r#"Span::styled("    y", theme::accent_bold())"#),
-            "import dialog y should use accent_bold"
+            source.contains(r#"Span::styled(" y ", theme::footer_key())"#),
+            "import dialog y should use footer_key"
         );
     }
 

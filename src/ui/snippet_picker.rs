@@ -192,10 +192,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             frame,
             footer_area,
             vec![
-                Span::styled(" Enter", theme::primary_action()),
+                Span::styled(" Enter ", theme::footer_key()),
                 Span::styled(" select ", theme::muted()),
                 Span::raw("  "),
-                Span::styled("Esc", theme::accent_bold()),
+                Span::styled(" Esc ", theme::footer_key()),
                 Span::styled(" cancel", theme::muted()),
             ],
             app,
@@ -214,10 +214,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                     format!(" Remove '{}'? ", super::truncate(name, 20)),
                     theme::bold(),
                 ),
-                Span::styled("y", theme::accent_bold()),
+                Span::styled(" y ", theme::footer_key()),
                 Span::styled(" yes ", theme::muted()),
                 Span::raw("  "),
-                Span::styled("Esc", theme::accent_bold()),
+                Span::styled(" Esc ", theme::footer_key()),
                 Span::styled(" no", theme::muted()),
             ],
             app,
@@ -225,7 +225,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     } else {
         let mut spans: Vec<Span<'_>> = Vec::new();
         if !app.snippet_store.snippets.is_empty() {
-            let [k, l] = super::footer_primary(" Enter", " run ");
+            let [k, l] = super::footer_primary("Enter", " run ");
             spans.extend([k, l, Span::raw("  ")]);
             let [k, l] = super::footer_action("!", " terminal ");
             spans.extend([k, l, Span::raw("  ")]);

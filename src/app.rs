@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::SystemTime;
 
+use ratatui::text::Span;
 use ratatui::widgets::ListState;
 
 use crate::history::ConnectionHistory;
@@ -11,6 +12,7 @@ use crate::providers::config::ProviderConfig;
 use crate::ssh_config::model::{ConfigElement, HostEntry, PatternEntry, SshConfigFile};
 use crate::ssh_keys::{self, SshKeyInfo};
 use crate::tunnel::{TunnelRule, TunnelType};
+use crate::ui::theme;
 
 /// Case-insensitive substring check without allocation.
 /// Uses a byte-window approach for ASCII strings (the common case for SSH
@@ -1127,6 +1129,14 @@ impl SnippetParamFormState {
             .map(|(i, p)| (p.name.clone(), self.values[i].clone()))
             .collect()
     }
+
+    /// Returns true if any parameter value differs from its default.
+    pub fn is_dirty(&self) -> bool {
+        self.params.iter().enumerate().any(|(i, p)| {
+            let default = p.default.as_deref().unwrap_or("");
+            self.values[i] != default
+        })
+    }
 }
 
 /// Status message displayed at the bottom.
@@ -1251,6 +1261,20 @@ pub fn classify_ping(rtt_ms: Option<u32>, slow_threshold_ms: u16) -> PingStatus 
     }
 }
 
+/// Propagate a ping result to all hosts that use the given alias as ProxyJump bastion.
+pub fn propagate_ping_to_dependents(
+    hosts: &[HostEntry],
+    ping_status: &mut HashMap<String, PingStatus>,
+    bastion_alias: &str,
+    status: &PingStatus,
+) {
+    for h in hosts {
+        if h.proxy_jump == bastion_alias {
+            ping_status.insert(h.alias.clone(), status.clone());
+        }
+    }
+}
+
 /// Sort key for ping status: unreachable first, slow, reachable, unchecked last.
 fn ping_sort_key(status: Option<&PingStatus>) -> u8 {
     match status {
@@ -1260,6 +1284,139 @@ fn ping_sort_key(status: Option<&PingStatus>) -> u8 {
         Some(PingStatus::Checking) => 3,
         Some(PingStatus::Skipped) | None => 4,
     }
+}
+
+/// Status glyph for dual encoding (color + shape).
+/// ● online, ▲ slow, ✖ down, ○ unchecked.
+pub fn status_glyph(status: Option<&PingStatus>) -> &'static str {
+    match status {
+        Some(PingStatus::Reachable { .. }) => "\u{25CF}", // ●
+        Some(PingStatus::Slow { .. }) => "\u{25B2}",      // ▲
+        Some(PingStatus::Unreachable) => "\u{2716}",      // ✖
+        Some(PingStatus::Checking) => "\u{25CB}",         // ○
+        Some(PingStatus::Skipped) => "",
+        None => "\u{25CB}", // ○
+    }
+}
+
+/// A display tag with its source (user-defined or provider-synced).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DisplayTag {
+    pub name: String,
+    pub is_user: bool,
+}
+
+/// Select up to 3 tags for display based on view mode and grouping.
+/// Returns a Vec of up to 3 DisplayTags (user tags first, then provider tags).
+pub fn select_display_tags(
+    host: &HostEntry,
+    group_by: &GroupBy,
+    detail_mode: bool,
+) -> Vec<DisplayTag> {
+    let group_name = match group_by {
+        GroupBy::Provider => host.provider.clone(),
+        GroupBy::Tag(t) => Some(t.clone()),
+        GroupBy::None => None,
+    };
+
+    let not_group = |t: &&str| {
+        group_name
+            .as_ref()
+            .is_none_or(|g| !t.eq_ignore_ascii_case(g))
+    };
+
+    // Collect user tags, filtering out the group name
+    let user_tags: Vec<DisplayTag> = host
+        .tags
+        .iter()
+        .map(|t| t.as_str())
+        .filter(not_group)
+        .map(|t| DisplayTag {
+            name: t.to_string(),
+            is_user: true,
+        })
+        .collect();
+
+    let limit = if detail_mode { 1 } else { 3 };
+    let is_grouped = !matches!(group_by, GroupBy::None);
+
+    // Grouped view: user tags only. Flat view: user tags + provider tags.
+    if is_grouped {
+        user_tags.into_iter().take(limit).collect()
+    } else {
+        let provider_tags = host
+            .provider_tags
+            .iter()
+            .chain(host.provider.iter())
+            .map(|t| DisplayTag {
+                name: t.to_string(),
+                is_user: false,
+            });
+        user_tags
+            .into_iter()
+            .chain(provider_tags)
+            .take(limit)
+            .collect()
+    }
+}
+
+/// Build health summary spans: ●23 ▲2 ✖1 ○1
+/// Only includes states with count > 0. Returns empty vec if no pings.
+pub fn health_summary_spans(
+    ping_status: &HashMap<String, PingStatus>,
+    hosts: &[HostEntry],
+) -> Vec<Span<'static>> {
+    health_summary_spans_for(ping_status, hosts.iter().map(|h| h.alias.as_str()))
+}
+
+/// Build health summary spans for a subset of host aliases.
+/// Only includes states with count > 0. Returns empty vec if no pings.
+pub fn health_summary_spans_for<'a>(
+    ping_status: &HashMap<String, PingStatus>,
+    aliases: impl Iterator<Item = &'a str>,
+) -> Vec<Span<'static>> {
+    if ping_status.is_empty() {
+        return vec![];
+    }
+    let mut online = 0u32;
+    let mut slow = 0u32;
+    let mut down = 0u32;
+    let mut unchecked = 0u32;
+    for alias in aliases {
+        match ping_status.get(alias) {
+            Some(PingStatus::Reachable { .. }) => online += 1,
+            Some(PingStatus::Slow { .. }) => slow += 1,
+            Some(PingStatus::Unreachable) => down += 1,
+            Some(PingStatus::Checking) | None => unchecked += 1,
+            Some(PingStatus::Skipped) => {} // ProxyJump, excluded
+        }
+    }
+    let mut spans = Vec::new();
+    if online > 0 {
+        spans.push(Span::styled(
+            format!("\u{25CF}{online}"),
+            theme::online_dot(),
+        ));
+    }
+    if slow > 0 {
+        if !spans.is_empty() {
+            spans.push(Span::raw(" "));
+        }
+        spans.push(Span::styled(format!("\u{25B2}{slow}"), theme::warning()));
+    }
+    if down > 0 {
+        if !spans.is_empty() {
+            spans.push(Span::raw(" "));
+        }
+        spans.push(Span::styled(format!("\u{2716}{down}"), theme::error()));
+    }
+    if unchecked > 0 {
+        if !spans.is_empty() {
+            spans.push(Span::raw(" "));
+        }
+        spans.push(Span::styled(format!("\u{25CB}{unchecked}"), theme::muted()));
+    }
+    spans
 }
 
 /// Group mode for the host list.
@@ -8303,5 +8460,449 @@ Host aws1
             .collect();
         // Unreachable first, then Slow, then Reachable
         assert_eq!(aliases, vec!["web2", "web3", "web1"]);
+    }
+
+    #[test]
+    fn status_glyph_reachable() {
+        let s = PingStatus::Reachable { rtt_ms: 10 };
+        assert_eq!(status_glyph(Some(&s)), "\u{25CF}");
+    }
+
+    #[test]
+    fn status_glyph_slow() {
+        let s = PingStatus::Slow { rtt_ms: 300 };
+        assert_eq!(status_glyph(Some(&s)), "\u{25B2}");
+    }
+
+    #[test]
+    fn status_glyph_unreachable() {
+        assert_eq!(status_glyph(Some(&PingStatus::Unreachable)), "\u{2716}");
+    }
+
+    #[test]
+    fn status_glyph_checking() {
+        assert_eq!(status_glyph(Some(&PingStatus::Checking)), "\u{25CB}");
+    }
+
+    #[test]
+    fn status_glyph_skipped() {
+        assert_eq!(status_glyph(Some(&PingStatus::Skipped)), "");
+    }
+
+    #[test]
+    fn status_glyph_none() {
+        assert_eq!(status_glyph(None), "\u{25CB}");
+    }
+
+    #[test]
+    fn health_summary_empty_ping_status() {
+        let app = make_app("Host web1\n  HostName 1.1.1.1\n");
+        let spans = health_summary_spans(&app.ping_status, &app.hosts);
+        assert!(spans.is_empty());
+    }
+
+    #[test]
+    fn health_summary_mixed_statuses() {
+        let mut app = make_app(
+            "Host web1\n  HostName 1.1.1.1\nHost web2\n  HostName 2.2.2.2\nHost web3\n  HostName 3.3.3.3\nHost web4\n  HostName 4.4.4.4\n",
+        );
+        app.ping_status
+            .insert("web1".to_string(), PingStatus::Reachable { rtt_ms: 10 });
+        app.ping_status
+            .insert("web2".to_string(), PingStatus::Slow { rtt_ms: 300 });
+        app.ping_status
+            .insert("web3".to_string(), PingStatus::Unreachable);
+        // web4 has no ping status -> unchecked
+        let spans = health_summary_spans(&app.ping_status, &app.hosts);
+        // Layout: ●1 " " ▲1 " " ✖1 " " ○1 = 4 status + 3 separators = 7 spans
+        assert_eq!(spans.len(), 7);
+        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains("●1"), "should contain online count");
+        assert!(text.contains("▲1"), "should contain slow count");
+        assert!(text.contains("✖1"), "should contain down count");
+        assert!(text.contains("○1"), "should contain unchecked count");
+    }
+
+    #[test]
+    fn health_summary_suppresses_zero_count() {
+        let mut app = make_app("Host web1\n  HostName 1.1.1.1\n");
+        app.ping_status
+            .insert("web1".to_string(), PingStatus::Reachable { rtt_ms: 10 });
+        let spans = health_summary_spans(&app.ping_status, &app.hosts);
+        // Only online, no separators
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].content.as_ref(), "\u{25CF}1");
+    }
+
+    #[test]
+    fn health_summary_skipped_excluded() {
+        let mut app = make_app("Host proxy\n  HostName 1.1.1.1\n");
+        app.ping_status
+            .insert("proxy".to_string(), PingStatus::Skipped);
+        let spans = health_summary_spans(&app.ping_status, &app.hosts);
+        // Skipped hosts produce no counts, so result is empty
+        assert!(spans.is_empty());
+    }
+
+    #[test]
+    fn health_summary_for_subset() {
+        let mut ping_status = HashMap::new();
+        ping_status.insert("web1".to_string(), PingStatus::Reachable { rtt_ms: 10 });
+        ping_status.insert("web2".to_string(), PingStatus::Unreachable);
+        ping_status.insert("web3".to_string(), PingStatus::Reachable { rtt_ms: 20 });
+        // Only ask about web1 and web2
+        let spans = health_summary_spans_for(&ping_status, ["web1", "web2"].iter().copied());
+        // ●1 space ✖1 = 3 spans
+        assert_eq!(spans.len(), 3);
+        assert_eq!(spans[0].content.as_ref(), "\u{25CF}1");
+        assert_eq!(spans[2].content.as_ref(), "\u{2716}1");
+    }
+
+    /// Helper: extract tag names from DisplayTag vec.
+    fn tag_names(tags: &[DisplayTag]) -> Vec<&str> {
+        tags.iter().map(|t| t.name.as_str()).collect()
+    }
+
+    /// Helper: extract is_user flags from DisplayTag vec.
+    fn tag_sources(tags: &[DisplayTag]) -> Vec<bool> {
+        tags.iter().map(|t| t.is_user).collect()
+    }
+
+    #[test]
+    fn select_display_tags_user_and_provider_flat() {
+        let host = HostEntry {
+            tags: vec!["prod".into(), "us-east".into()],
+            provider_tags: vec!["web".into()],
+            provider: Some("aws".into()),
+            ..Default::default()
+        };
+        let tags = select_display_tags(&host, &GroupBy::None, false);
+        assert_eq!(tag_names(&tags), vec!["prod", "us-east", "web"]);
+        assert_eq!(tag_sources(&tags), vec![true, true, false]);
+    }
+
+    #[test]
+    fn select_display_tags_grouped_by_provider_suppresses_name() {
+        let host = HostEntry {
+            tags: vec!["prod".into()],
+            provider_tags: vec!["web".into()],
+            provider: Some("aws".into()),
+            ..Default::default()
+        };
+        // Grouped: only user tags shown
+        let tags = select_display_tags(&host, &GroupBy::Provider, false);
+        assert_eq!(tag_names(&tags), vec!["prod"]);
+        assert_eq!(tag_sources(&tags), vec![true]);
+    }
+
+    #[test]
+    fn select_display_tags_only_provider_tags() {
+        let host = HostEntry {
+            provider_tags: vec!["web".into(), "cache".into()],
+            provider: Some("do".into()),
+            ..Default::default()
+        };
+        let tags = select_display_tags(&host, &GroupBy::None, false);
+        assert_eq!(tag_names(&tags), vec!["web", "cache", "do"]);
+        assert_eq!(tag_sources(&tags), vec![false, false, false]);
+    }
+
+    #[test]
+    fn select_display_tags_no_tags() {
+        let host = HostEntry::default();
+        let tags = select_display_tags(&host, &GroupBy::None, false);
+        assert!(tags.is_empty());
+    }
+
+    #[test]
+    fn select_display_tags_detail_mode_only_primary() {
+        let host = HostEntry {
+            tags: vec!["prod".into(), "us-east".into()],
+            provider_tags: vec!["web".into()],
+            provider: Some("aws".into()),
+            ..Default::default()
+        };
+        let tags = select_display_tags(&host, &GroupBy::None, true);
+        assert_eq!(tag_names(&tags), vec!["prod"]);
+        assert_eq!(tag_sources(&tags), vec![true]);
+    }
+
+    #[test]
+    fn select_display_tags_group_name_suppression() {
+        let host = HostEntry {
+            tags: vec!["prod".into()],
+            provider_tags: vec![],
+            provider: None,
+            ..Default::default()
+        };
+        // Group by tag "prod" -> prod suppressed from user tags
+        let tags = select_display_tags(&host, &GroupBy::Tag("prod".into()), false);
+        assert!(tags.is_empty());
+    }
+
+    #[test]
+    fn select_display_tags_group_by_tag_shows_remaining() {
+        let host = HostEntry {
+            tags: vec!["prod".into(), "us-east".into(), "api".into()],
+            provider: Some("aws".into()),
+            ..Default::default()
+        };
+        // Group by "prod" -> "prod" suppressed, remaining user tags: us-east, api
+        let tags = select_display_tags(&host, &GroupBy::Tag("prod".into()), false);
+        assert_eq!(tag_names(&tags), vec!["us-east", "api"]);
+        assert_eq!(tag_sources(&tags), vec![true, true]);
+    }
+
+    #[test]
+    fn health_summary_for_empty_aliases() {
+        // Empty alias iterator with non-empty ping_status: all counters stay 0,
+        // returns empty spans (no health summary to display).
+        let mut ping = HashMap::new();
+        ping.insert("host1".to_string(), PingStatus::Reachable { rtt_ms: 10 });
+        let spans = health_summary_spans_for(&ping, std::iter::empty());
+        assert!(spans.is_empty());
+    }
+
+    #[test]
+    fn status_glyph_none_equals_checking() {
+        assert_eq!(
+            status_glyph(None),
+            status_glyph(Some(&PingStatus::Checking))
+        );
+    }
+
+    #[test]
+    fn select_display_tags_provider_none_group_by_provider() {
+        let host = HostEntry {
+            tags: vec!["prod".into(), "us-east".into()],
+            provider: None,
+            ..Default::default()
+        };
+        // GroupBy::Provider with provider=None: group_name is None, no suppression
+        let tags = select_display_tags(&host, &GroupBy::Provider, false);
+        assert_eq!(tag_names(&tags), vec!["prod", "us-east"]);
+        assert_eq!(tag_sources(&tags), vec![true, true]);
+    }
+
+    #[test]
+    fn select_display_tags_duplicate_provider_name_in_provider_tags() {
+        let host = HostEntry {
+            tags: vec!["prod".into()],
+            provider_tags: vec!["aws".into()],
+            provider: Some("aws".into()),
+            ..Default::default()
+        };
+        let tags = select_display_tags(&host, &GroupBy::None, false);
+        assert_eq!(tag_names(&tags), vec!["prod", "aws", "aws"]);
+        assert_eq!(tag_sources(&tags), vec![true, false, false]);
+    }
+
+    #[test]
+    fn select_display_tags_grouped_user_tags_only() {
+        let host = HostEntry {
+            tags: vec!["prod".into()],
+            provider_tags: vec!["aws".into()],
+            provider: Some("aws".into()),
+            ..Default::default()
+        };
+        // Grouped: only user tags, provider tags excluded entirely
+        let tags = select_display_tags(&host, &GroupBy::Provider, false);
+        assert_eq!(tag_names(&tags), vec!["prod"]);
+        assert_eq!(tag_sources(&tags), vec![true]);
+    }
+
+    #[test]
+    fn select_display_tags_grouped_excludes_all_provider_tags() {
+        let host = HostEntry {
+            tags: vec![],
+            provider_tags: vec!["web".into(), "cache".into()],
+            provider: Some("aws".into()),
+            ..Default::default()
+        };
+        // Grouped: no user tags, provider tags excluded entirely
+        let tags = select_display_tags(&host, &GroupBy::Provider, false);
+        assert!(tags.is_empty());
+    }
+
+    #[test]
+    fn select_display_tags_case_insensitive_group_suppression() {
+        let host = HostEntry {
+            tags: vec!["prod".into(), "AWS".into()],
+            provider_tags: vec![],
+            provider: Some("AWS".into()),
+            ..Default::default()
+        };
+        // GroupBy::Provider -> group_name = "AWS", user tag "AWS" suppressed case-insensitively
+        let tags = select_display_tags(&host, &GroupBy::Provider, false);
+        assert_eq!(tag_names(&tags), vec!["prod"]);
+        assert_eq!(tag_sources(&tags), vec![true]);
+    }
+
+    #[test]
+    fn select_display_tags_flat_one_user_tag_with_provider_tags() {
+        let host = HostEntry {
+            tags: vec!["prod".into()],
+            provider_tags: vec!["web".into(), "cache".into()],
+            provider: Some("do".into()),
+            ..Default::default()
+        };
+        let tags = select_display_tags(&host, &GroupBy::None, false);
+        assert_eq!(tag_names(&tags), vec!["prod", "web", "cache"]);
+        assert_eq!(tag_sources(&tags), vec![true, false, false]);
+    }
+
+    #[test]
+    fn select_display_tags_grouped_tertiary_user_only() {
+        let host = HostEntry {
+            tags: vec!["prod".into(), "us-east".into(), "api".into(), "db".into()],
+            provider_tags: vec!["web".into()],
+            provider: Some("aws".into()),
+            ..Default::default()
+        };
+        // Group by "prod" -> suppressed; only user tags: us-east, api, db (max 3)
+        let tags = select_display_tags(&host, &GroupBy::Tag("prod".into()), false);
+        assert_eq!(tag_names(&tags), vec!["us-east", "api", "db"]);
+        assert_eq!(tag_sources(&tags), vec![true, true, true]);
+    }
+
+    #[test]
+    fn select_display_tags_detail_mode_grouped() {
+        let host = HostEntry {
+            tags: vec!["prod".into(), "us-east".into()],
+            provider: Some("aws".into()),
+            ..Default::default()
+        };
+        let tags = select_display_tags(&host, &GroupBy::Provider, true);
+        assert_eq!(tag_names(&tags), vec!["prod"]);
+        assert_eq!(tag_sources(&tags), vec![true]);
+    }
+
+    #[test]
+    fn health_summary_skipped_excluded_with_other_hosts() {
+        let mut app = make_app("Host proxy\n  HostName 1.1.1.1\nHost web\n  HostName 2.2.2.2\n");
+        app.ping_status
+            .insert("proxy".to_string(), PingStatus::Skipped);
+        app.ping_status
+            .insert("web".to_string(), PingStatus::Reachable { rtt_ms: 5 });
+        let spans = health_summary_spans(&app.ping_status, &app.hosts);
+        // Only online count for web, skipped proxy excluded
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].content.as_ref(), "●1");
+    }
+
+    // --- Bastion ping propagation tests ---
+
+    fn make_host_entry(alias: &str, hostname: &str, proxy_jump: &str) -> HostEntry {
+        HostEntry {
+            alias: alias.to_string(),
+            hostname: hostname.to_string(),
+            proxy_jump: proxy_jump.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn propagate_ping_bastion_reachable() {
+        let bastion = make_host_entry("bastion", "1.1.1.1", "");
+        let dep1 = make_host_entry("web1", "10.0.0.1", "bastion");
+        let dep2 = make_host_entry("web2", "10.0.0.2", "bastion");
+        let other = make_host_entry("standalone", "2.2.2.2", "");
+        let hosts = vec![bastion, dep1, dep2, other];
+        let mut ping_status = HashMap::new();
+        ping_status.insert("web1".to_string(), PingStatus::Checking);
+        ping_status.insert("web2".to_string(), PingStatus::Checking);
+
+        let status = PingStatus::Reachable { rtt_ms: 15 };
+        propagate_ping_to_dependents(&hosts, &mut ping_status, "bastion", &status);
+
+        assert_eq!(
+            ping_status.get("web1"),
+            Some(&PingStatus::Reachable { rtt_ms: 15 })
+        );
+        assert_eq!(
+            ping_status.get("web2"),
+            Some(&PingStatus::Reachable { rtt_ms: 15 })
+        );
+        assert!(!ping_status.contains_key("standalone"));
+    }
+
+    #[test]
+    fn propagate_ping_bastion_unreachable() {
+        let bastion = make_host_entry("bastion", "1.1.1.1", "");
+        let dep = make_host_entry("web1", "10.0.0.1", "bastion");
+        let hosts = vec![bastion, dep];
+        let mut ping_status = HashMap::new();
+        ping_status.insert("web1".to_string(), PingStatus::Checking);
+
+        propagate_ping_to_dependents(
+            &hosts,
+            &mut ping_status,
+            "bastion",
+            &PingStatus::Unreachable,
+        );
+
+        assert_eq!(ping_status.get("web1"), Some(&PingStatus::Unreachable));
+    }
+
+    #[test]
+    fn propagate_ping_no_dependents() {
+        let host = make_host_entry("standalone", "1.1.1.1", "");
+        let hosts = vec![host];
+        let mut ping_status = HashMap::new();
+
+        propagate_ping_to_dependents(
+            &hosts,
+            &mut ping_status,
+            "standalone",
+            &PingStatus::Reachable { rtt_ms: 10 },
+        );
+
+        assert!(!ping_status.contains_key("standalone"));
+    }
+
+    // --- SnippetParamFormState::is_dirty tests ---
+
+    #[test]
+    fn snippet_param_form_not_dirty_when_defaults_match() {
+        let state = SnippetParamFormState::new(&[crate::snippet::SnippetParam {
+            name: "host".into(),
+            default: Some("localhost".into()),
+        }]);
+        assert!(!state.is_dirty());
+    }
+
+    #[test]
+    fn snippet_param_form_dirty_when_value_differs() {
+        let mut state = SnippetParamFormState::new(&[crate::snippet::SnippetParam {
+            name: "host".into(),
+            default: Some("localhost".into()),
+        }]);
+        state.values[0] = "other".into();
+        assert!(state.is_dirty());
+    }
+
+    #[test]
+    fn snippet_param_form_not_dirty_no_default_empty_value() {
+        let state = SnippetParamFormState::new(&[crate::snippet::SnippetParam {
+            name: "host".into(),
+            default: None,
+        }]);
+        assert!(!state.is_dirty());
+    }
+
+    #[test]
+    fn snippet_param_form_dirty_no_default_nonempty_value() {
+        let mut state = SnippetParamFormState::new(&[crate::snippet::SnippetParam {
+            name: "host".into(),
+            default: None,
+        }]);
+        state.values[0] = "something".into();
+        assert!(state.is_dirty());
+    }
+
+    #[test]
+    fn snippet_param_form_not_dirty_empty_params() {
+        let state = SnippetParamFormState::new(&[]);
+        assert!(!state.is_dirty());
     }
 }
