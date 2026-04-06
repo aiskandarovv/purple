@@ -5,7 +5,7 @@ use std::sync::mpsc;
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::app::{App, DetailAnimation, FormField, HostForm, ProviderFormFields, Screen, ViewMode};
+use crate::app::{App, FormField, HostForm, ProviderFormFields, Screen, ViewMode};
 use crate::clipboard;
 use crate::event::AppEvent;
 use crate::ping;
@@ -708,25 +708,12 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
             }
         }
         KeyCode::Char('v') => {
-            let opening = app.view_mode == ViewMode::Compact;
-            // Determine current progress if mid-animation
-            let start_progress = if let Some(p) = app.detail_anim_progress() {
-                p
-            } else if opening {
-                0.0
-            } else {
-                1.0
-            };
-            app.view_mode = if opening {
+            app.view_mode = if app.view_mode == ViewMode::Compact {
                 ViewMode::Detailed
             } else {
                 ViewMode::Compact
             };
-            app.detail_anim = Some(DetailAnimation {
-                start: std::time::Instant::now(),
-                opening,
-                start_progress,
-            });
+            app.detail_toggle_pending = true;
             app.ui.detail_scroll = 0;
             let _ = preferences::save_view_mode(app.view_mode);
         }

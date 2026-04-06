@@ -67,8 +67,12 @@ impl Tui {
     }
 
     /// Draw the UI.
-    pub fn draw(&mut self, app: &mut App) -> Result<()> {
-        self.terminal.draw(|frame| ui::render(frame, app))?;
+    pub fn draw(
+        &mut self,
+        app: &mut App,
+        anim: &mut crate::animation::AnimationState,
+    ) -> Result<()> {
+        self.terminal.draw(|frame| ui::render(frame, app, anim))?;
         Ok(())
     }
 

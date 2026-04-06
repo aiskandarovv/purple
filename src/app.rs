@@ -1172,28 +1172,6 @@ pub enum ViewMode {
     Detailed,
 }
 
-/// Animation state for the detail panel slide transition.
-#[derive(Debug)]
-pub struct DetailAnimation {
-    /// Animation start time.
-    pub start: std::time::Instant,
-    /// Whether animating towards open (true) or closed (false).
-    pub opening: bool,
-    /// Progress at the start of this animation (0.0 = closed, 1.0 = open).
-    /// Allows reversing mid-animation smoothly.
-    pub start_progress: f32,
-}
-
-/// Animation state for overlay open/close transitions.
-#[derive(Debug)]
-pub struct OverlayAnimation {
-    pub start: std::time::Instant,
-    /// true = opening, false = closing.
-    pub opening: bool,
-    /// Duration in ms. Allows per-screen animation speed (e.g. slower for welcome).
-    pub duration_ms: u128,
-}
-
 /// Sort mode for the host list.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SortMode {
@@ -1287,13 +1265,16 @@ fn ping_sort_key(status: Option<&PingStatus>) -> u8 {
 }
 
 /// Status glyph for dual encoding (color + shape).
-/// ● online, ▲ slow, ✖ down, ○ unchecked.
-pub fn status_glyph(status: Option<&PingStatus>) -> &'static str {
+/// ● online, ▲ slow, ✖ down. Checking uses animated spinner via tick.
+pub fn status_glyph(status: Option<&PingStatus>, tick: u64) -> &'static str {
     match status {
         Some(PingStatus::Reachable { .. }) => "\u{25CF}", // ●
         Some(PingStatus::Slow { .. }) => "\u{25B2}",      // ▲
         Some(PingStatus::Unreachable) => "\u{2716}",      // ✖
-        Some(PingStatus::Checking) => "\u{25CB}",         // ○
+        Some(PingStatus::Checking) => {
+            crate::animation::SPINNER_FRAMES
+                [(tick as usize) % crate::animation::SPINNER_FRAMES.len()]
+        }
         Some(PingStatus::Skipped) => "",
         None => "\u{25CB}", // ○
     }
@@ -1615,18 +1596,10 @@ pub struct App {
     pub sort_mode: SortMode,
     pub group_by: GroupBy,
     pub view_mode: ViewMode,
-    pub detail_anim: Option<DetailAnimation>,
 
-    // Overlay animation
-    pub overlay_anim: Option<OverlayAnimation>,
-    pub overlay_buffer: Option<ratatui::buffer::Buffer>,
-    pub prev_was_overlay: bool,
-
-    // Per-frame animation snapshots (set by tick_animations, read by render code).
-    // Avoids multiple elapsed() calls per frame which can race.
-    pub frame_detail_progress: Option<f32>,
-    pub frame_overlay_progress: Option<f32>,
-    pub frame_animating: bool,
+    /// Signal for animation layer: detail panel toggle requested.
+    /// Set by handler, consumed by AnimationState.detect_transitions().
+    pub detail_toggle_pending: bool,
 
     // Undo (multi-level, capped at 50)
     pub undo_stack: Vec<DeletedHost>,
@@ -1790,13 +1763,7 @@ impl App {
             sort_mode: SortMode::Original,
             group_by: GroupBy::None,
             view_mode: ViewMode::Compact,
-            detail_anim: None,
-            overlay_anim: None,
-            overlay_buffer: None,
-            prev_was_overlay: false,
-            frame_detail_progress: None,
-            frame_overlay_progress: None,
-            frame_animating: false,
+            detail_toggle_pending: false,
             undo_stack: Vec::new(),
             provider_config: ProviderConfig::load(),
             provider_form: ProviderFormFields::new(),
@@ -2885,116 +2852,6 @@ impl App {
             is_error,
             tick_count: 0,
         });
-    }
-
-    /// Detail panel animation duration in milliseconds.
-    const DETAIL_ANIM_DURATION_MS: u128 = 200;
-
-    /// Current detail panel animation progress (0.0 = closed, 1.0 = open).
-    /// Returns the per-frame snapshot set by `tick_animations`.
-    pub fn detail_anim_progress(&self) -> Option<f32> {
-        self.frame_detail_progress
-    }
-
-    /// Current overlay animation progress (0.0 = hidden, 1.0 = fully visible).
-    /// Returns the per-frame snapshot set by `tick_animations`.
-    pub fn overlay_anim_progress(&self) -> Option<f32> {
-        self.frame_overlay_progress
-    }
-
-    /// Snapshot animation progress and clean up completed animations.
-    /// Call once per frame in the event loop, before rendering.
-    /// All render code reads the snapshot fields instead of calling elapsed()
-    /// independently, eliminating race windows within a single frame.
-    pub fn tick_animations(&mut self) {
-        // --- Detail panel ---
-        self.frame_detail_progress = self.detail_anim.as_ref().and_then(|anim| {
-            let elapsed = anim.start.elapsed().as_millis();
-            if elapsed >= Self::DETAIL_ANIM_DURATION_MS {
-                return None;
-            }
-            let t = elapsed as f32 / Self::DETAIL_ANIM_DURATION_MS as f32;
-            // Ease-out cubic: 1 - (1 - t)^3
-            let eased = 1.0 - (1.0 - t) * (1.0 - t) * (1.0 - t);
-            let progress = if anim.opening {
-                anim.start_progress + (1.0 - anim.start_progress) * eased
-            } else {
-                anim.start_progress * (1.0 - eased)
-            };
-            Some(progress)
-        });
-        if self.frame_detail_progress.is_none() && self.detail_anim.is_some() {
-            self.detail_anim = None;
-        }
-
-        // --- Overlay ---
-        self.frame_overlay_progress = self.overlay_anim.as_ref().and_then(|anim| {
-            let elapsed = anim.start.elapsed().as_millis();
-            if elapsed >= anim.duration_ms {
-                return None;
-            }
-            let t = elapsed as f32 / anim.duration_ms as f32;
-            // Ease-out cubic
-            let eased = 1.0 - (1.0 - t) * (1.0 - t) * (1.0 - t);
-            Some(if anim.opening { eased } else { 1.0 - eased })
-        });
-        if self.frame_overlay_progress.is_none() {
-            if let Some(ref anim) = self.overlay_anim {
-                let was_closing = !anim.opening;
-                self.overlay_anim = None;
-                if was_closing {
-                    self.overlay_buffer = None;
-                }
-            }
-        }
-
-        // --- Composite: is any animation running? ---
-        let welcome_animating = self
-            .welcome_opened
-            .is_some_and(|t| t.elapsed().as_millis() < Self::WELCOME_TOTAL_MS);
-        self.frame_animating = self.frame_detail_progress.is_some()
-            || self.frame_overlay_progress.is_some()
-            || welcome_animating;
-    }
-
-    /// Total welcome animation duration: zoom(350) + logo(450) + delay(100) + typewriter(~2000).
-    const WELCOME_TOTAL_MS: u128 = 3000;
-
-    /// Whether any animation (detail, overlay or welcome typewriter) is running.
-    /// Returns the per-frame snapshot set by `tick_animations`.
-    pub fn is_animating(&self) -> bool {
-        self.frame_animating
-    }
-
-    /// Detect overlay open/close transitions and start animations.
-    /// Must be called once per frame, before `tick_animations`, so the snapshot
-    /// includes newly started animations on the very first frame.
-    pub fn detect_overlay_transition(&mut self) {
-        let is_overlay = !matches!(self.screen, Screen::HostList);
-        if is_overlay && !self.prev_was_overlay {
-            let is_welcome = matches!(self.screen, Screen::Welcome { .. });
-            let duration = if is_welcome { 350 } else { 150 };
-            if is_welcome {
-                self.welcome_opened = Some(std::time::Instant::now());
-            }
-            self.overlay_anim = Some(OverlayAnimation {
-                start: std::time::Instant::now(),
-                opening: true,
-                duration_ms: duration,
-            });
-        } else if !is_overlay && self.prev_was_overlay {
-            if self.overlay_buffer.is_some() {
-                self.overlay_anim = Some(OverlayAnimation {
-                    start: std::time::Instant::now(),
-                    opening: false,
-                    duration_ms: 150,
-                });
-            }
-            // Always safe: welcome_opened is only set when the welcome screen
-            // opens (above). For non-welcome overlays this is already None.
-            self.welcome_opened = None;
-        }
-        self.prev_was_overlay = is_overlay;
     }
 
     /// Tick the status message timer. Errors show for 5s, success for 3s.
@@ -8722,33 +8579,57 @@ Host aws1
     #[test]
     fn status_glyph_reachable() {
         let s = PingStatus::Reachable { rtt_ms: 10 };
-        assert_eq!(status_glyph(Some(&s)), "\u{25CF}");
+        assert_eq!(status_glyph(Some(&s), 0), "\u{25CF}");
     }
 
     #[test]
     fn status_glyph_slow() {
         let s = PingStatus::Slow { rtt_ms: 300 };
-        assert_eq!(status_glyph(Some(&s)), "\u{25B2}");
+        assert_eq!(status_glyph(Some(&s), 0), "\u{25B2}");
     }
 
     #[test]
     fn status_glyph_unreachable() {
-        assert_eq!(status_glyph(Some(&PingStatus::Unreachable)), "\u{2716}");
+        assert_eq!(status_glyph(Some(&PingStatus::Unreachable), 0), "\u{2716}");
     }
 
     #[test]
     fn status_glyph_checking() {
-        assert_eq!(status_glyph(Some(&PingStatus::Checking)), "\u{25CB}");
+        assert_eq!(
+            status_glyph(Some(&PingStatus::Checking), 0),
+            "\u{280B}" // first spinner frame
+        );
+    }
+
+    #[test]
+    fn status_glyph_checking_cycles() {
+        assert_eq!(
+            status_glyph(Some(&PingStatus::Checking), 1),
+            "\u{2819}" // second spinner frame
+        );
     }
 
     #[test]
     fn status_glyph_skipped() {
-        assert_eq!(status_glyph(Some(&PingStatus::Skipped)), "");
+        assert_eq!(status_glyph(Some(&PingStatus::Skipped), 0), "");
     }
 
     #[test]
     fn status_glyph_none() {
-        assert_eq!(status_glyph(None), "\u{25CB}");
+        assert_eq!(status_glyph(None, 0), "\u{25CB}");
+    }
+
+    #[test]
+    fn status_glyph_none_is_static_circle() {
+        assert_eq!(status_glyph(None, 0), status_glyph(None, 5));
+    }
+
+    #[test]
+    fn status_glyph_none_differs_from_checking() {
+        assert_ne!(
+            status_glyph(None, 0),
+            status_glyph(Some(&PingStatus::Checking), 0)
+        );
     }
 
     #[test]
@@ -8918,14 +8799,6 @@ Host aws1
         ping.insert("host1".to_string(), PingStatus::Reachable { rtt_ms: 10 });
         let spans = health_summary_spans_for(&ping, std::iter::empty());
         assert!(spans.is_empty());
-    }
-
-    #[test]
-    fn status_glyph_none_equals_checking() {
-        assert_eq!(
-            status_glyph(None),
-            status_glyph(Some(&PingStatus::Checking))
-        );
     }
 
     #[test]

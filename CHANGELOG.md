@@ -1,3 +1,8 @@
+## 2.28.0
+
+- Animation state separated from App into dedicated AnimationState module
+- Animated braille spinner for ping checking status
+
 ## 2.27.3
 
 - New welcome screen logo (ANSI Shadow style)

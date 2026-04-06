@@ -197,7 +197,7 @@ fn composite_host_label(host: &crate::ssh_config::model::HostEntry) -> String {
     s
 }
 
-pub fn render(frame: &mut Frame, app: &mut App) {
+pub fn render(frame: &mut Frame, app: &mut App, spinner_tick: u64, detail_progress: Option<f32>) {
     let area = frame.area();
 
     let is_searching = app.search.query.is_some();
@@ -238,10 +238,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         40u16
     };
 
-    // Calculate detail width: animated or instant.
-    // Only animate when the terminal is wide enough for the detail panel.
+    // Calculate detail width: interpolated during animation, instant otherwise.
     let detail_width = if content_area.width >= DETAIL_MIN_WIDTH {
-        if let Some(progress) = app.detail_anim_progress() {
+        if let Some(progress) = detail_progress {
             (progress * full_detail_width as f32).round() as u16
         } else if target_detail {
             full_detail_width
@@ -266,15 +265,15 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     };
 
     if is_searching {
-        render_search_list(frame, app, list_area);
+        render_search_list(frame, app, list_area, spinner_tick);
         render_search_bar(frame, app, chunks[2]);
         super::render_footer_with_status(frame, chunks[3], search_footer_spans(), app);
     } else if is_tagging {
-        render_display_list(frame, app, list_area);
+        render_display_list(frame, app, list_area, spinner_tick);
         render_tag_bar(frame, app, chunks[2]);
         super::render_footer_with_status(frame, chunks[3], tag_footer_spans(), app);
     } else {
-        render_display_list(frame, app, list_area);
+        render_display_list(frame, app, list_area, spinner_tick);
         let spans = if app.is_pattern_selected() {
             pattern_footer_spans(target_detail)
         } else {
@@ -285,7 +284,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     if let Some(detail) = detail_area {
         if detail.width >= DETAIL_RENDER_MIN {
-            super::detail_panel::render(frame, app, detail);
+            super::detail_panel::render(frame, app, detail, spinner_tick);
         } else {
             // During animation: render empty bordered area
             let block = ratatui::widgets::Block::bordered()
@@ -357,7 +356,12 @@ fn brand_label_for_group(group_by: &GroupBy) -> &'static str {
     }
 }
 
-fn render_display_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
+fn render_display_list(
+    frame: &mut Frame,
+    app: &mut App,
+    area: ratatui::layout::Rect,
+    spinner_tick: u64,
+) {
     // Build multi-span title: hosts count + optional state badges.
     // Show "purple" branding when group bar is hidden, "hosts" otherwise.
     let visible_count = app
@@ -588,6 +592,7 @@ fn render_display_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::
                         app.multi_select.contains(index),
                         &app.group_by,
                         detail_mode,
+                        spinner_tick,
                     );
                     items.push(list_item);
                 } else {
@@ -611,7 +616,12 @@ fn render_display_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::
     frame.render_stateful_widget(list, list_area, &mut app.ui.list_state);
 }
 
-fn render_search_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
+fn render_search_list(
+    frame: &mut Frame,
+    app: &mut App,
+    area: ratatui::layout::Rect,
+    spinner_tick: u64,
+) {
     let total_results =
         app.search.filtered_indices.len() + app.search.filtered_pattern_indices.len();
     let total = app.hosts.len() + app.patterns.len();
@@ -719,6 +729,7 @@ fn render_search_list(frame: &mut Frame, app: &mut App, area: ratatui::layout::R
                 app.multi_select.contains(&idx),
                 &app.group_by,
                 false,
+                spinner_tick,
             );
             items.push(list_item);
         }
@@ -828,6 +839,7 @@ fn build_host_item<'a>(
     multi_selected: bool,
     group_by: &GroupBy,
     detail_mode: bool,
+    spinner_tick: u64,
 ) -> ListItem<'a> {
     let q = query.unwrap_or("");
     let gap = " ".repeat(cols.gap);
@@ -854,7 +866,7 @@ fn build_host_item<'a>(
 
     // Status indicator (2 chars wide): dual-encoded glyph (color + shape)
     let ping = ping_status.get(&host.alias);
-    let glyph = app::status_glyph(ping);
+    let glyph = app::status_glyph(ping, spinner_tick);
     let style = match ping {
         Some(PingStatus::Reachable { .. }) => theme::online_dot(),
         Some(PingStatus::Slow { .. }) => theme::warning(),

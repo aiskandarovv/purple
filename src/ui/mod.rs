@@ -31,147 +31,126 @@ const MIN_WIDTH: u16 = 50;
 const MIN_HEIGHT: u16 = 14;
 
 /// Top-level render dispatcher.
-pub fn render(frame: &mut Frame, app: &mut App) {
+pub fn render(frame: &mut Frame, app: &mut App, anim: &mut crate::animation::AnimationState) {
+    anim.tick_overlay_anim();
     let area = frame.area();
 
     // Terminal too small guard
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
         let msg = Paragraph::new(Line::from(vec![
             Span::styled("\u{26A0}", theme::error()),
-            Span::raw(" Terminal too small. Need at least 50x10."),
+            Span::raw(" Terminal too small. Need at least 50x14."),
         ]));
         frame.render_widget(msg, area);
         return;
     }
+
+    // Render host list with animated detail panel width.
+    let detail_progress = anim.detail_anim_progress();
+    host_list::render(frame, app, anim.spinner_tick, detail_progress);
 
     // Status messages show in the host list footer (including behind overlays),
     // but not in overlay footers. render_overlay hides app.status while the
     // overlay renders so render_footer_with_status calls inside overlays ignore it.
     match &app.screen {
         Screen::HostList => {
-            host_list::render(frame, app);
-            // Close animation: paint saved overlay buffer with shrinking clip
-            render_overlay_close(frame, app);
+            render_overlay_close(frame, anim);
         }
         Screen::AddHost | Screen::EditHost { .. } => {
-            host_list::render(frame, app);
-            render_overlay(frame, app, host_form::render);
+            render_overlay(frame, app, anim, host_form::render);
         }
         Screen::ConfirmDelete { alias } => {
             let alias = alias.clone();
-            host_list::render(frame, app);
-            render_overlay(frame, app, |frame, app| {
+            render_overlay(frame, app, anim, |frame, app| {
                 confirm_dialog::render(frame, app, &alias)
             });
         }
         Screen::Help { .. } => {
-            // Always render host_list as the base layer. Help can be opened from
-            // other screens (file browser, snippets, etc.) but rendering the
-            // originating screen would require it to be the active Screen variant.
-            // The help overlay covers most of the area so the base is barely visible.
-            host_list::render(frame, app);
-            render_overlay(frame, app, help::render);
+            render_overlay(frame, app, anim, help::render);
         }
         Screen::KeyList => {
-            host_list::render(frame, app);
-            render_overlay(frame, app, key_list::render);
+            render_overlay(frame, app, anim, key_list::render);
         }
         Screen::KeyDetail { index } => {
             let index = *index;
-            host_list::render(frame, app);
-            render_overlay(frame, app, |frame, app| {
+            render_overlay(frame, app, anim, |frame, app| {
                 key_list::render(frame, app);
                 key_detail::render(frame, app, index);
             });
         }
         Screen::HostDetail { index } => {
             let index = *index;
-            host_list::render(frame, app);
-            render_overlay(frame, app, |frame, app| {
+            render_overlay(frame, app, anim, |frame, app| {
                 host_detail::render(frame, app, index)
             });
         }
         Screen::TagPicker => {
-            host_list::render(frame, app);
-            render_overlay(frame, app, tag_picker::render);
+            render_overlay(frame, app, anim, tag_picker::render);
         }
         Screen::Providers => {
-            host_list::render(frame, app);
-            render_overlay(frame, app, |frame, app| {
+            render_overlay(frame, app, anim, |frame, app| {
                 provider_list::render_provider_list(frame, app)
             });
         }
         Screen::ProviderForm { provider } => {
             let provider = provider.clone();
-            host_list::render(frame, app);
-            render_overlay(frame, app, |frame, app| {
+            render_overlay(frame, app, anim, |frame, app| {
                 provider_list::render_provider_form(frame, app, &provider)
             });
         }
         Screen::TunnelList { alias } => {
             let alias = alias.clone();
-            host_list::render(frame, app);
-            render_overlay(frame, app, |frame, app| {
+            render_overlay(frame, app, anim, |frame, app| {
                 tunnel_list::render(frame, app, &alias)
             });
         }
         Screen::TunnelForm { alias, .. } => {
             let alias = alias.clone();
-            host_list::render(frame, app);
-            render_overlay(frame, app, |frame, app| {
+            render_overlay(frame, app, anim, |frame, app| {
                 tunnel_list::render(frame, app, &alias);
                 tunnel_form::render(frame, app);
             });
         }
         Screen::SnippetPicker { .. } => {
-            host_list::render(frame, app);
-            render_overlay(frame, app, snippet_picker::render);
+            render_overlay(frame, app, anim, snippet_picker::render);
         }
         Screen::SnippetForm { .. } => {
-            host_list::render(frame, app);
-            render_overlay(frame, app, |frame, app| {
+            render_overlay(frame, app, anim, |frame, app| {
                 snippet_picker::render(frame, app);
                 snippet_form::render(frame, app);
             });
         }
         Screen::ConfirmHostKeyReset { hostname, .. } => {
             let hostname = hostname.clone();
-            host_list::render(frame, app);
-            render_overlay(frame, app, |frame, app| {
+            render_overlay(frame, app, anim, |frame, app| {
                 confirm_dialog::render_host_key_reset(frame, app, &hostname)
             });
         }
         Screen::FileBrowser { .. } => {
-            host_list::render(frame, app);
-            render_overlay(frame, app, file_browser::render);
+            render_overlay(frame, app, anim, file_browser::render);
         }
         Screen::SnippetOutput { .. } => {
-            host_list::render(frame, app);
-            render_overlay(frame, app, snippet_output::render);
+            render_overlay(frame, app, anim, snippet_output::render);
         }
         Screen::SnippetParamForm { .. } => {
-            host_list::render(frame, app);
-            render_overlay(frame, app, |frame, app| {
+            render_overlay(frame, app, anim, |frame, app| {
                 snippet_picker::render(frame, app);
                 snippet_param_form::render(frame, app);
             });
         }
         Screen::ConfirmImport { count } => {
             let count = *count;
-            host_list::render(frame, app);
-            render_overlay(frame, app, |frame, app| {
+            render_overlay(frame, app, anim, |frame, app| {
                 confirm_dialog::render_confirm_import(frame, app, count)
             });
         }
         Screen::Containers { .. } => {
-            host_list::render(frame, app);
-            render_overlay(frame, app, containers::render);
+            render_overlay(frame, app, anim, containers::render);
         }
         Screen::ConfirmPurgeStale { aliases, provider } => {
             let aliases = aliases.clone();
             let provider = provider.clone();
-            host_list::render(frame, app);
-            render_overlay(frame, app, |frame, app| {
+            render_overlay(frame, app, anim, |frame, app| {
                 confirm_dialog::render_confirm_purge_stale(frame, app, &aliases, &provider)
             });
         }
@@ -183,8 +162,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             let has_backup = *has_backup;
             let host_count = *host_count;
             let known_hosts_count = *known_hosts_count;
-            host_list::render(frame, app);
-            render_overlay(frame, app, |frame, app| {
+            render_overlay(frame, app, anim, |frame, app| {
                 confirm_dialog::render_welcome(
                     frame,
                     app,
@@ -197,19 +175,21 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 }
 
-/// Render an overlay with animation support.
+/// Render an overlay with buffer-capture animation.
 ///
-/// Hides app.status while rendering and applies vertical clip animation
+/// Hides app.status while rendering and applies scale-clip animation
 /// for smooth open transitions. Saves the buffer for close animation.
-fn render_overlay(frame: &mut Frame, app: &mut App, f: impl FnOnce(&mut Frame, &mut App)) {
+fn render_overlay(
+    frame: &mut Frame,
+    app: &mut App,
+    anim: &mut crate::animation::AnimationState,
+    f: impl FnOnce(&mut Frame, &mut App),
+) {
     let status = app.status.take();
-
     dim_background(frame);
 
-    // Save dimmed host list buffer before overlay renders (needed for open
-    // animation clip restore). Captured after dim so the background outside the
-    // growing clip stays consistently dimmed during the animation.
-    let progress = app.overlay_anim_progress();
+    // Save dimmed host list before overlay renders (needed for open animation).
+    let progress = anim.overlay_anim_progress();
     let animating_open = progress.is_some();
     let pre_overlay = if animating_open {
         Some(frame.buffer_mut().clone())
@@ -219,15 +199,12 @@ fn render_overlay(frame: &mut Frame, app: &mut App, f: impl FnOnce(&mut Frame, &
 
     f(frame, app);
 
-    // Save the overlay buffer for close animation only once: the first stable
-    // frame after the open animation completes. During the open animation the
-    // buffer is partially clipped and not suitable for replay. Re-saving every
-    // stable frame would waste ~440KB/frame on large terminals.
-    if !animating_open && app.overlay_buffer.is_none() {
-        app.overlay_buffer = Some(frame.buffer_mut().clone());
+    // Save overlay buffer for close animation once (first stable frame).
+    if !animating_open && anim.overlay_buffer.is_none() {
+        anim.overlay_buffer = Some(frame.buffer_mut().clone());
     }
 
-    // Apply opening animation: clip overlay to a growing scaled region
+    // Apply opening animation: clip overlay to a growing scaled region.
     if let (Some(progress), Some(saved)) = (progress, pre_overlay) {
         if progress < 1.0 {
             apply_scale_clip(frame, &saved, progress);
@@ -265,27 +242,22 @@ fn dim_background(frame: &mut Frame) {
 }
 
 /// Render the close animation: paint saved overlay buffer with shrinking scale clip.
-fn render_overlay_close(frame: &mut Frame, app: &mut App) {
-    // Only run when a close animation is active
-    let is_closing = app.overlay_anim.as_ref().is_some_and(|a| !a.opening);
+fn render_overlay_close(frame: &mut Frame, anim: &mut crate::animation::AnimationState) {
+    let is_closing = anim.overlay_anim.as_ref().is_some_and(|a| !a.opening);
     if !is_closing {
         return;
     }
 
-    let progress = match app.overlay_anim_progress() {
+    let progress = match anim.overlay_anim_progress() {
         Some(p) => p,
-        None => return, // Animation expired; tick_animations handles cleanup
+        None => return,
     };
 
-    if let Some(ref saved) = app.overlay_buffer {
+    if let Some(ref saved) = anim.overlay_buffer {
         if progress > 0.0 {
-            // Dim the host list so the background stays consistently muted
-            // while the overlay shrinks away.
             dim_background(frame);
-
             let area = frame.area();
             let (left, right, top, bottom) = scale_clip_rect(area, progress);
-
             for y in top..bottom {
                 for x in left..right {
                     if let Some(cell) = saved.cell((x, y)) {

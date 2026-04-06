@@ -1,3 +1,4 @@
+mod animation;
 mod app;
 mod askpass;
 mod clipboard;
@@ -645,18 +646,19 @@ fn run_tui(mut app: App) -> Result<()> {
     // Background version check
     update::spawn_version_check(events_tx.clone());
 
+    let mut anim = animation::AnimationState::new();
+
     while app.running {
-        // Detect overlay transitions and snapshot animation progress before
-        // rendering, so the first frame of a new animation sees the correct
-        // progress instead of a stale None.
-        app.detect_overlay_transition();
-        app.tick_animations();
-        terminal.draw(&mut app)?;
+        anim.detect_transitions(&mut app);
+        terminal.draw(&mut app, &mut anim)?;
 
         // During animation, use a short timeout for smooth frames (~60fps).
+        // During ping checking, use 80ms timeout for spinner.
         // Otherwise, block until the next event arrives.
-        let event = if app.is_animating() {
+        let event = if anim.is_animating(&app) {
             events.next_timeout(std::time::Duration::from_millis(16))?
+        } else if anim.has_checking_hosts(&app) {
+            events.next_timeout(std::time::Duration::from_millis(80))?
         } else {
             Some(events.next()?)
         };
@@ -667,6 +669,9 @@ fn run_tui(mut app: App) -> Result<()> {
             }
             Some(AppEvent::Tick) | None => {
                 app.tick_status();
+                if anim.has_checking_hosts(&app) {
+                    anim.tick_spinner();
+                }
                 // Expire ping results after 60s TTL
                 if let Some(checked_at) = app.ping_checked_at {
                     if checked_at.elapsed() > std::time::Duration::from_secs(60) {
@@ -883,7 +888,6 @@ fn run_tui(mut app: App) -> Result<()> {
                     app.apply_sort();
                 }
                 // Force full redraw: ssh may have written to /dev/tty
-                app.overlay_buffer = None;
                 terminal.force_redraw();
             }
             Some(AppEvent::ScpComplete {
@@ -972,7 +976,6 @@ fn run_tui(mut app: App) -> Result<()> {
                 }
                 askpass::cleanup_marker(&alias);
                 // Force full redraw: ssh may have written to /dev/tty
-                app.overlay_buffer = None;
                 terminal.force_redraw();
             }
             Some(AppEvent::SnippetHostDone {

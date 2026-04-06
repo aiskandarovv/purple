@@ -148,7 +148,7 @@ fn wrap_tags<'a>(tags: &'a [String], max_width: usize) -> Vec<Vec<&'a str>> {
     rows
 }
 
-pub fn render(frame: &mut Frame, app: &App, area: Rect) {
+pub fn render(frame: &mut Frame, app: &App, area: Rect, spinner_tick: u64) {
     // Check if a pattern is selected — render pattern detail instead
     if let Some(pattern) = app.selected_pattern() {
         render_pattern_detail(frame, app, area, pattern);
@@ -202,7 +202,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                 vec![Span::styled(
                     format!(
                         "{} online ({})",
-                        crate::app::status_glyph(Some(status)),
+                        crate::app::status_glyph(Some(status), spinner_tick),
                         format_rtt(*rtt_ms)
                     ),
                     theme::success(),
@@ -212,7 +212,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
                 vec![Span::styled(
                     format!(
                         "{} slow ({})",
-                        crate::app::status_glyph(Some(status)),
+                        crate::app::status_glyph(Some(status), spinner_tick),
                         format_rtt(*rtt_ms)
                     ),
                     theme::warning(),
@@ -220,13 +220,19 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
             }
             Some(status @ crate::app::PingStatus::Unreachable) => {
                 vec![Span::styled(
-                    format!("{} offline", crate::app::status_glyph(Some(status))),
+                    format!(
+                        "{} offline",
+                        crate::app::status_glyph(Some(status), spinner_tick)
+                    ),
                     theme::error(),
                 )]
             }
             Some(status @ crate::app::PingStatus::Checking) => {
                 vec![Span::styled(
-                    format!("{} checking", crate::app::status_glyph(Some(status))),
+                    format!(
+                        "{} checking",
+                        crate::app::status_glyph(Some(status), spinner_tick)
+                    ),
                     theme::muted(),
                 )]
             }
