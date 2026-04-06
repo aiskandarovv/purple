@@ -10,7 +10,7 @@ readme = "README.md"
 keywords = ["ssh", "ssh-client", "tui", "ssh-manager", "mcp"]
 categories = ["command-line-utilities", "development-tools"]
 rust-version = "1.86"
-exclude = [".github/", ".gitignore"]
+exclude = [".github/", ".gitignore", "demo.gif", "demo.webm", "screenshots/", "preview.png"]
 
 [lib]
 name = "purple_ssh"
