@@ -198,10 +198,20 @@ pub fn render_provider_form(frame: &mut Frame, app: &mut App, provider_name: &st
     let display_name = crate::providers::provider_display_name(provider_name);
     let title = format!(" Providers > {} ", display_name);
 
-    let fields = ProviderFormField::fields_for(provider_name);
-
+    let expanded = app.provider_form.expanded;
+    let all_fields = ProviderFormField::fields_for(provider_name);
+    let required_count = all_fields
+        .iter()
+        .filter(|f| ProviderFormField::is_required_field(**f, provider_name))
+        .count();
+    let visible_fields: &[ProviderFormField] = if expanded {
+        all_fields
+    } else {
+        // Required fields are always first in fields_for() ordering
+        &all_fields[..required_count]
+    };
     // Block: top(1) + fields * 2 (divider + content) + bottom(1)
-    let block_height = 2 + fields.len() as u16 * 2;
+    let block_height = 2 + visible_fields.len() as u16 * 2;
     let total_height = block_height + 1; // + footer
 
     let base = super::centered_rect(70, 80, area);
@@ -218,9 +228,11 @@ pub fn render_provider_form(frame: &mut Frame, app: &mut App, provider_name: &st
     let inner = block.inner(block_area);
     frame.render_widget(block, block_area);
 
-    for (i, &field) in fields.iter().enumerate() {
-        let divider_y = inner.y + (2 * i) as u16;
+    let mut y_offset: u16 = 0;
+    for &field in visible_fields.iter() {
+        let divider_y = inner.y + y_offset;
         let content_y = divider_y + 1;
+        y_offset += 2;
 
         let is_focused = app.provider_form.focused_field == field;
         let label_style = if is_focused {
@@ -228,14 +240,7 @@ pub fn render_provider_form(frame: &mut Frame, app: &mut App, provider_name: &st
         } else {
             theme::muted()
         };
-        let is_required = (field == ProviderFormField::Url)
-            || (field == ProviderFormField::Token
-                && provider_name != "aws"
-                && provider_name != "tailscale")
-            || (field == ProviderFormField::Project && matches!(provider_name, "gcp" | "ovh"))
-            || (field == ProviderFormField::Compartment && provider_name == "oracle")
-            || (field == ProviderFormField::Regions
-                && matches!(provider_name, "aws" | "scaleway" | "azure"));
+        let is_mandatory = ProviderFormField::is_mandatory_field(field, provider_name);
         let field_label =
             if field == ProviderFormField::Regions && matches!(provider_name, "scaleway" | "gcp") {
                 "Zones"
@@ -246,7 +251,7 @@ pub fn render_provider_form(frame: &mut Frame, app: &mut App, provider_name: &st
             } else {
                 field.label()
             };
-        let label = if is_required {
+        let label = if is_mandatory {
             format!(" {}* ", field_label)
         } else {
             format!(" {} ", field_label)
@@ -280,6 +285,17 @@ pub fn render_provider_form(frame: &mut Frame, app: &mut App, provider_name: &st
             Span::raw("  "),
             Span::styled(" Esc ", theme::footer_key()),
             Span::styled(" no", theme::muted()),
+        ]
+    } else if !expanded && visible_fields.len() < all_fields.len() {
+        vec![
+            Span::styled(" Enter ", theme::footer_key()),
+            Span::styled(" save ", theme::muted()),
+            Span::raw("  "),
+            Span::styled(" \u{2193} ", theme::footer_key()),
+            Span::styled(" more options ", theme::muted()),
+            Span::raw("  "),
+            Span::styled(" Esc ", theme::footer_key()),
+            Span::styled(" cancel", theme::muted()),
         ]
     } else {
         vec![

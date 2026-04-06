@@ -88,6 +88,9 @@ impl SyncRecord {
 
     /// Save sync history to ~/.purple/sync_history.tsv.
     pub fn save_all(history: &HashMap<String, SyncRecord>) {
+        if crate::demo_flag::is_demo() {
+            return;
+        }
         let Some(home) = dirs::home_dir() else { return };
         let dir = home.join(".purple");
         let path = dir.join("sync_history.tsv");
@@ -102,6 +105,30 @@ impl SyncRecord {
             ));
         }
         let _ = crate::fs_util::atomic_write(&path, lines.join("\n").as_bytes());
+    }
+
+    /// Parse sync history from TSV content string (for demo/test use).
+    pub fn load_from_content(content: &str) -> HashMap<String, SyncRecord> {
+        let mut map = HashMap::new();
+        for line in content.lines() {
+            let parts: Vec<&str> = line.splitn(4, '\t').collect();
+            if parts.len() < 4 {
+                continue;
+            }
+            let Some(ts) = parts[1].parse::<u64>().ok() else {
+                continue;
+            };
+            let is_error = parts[2] == "1";
+            map.insert(
+                parts[0].to_string(),
+                SyncRecord {
+                    timestamp: ts,
+                    message: parts[3].to_string(),
+                    is_error,
+                },
+            );
+        }
+        map
     }
 }
 
@@ -216,7 +243,7 @@ impl FormField {
 
     pub fn label(self) -> &'static str {
         match self {
-            FormField::Alias => "Alias",
+            FormField::Alias => "Name",
             FormField::Hostname => "Host / IP",
             FormField::User => "User",
             FormField::Port => "Port",
@@ -245,6 +272,9 @@ pub struct HostForm {
     pub form_hint: Option<String>,
     /// When true, alias is a Host pattern (wildcards allowed, hostname optional).
     pub is_pattern: bool,
+    /// Progressive disclosure: false = only required fields visible, true = all.
+    /// Excluded from dirty detection (UI-only state).
+    pub expanded: bool,
 }
 
 impl HostForm {
@@ -262,12 +292,14 @@ impl HostForm {
             cursor_pos: 0,
             form_hint: None,
             is_pattern: false,
+            expanded: false,
         }
     }
 
     pub fn new_pattern() -> Self {
         Self {
             is_pattern: true,
+            expanded: true,
             ..Self::new()
         }
     }
@@ -288,6 +320,7 @@ impl HostForm {
             cursor_pos,
             form_hint: None,
             is_pattern: false,
+            expanded: true,
         }
     }
 
@@ -307,6 +340,7 @@ impl HostForm {
             cursor_pos,
             form_hint: None,
             is_pattern: true,
+            expanded: true,
         }
     }
 
@@ -620,12 +654,84 @@ impl ProviderFormField {
         }
     }
 
+    /// Required fields for this provider (always visible in collapsed mode).
+    /// Used in tests only; runtime code slices `fields_for()` directly.
+    #[cfg(test)]
+    pub fn required_fields_for(provider: &str) -> Vec<ProviderFormField> {
+        let all = Self::fields_for(provider);
+        all.iter()
+            .filter(|f| Self::is_required_field(**f, provider))
+            .copied()
+            .collect()
+    }
+
+    /// Optional fields for this provider (shown after expansion).
+    /// Used in tests only; runtime code slices `fields_for()` directly.
+    #[cfg(test)]
+    pub fn optional_fields_for(provider: &str) -> Vec<ProviderFormField> {
+        let all = Self::fields_for(provider);
+        all.iter()
+            .filter(|f| !Self::is_required_field(**f, provider))
+            .copied()
+            .collect()
+    }
+
+    /// Whether a field is mandatory for form submission (asterisk in renderer).
+    /// Distinct from `is_required_field` which controls progressive disclosure.
+    ///
+    /// AWS: Token and Profile both get an asterisk — at least one must be filled
+    /// (Token for inline keys, Profile for ~/.aws/credentials).
+    /// Tailscale: Token is optional (empty = local CLI mode).
+    /// OVH: Regions (= Endpoint) is mandatory (unlike GCP/Oracle where it has
+    /// a meaningful default).
+    pub fn is_mandatory_field(field: ProviderFormField, provider: &str) -> bool {
+        match field {
+            ProviderFormField::Url => true,
+            ProviderFormField::Token => provider != "tailscale",
+            ProviderFormField::Profile => provider == "aws",
+            ProviderFormField::Project => matches!(provider, "gcp" | "ovh"),
+            ProviderFormField::Compartment => provider == "oracle",
+            ProviderFormField::Regions => {
+                matches!(provider, "aws" | "scaleway" | "azure" | "ovh")
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether a field is shown in collapsed mode (progressive disclosure).
+    pub fn is_required_field(field: ProviderFormField, provider: &str) -> bool {
+        match field {
+            ProviderFormField::Token => true,
+            ProviderFormField::Url => provider == "proxmox",
+            ProviderFormField::Profile => provider == "aws",
+            ProviderFormField::Project => matches!(provider, "gcp" | "ovh"),
+            ProviderFormField::Compartment => provider == "oracle",
+            ProviderFormField::Regions => {
+                matches!(
+                    provider,
+                    "aws" | "scaleway" | "gcp" | "azure" | "oracle" | "ovh"
+                )
+            }
+            _ => false,
+        }
+    }
+
     pub fn next(self, fields: &[Self]) -> Self {
+        debug_assert!(
+            fields.contains(&self),
+            "focused field {:?} not in fields slice",
+            self
+        );
         let idx = fields.iter().position(|f| *f == self).unwrap_or(0);
         fields[(idx + 1) % fields.len()]
     }
 
     pub fn prev(self, fields: &[Self]) -> Self {
+        debug_assert!(
+            fields.contains(&self),
+            "focused field {:?} not in fields slice",
+            self
+        );
         let idx = fields.iter().position(|f| *f == self).unwrap_or(0);
         fields[(idx + fields.len() - 1) % fields.len()]
     }
@@ -663,6 +769,9 @@ pub struct ProviderFormFields {
     pub auto_sync: bool,
     pub focused_field: ProviderFormField,
     pub cursor_pos: usize,
+    /// Progressive disclosure: false = required fields only, true = all fields.
+    /// Excluded from dirty detection (UI-only state).
+    pub expanded: bool,
 }
 
 impl ProviderFormFields {
@@ -681,6 +790,7 @@ impl ProviderFormFields {
             auto_sync: true,
             focused_field: ProviderFormField::Token,
             cursor_pos: 0,
+            expanded: false,
         }
     }
 
@@ -1677,6 +1787,9 @@ pub struct App {
     pub known_hosts_count: usize,
     pub welcome_opened: Option<std::time::Instant>,
 
+    /// Demo mode: all mutations are in-memory only, no disk writes.
+    pub demo_mode: bool,
+
     // Form dirty-check baselines
     pub form_baseline: Option<FormBaseline>,
     pub tunnel_form_baseline: Option<TunnelFormBaseline>,
@@ -1806,6 +1919,7 @@ impl App {
             container_cache: crate::containers::load_container_cache(),
             known_hosts_count: 0,
             welcome_opened: None,
+            demo_mode: false,
             form_baseline: None,
             tunnel_form_baseline: None,
             snippet_form_baseline: None,
@@ -6592,10 +6706,7 @@ Host 10.30.0.*
         use crate::app::FormField;
         use crate::ui::host_form::{placeholder_text, placeholder_text_pattern};
         // Regular host placeholder
-        assert_eq!(
-            placeholder_text(FormField::Alias),
-            "user@host:port or alias"
-        );
+        assert_eq!(placeholder_text(FormField::Alias), "prod, staging, db-01");
         // Pattern placeholder
         assert_eq!(
             placeholder_text_pattern(FormField::Alias),

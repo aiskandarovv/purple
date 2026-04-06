@@ -40,6 +40,9 @@ fn load_value(key: &str) -> Option<String> {
 
 /// Save a key=value pair to ~/.purple/preferences. Preserves unknown keys and comments.
 fn save_value(key: &str, value: &str) -> io::Result<()> {
+    if crate::demo_flag::is_demo() {
+        return Ok(());
+    }
     let path = match path() {
         Some(p) => p,
         None => return Ok(()),
@@ -105,6 +108,9 @@ pub fn load_group_by() -> crate::app::GroupBy {
 
 /// Remove a key from ~/.purple/preferences. No-op if the key or file does not exist.
 fn remove_value(key: &str) -> io::Result<()> {
+    if crate::demo_flag::is_demo() {
+        return Ok(());
+    }
     let path = match path() {
         Some(p) => p,
         None => return Ok(()),

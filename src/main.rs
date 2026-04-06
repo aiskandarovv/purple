@@ -4,6 +4,8 @@ mod askpass;
 mod clipboard;
 mod connection;
 mod containers;
+mod demo;
+mod demo_flag;
 mod event;
 mod file_browser;
 mod fs_util;
@@ -58,6 +60,10 @@ struct Cli {
     /// Path to SSH config file
     #[arg(long, default_value = "~/.ssh/config")]
     config: String,
+
+    /// Launch with demo data (no real config needed)
+    #[arg(long)]
+    demo: bool,
 
     /// Generate shell completions
     #[arg(long, value_name = "SHELL")]
@@ -335,6 +341,11 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    if cli.demo {
+        let app = demo::build_demo_app();
+        return run_tui(app);
+    }
+
     // Provider and Update subcommands don't need SSH config
     if let Some(Commands::Provider { command }) = cli.command {
         return handle_provider_command(command);
@@ -581,7 +592,7 @@ fn first_launch_init(purple_dir: &Path, config_path: &Path) -> Option<bool> {
 
 fn run_tui(mut app: App) -> Result<()> {
     // First-launch welcome hint (one-shot: creates .purple/ so it won't show again)
-    if app.status.is_none() {
+    if app.status.is_none() && !app.demo_mode {
         if let Some(home) = dirs::home_dir() {
             let purple_dir = home.join(".purple");
             if let Some(has_backup) = first_launch_init(&purple_dir, &app.reload.config_path) {
@@ -607,44 +618,47 @@ fn run_tui(mut app: App) -> Result<()> {
     let events_tx = events.sender();
     let mut last_config_check = std::time::Instant::now();
 
-    // Auto-sync configured providers on startup (skipped when auto_sync=false)
-    for section in app.provider_config.configured_providers().to_vec() {
-        if !section.auto_sync {
-            continue;
-        }
-        if !app.syncing_providers.contains_key(&section.provider) {
-            let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-            app.syncing_providers
-                .insert(section.provider.clone(), cancel.clone());
-            handler::spawn_provider_sync(&section, events_tx.clone(), cancel);
-        }
-    }
-
-    // Auto-ping all hosts on startup if enabled in preferences
-    if app.auto_ping {
-        let hosts_to_ping: Vec<(String, String, u16)> = app
-            .hosts
-            .iter()
-            .filter(|h| !h.hostname.is_empty() && h.proxy_jump.is_empty())
-            .map(|h| (h.alias.clone(), h.hostname.clone(), h.port))
-            .collect();
-        for h in &app.hosts {
-            if !h.proxy_jump.is_empty() {
-                app.ping_status
-                    .insert(h.alias.clone(), app::PingStatus::Skipped);
+    // Skip background tasks in demo mode (ping status is pre-populated)
+    if !app.demo_mode {
+        // Auto-sync configured providers on startup (skipped when auto_sync=false)
+        for section in app.provider_config.configured_providers().to_vec() {
+            if !section.auto_sync {
+                continue;
+            }
+            if !app.syncing_providers.contains_key(&section.provider) {
+                let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                app.syncing_providers
+                    .insert(section.provider.clone(), cancel.clone());
+                handler::spawn_provider_sync(&section, events_tx.clone(), cancel);
             }
         }
-        if !hosts_to_ping.is_empty() {
-            for (alias, _, _) in &hosts_to_ping {
-                app.ping_status
-                    .insert(alias.clone(), app::PingStatus::Checking);
-            }
-            ping::ping_all(&hosts_to_ping, events.sender(), app.ping_generation);
-        }
-    }
 
-    // Background version check
-    update::spawn_version_check(events_tx.clone());
+        // Auto-ping all hosts on startup if enabled in preferences
+        if app.auto_ping {
+            let hosts_to_ping: Vec<(String, String, u16)> = app
+                .hosts
+                .iter()
+                .filter(|h| !h.hostname.is_empty() && h.proxy_jump.is_empty())
+                .map(|h| (h.alias.clone(), h.hostname.clone(), h.port))
+                .collect();
+            for h in &app.hosts {
+                if !h.proxy_jump.is_empty() {
+                    app.ping_status
+                        .insert(h.alias.clone(), app::PingStatus::Skipped);
+                }
+            }
+            if !hosts_to_ping.is_empty() {
+                for (alias, _, _) in &hosts_to_ping {
+                    app.ping_status
+                        .insert(alias.clone(), app::PingStatus::Checking);
+                }
+                ping::ping_all(&hosts_to_ping, events.sender(), app.ping_generation);
+            }
+        }
+
+        // Background version check
+        update::spawn_version_check(events_tx.clone());
+    } // end skip background tasks in demo mode
 
     let mut anim = animation::AnimationState::new();
 

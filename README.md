@@ -10,14 +10,6 @@
 
 ![purple terminal SSH client demo](demo.gif)
 
-## Why I built this
-
-My SSH config was fine. Proper aliases, ProxyJump chains, organized by provider. Not the problem.
-
-The problem was everything around it. Need to check a container? `ssh host docker ps`. Copy a file? `scp` with the right flags. Run the same command on ten hosts? Write a loop or boot up Ansible for a one-liner. Spin up a VM on Hetzner? Open the console, grab the IP, edit config, save. Someone asks which box runs what? Good luck.
-
-I wanted one place for all of that. So I built it.
-
 ## Install
 
 ```
@@ -41,21 +33,44 @@ cd purple && cargo build --release
 
 Run `purple`. Press `?` on any screen for help. That's it.
 
+## Why I built this
+
+My SSH config was fine. Proper aliases, ProxyJump chains, organized by provider. Not the problem.
+
+The problem was everything around it. Need to check a container? `ssh host docker ps`. Copy a file? `scp` with the right flags. Run the same command on ten hosts? Write a loop or boot up Ansible for a one-liner. Spin up a VM on Hetzner? Open the console, grab the IP, edit config, save. Someone asks which box runs what? Good luck.
+
+I wanted one place for all of that. So I built it.
+
 ## What you get
 
-🔍 **Instant fuzzy search.** Names, IPs, tags, users. Frecency sorting puts your most-used hosts on top. Works the same with 5 hosts or 500.
+<table>
+<tr>
+<td width="50%" valign="top">
+<img src="screenshots/detail.png" alt="detail panel">
+<br>
+🔍 <strong>Everything at a glance.</strong> Connection info, jump route, activity sparkline, tags, tunnels, snippets, containers and server metadata. Health dots show which hosts are up. Group by provider, tag or flat.
+</td>
+<td width="50%" valign="top">
+<img src="screenshots/search.png" alt="fuzzy search">
+<br>
+⚡ <strong>Instant fuzzy search.</strong> Names, IPs, tags, users. Frecency sorting puts your most-used hosts on top. Works the same with 5 hosts or 500. Scoped search within groups.
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<img src="screenshots/providers.png" alt="cloud providers">
+<br>
+☁️ <strong>16 cloud providers.</strong> AWS, DigitalOcean, Hetzner, GCP, Azure, Proxmox VE, Vultr, Linode, UpCloud, Scaleway, Tailscale, Oracle Cloud, OVHcloud, Leaseweb, i3D.net and TransIP. VMs appear, IPs update, stale hosts dim. Region, instance type, OS and status synced as metadata.
+</td>
+<td width="50%" valign="top">
+<img src="screenshots/containers.png" alt="containers">
+<br>
+🐳 <strong>Containers over SSH.</strong> Docker and Podman. Start, stop, restart. No agent on the remote, no extra ports. Just SSH.
+</td>
+</tr>
+</table>
 
-☁️ **Cloud sync for 16 providers.** AWS, Azure, GCP, Hetzner, DigitalOcean, Proxmox VE, Tailscale and [9 more](https://github.com/erickochen/purple/wiki/Cloud-Providers). VMs show up, IPs update, deleted ones disappear. Your SSH config stays the source of truth.
-
-🐳 **Container management over SSH.** Docker and Podman. Start, stop, restart. No agent on the remote, no extra ports. Just SSH.
-
-📂 **Visual file transfer.** Split-pane explorer, local on the left, remote on the right. Works through ProxyJump chains and tunnels.
-
-⚡ **Multi-host command execution.** Save snippets, select hosts, run. Output per host in a scrollable view. `{{param}}` placeholders with defaults.
-
-🔑 **Automatic password retrieval.** OS Keychain, 1Password, Bitwarden, pass, HashiCorp Vault or any custom command. Pulled on connect via SSH_ASKPASS. No clipboard, no typing.
-
-🤖 **MCP server for AI agents.** Claude Code, Cursor and others can list your hosts, run commands and manage containers. Three lines in your config.
+**And more.** Visual file transfer with split-pane explorer. Multi-host command execution with snippets. Automatic password retrieval from OS Keychain, 1Password, Bitwarden, pass and HashiCorp Vault. MCP server for AI agents like Claude Code and Cursor. See the [wiki](https://github.com/erickochen/purple/wiki) for details.
 
 ## How it works
 

@@ -1684,6 +1684,21 @@ impl SshConfigFile {
 
     /// Convert a HostEntry into a new HostBlock with clean formatting.
     pub(crate) fn entry_to_block(entry: &HostEntry) -> HostBlock {
+        // Defense-in-depth: callers must validate before reaching here.
+        // Newlines in values would inject extra SSH config directives.
+        debug_assert!(
+            !entry.alias.contains('\n') && !entry.alias.contains('\r'),
+            "entry_to_block: alias contains newline"
+        );
+        debug_assert!(
+            !entry.hostname.contains('\n') && !entry.hostname.contains('\r'),
+            "entry_to_block: hostname contains newline"
+        );
+        debug_assert!(
+            !entry.user.contains('\n') && !entry.user.contains('\r'),
+            "entry_to_block: user contains newline"
+        );
+
         let mut directives = Vec::new();
 
         if !entry.hostname.is_empty() {

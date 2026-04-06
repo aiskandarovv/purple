@@ -11,10 +11,8 @@
 Icon?
 
 # Demo
-demo.tape
-demo-record.sh
 demo-record.py
-demo.cast
+demo-screenshots.py
 demo.mov
 
 # IDE

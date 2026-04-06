@@ -82,6 +82,14 @@ impl ConnectionHistory {
         Self { entries, path }
     }
 
+    /// Create a ConnectionHistory from pre-built entries (for demo use).
+    pub fn from_entries(entries: HashMap<String, HistoryEntry>) -> Self {
+        Self {
+            entries,
+            path: PathBuf::new(),
+        }
+    }
+
     /// Record a connection to a host.
     pub fn record(&mut self, alias: &str) {
         let now = SystemTime::now()
@@ -153,6 +161,9 @@ impl ConnectionHistory {
     }
 
     fn save(&self) -> std::io::Result<()> {
+        if crate::demo_flag::is_demo() {
+            return Ok(());
+        }
         // Sort by alias for deterministic output
         let mut sorted: Vec<_> = self.entries.values().collect();
         sorted.sort_by(|a, b| a.alias.cmp(&b.alias));

@@ -18,7 +18,7 @@ fn placeholder_for(field: FormField, is_pattern: bool) -> String {
             }
         }
         FormField::Alias if is_pattern => "10.0.0.* or *.example.com".to_string(),
-        FormField::Alias => "user@host:port or alias".to_string(),
+        FormField::Alias => "prod, staging, db-01".to_string(),
         FormField::Hostname => "192.168.1.1 or example.com".to_string(),
         FormField::User => "root".to_string(),
         FormField::Port => "22".to_string(),
@@ -28,8 +28,12 @@ fn placeholder_for(field: FormField, is_pattern: bool) -> String {
     }
 }
 
-/// All form fields in display order with required flag.
-const FIELDS: &[(FormField, bool)] = &[
+/// Required fields (always visible).
+const REQUIRED_FIELDS: &[(FormField, bool)] =
+    &[(FormField::Alias, true), (FormField::Hostname, true)];
+
+/// All fields in order: required first, then optional.
+const ALL_FIELDS: &[(FormField, bool)] = &[
     (FormField::Alias, true),
     (FormField::Hostname, true),
     (FormField::User, false),
@@ -43,8 +47,16 @@ const FIELDS: &[(FormField, bool)] = &[
 pub fn render(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
 
+    // Determine visible fields based on progressive disclosure state
+    let expanded = app.form.expanded;
+    // Render dividers and content for visible fields (static slices, no per-frame allocation)
+    let visible_fields: &[(FormField, bool)] = if expanded {
+        ALL_FIELDS
+    } else {
+        REQUIRED_FIELDS
+    };
     // Block: top(1) + fields * 2 (divider + content) + bottom(1)
-    let block_height = 2 + FIELDS.len() as u16 * 2;
+    let block_height = 2 + visible_fields.len() as u16 * 2;
     let total_height = block_height + 1; // + footer
 
     let base = super::centered_rect(70, 80, area);
@@ -87,10 +99,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let picker_open =
         app.ui.show_key_picker || app.ui.show_proxyjump_picker || app.ui.show_password_picker;
 
-    // Render dividers and content for each field
-    for (i, &(field, field_required)) in FIELDS.iter().enumerate() {
-        let divider_y = inner.y + (2 * i) as u16;
+    let mut y_offset: u16 = 0;
+    for &(field, field_required) in visible_fields.iter() {
+        let divider_y = inner.y + y_offset;
         let content_y = divider_y + 1;
+        y_offset += 2;
 
         let is_focused = app.form.focused_field == field;
         let label_style = if is_focused {
@@ -136,6 +149,18 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             Span::raw("  "),
             Span::styled(" Esc ", theme::footer_key()),
             Span::styled(" no", theme::muted()),
+        ]
+    } else if !expanded {
+        // Collapsed: show hint about more options
+        vec![
+            Span::styled(" Enter ", theme::footer_key()),
+            Span::styled(" save ", theme::muted()),
+            Span::raw("  "),
+            Span::styled(" \u{2193} ", theme::footer_key()),
+            Span::styled(" more options ", theme::muted()),
+            Span::raw("  "),
+            Span::styled(" Esc ", theme::footer_key()),
+            Span::styled(" cancel", theme::muted()),
         ]
     } else {
         vec![

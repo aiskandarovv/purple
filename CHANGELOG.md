@@ -1,3 +1,8 @@
+## 2.29.0
+
+- Progressive disclosure in host and provider forms. Required fields shown first, arrow down reveals optional fields
+- Demo mode (`purple --demo`) with synthetic data for screenshots and recordings
+
 ## 2.28.0
 
 - Animation state separated from App into dedicated AnimationState module

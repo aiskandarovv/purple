@@ -397,8 +397,33 @@ pub fn load_container_cache() -> HashMap<String, ContainerCacheEntry> {
     map
 }
 
+/// Parse container cache from JSONL content string (for demo/test use).
+pub fn parse_container_cache_content(content: &str) -> HashMap<String, ContainerCacheEntry> {
+    let mut map = HashMap::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Ok(entry) = serde_json::from_str::<CacheLine>(trimmed) {
+            map.insert(
+                entry.alias,
+                ContainerCacheEntry {
+                    timestamp: entry.timestamp,
+                    runtime: entry.runtime,
+                    containers: entry.containers,
+                },
+            );
+        }
+    }
+    map
+}
+
 /// Save container cache to `~/.purple/container_cache.jsonl` via atomic write.
 pub fn save_container_cache(cache: &HashMap<String, ContainerCacheEntry>) {
+    if crate::demo_flag::is_demo() {
+        return;
+    }
     let Some(home) = dirs::home_dir() else {
         return;
     };

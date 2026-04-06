@@ -346,6 +346,10 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
                 if let Some(hint) = stale_hint {
                     app.set_status(format!("Stale host.{}", hint), true);
                 }
+                if app.demo_mode {
+                    app.set_status("Demo mode. Connection disabled.".to_string(), false);
+                    return;
+                }
                 app.pending_connect = Some((alias, askpass));
             }
         }
@@ -772,7 +776,9 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
             }
         }
         KeyCode::Char('S') => {
-            app.provider_config = crate::providers::config::ProviderConfig::load();
+            if !app.demo_mode {
+                app.provider_config = crate::providers::config::ProviderConfig::load();
+            }
             app.ui.provider_list_state = ratatui::widgets::ListState::default();
             app.ui.provider_list_state.select(Some(0));
             app.screen = Screen::Providers;
@@ -873,6 +879,10 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
         }
         KeyCode::Char('F') => {
             if app.is_pattern_selected() {
+                return;
+            }
+            if app.demo_mode {
+                app.set_status("Demo mode. File browser disabled.".to_string(), false);
                 return;
             }
             if let Some(host) = app.selected_host() {
@@ -1006,7 +1016,7 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
                     runtime: cached_runtime,
                     containers: cached_containers,
                     list_state,
-                    loading: true,
+                    loading: !app.demo_mode,
                     error: None,
                     action_in_progress: None,
                     confirm_action: None,
@@ -1014,21 +1024,23 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
                 app.screen = Screen::Containers {
                     alias: alias.clone(),
                 };
-                let has_tunnel = app.active_tunnels.contains_key(&alias);
-                let config_path = app.reload.config_path.clone();
-                let bw = app.bw_session.clone();
-                let tx = events_tx.clone();
-                crate::containers::spawn_container_listing(
-                    alias,
-                    config_path,
-                    askpass,
-                    bw,
-                    has_tunnel,
-                    cached_runtime,
-                    move |a, result| {
-                        let _ = tx.send(AppEvent::ContainerListing { alias: a, result });
-                    },
-                );
+                if !app.demo_mode {
+                    let has_tunnel = app.active_tunnels.contains_key(&alias);
+                    let config_path = app.reload.config_path.clone();
+                    let bw = app.bw_session.clone();
+                    let tx = events_tx.clone();
+                    crate::containers::spawn_container_listing(
+                        alias,
+                        config_path,
+                        askpass,
+                        bw,
+                        has_tunnel,
+                        cached_runtime,
+                        move |a, result| {
+                            let _ = tx.send(AppEvent::ContainerListing { alias: a, result });
+                        },
+                    );
+                }
             }
         }
         KeyCode::Char('?') => {
@@ -1058,6 +1070,10 @@ fn handle_host_list_search(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sende
                 app.cancel_search();
                 if let Some(hint) = stale_hint {
                     app.set_status(format!("Stale host.{}", hint), true);
+                }
+                if app.demo_mode {
+                    app.set_status("Demo mode. Connection disabled.".to_string(), false);
+                    return;
                 }
                 app.pending_connect = Some((alias, askpass));
             }
@@ -1193,12 +1209,38 @@ fn handle_form(app: &mut App, key: KeyEvent) {
             if app.form.focused_field == FormField::Alias {
                 maybe_smart_paste(app);
             }
-            app.form.focused_field = app.form.focused_field.next();
+            if !app.form.expanded {
+                // Collapsed mode: Tab/Down from last required field expands
+                match app.form.focused_field {
+                    FormField::Alias => {
+                        app.form.focused_field = FormField::Hostname;
+                    }
+                    FormField::Hostname => {
+                        app.form.expanded = true;
+                        app.form.focused_field = FormField::User;
+                    }
+                    // Defensive: if focus is on an optional field while collapsed, reset
+                    _ => {
+                        app.form.focused_field = FormField::Alias;
+                    }
+                }
+            } else {
+                app.form.focused_field = app.form.focused_field.next();
+            }
             app.form.sync_cursor_to_end();
             app.form.update_hint();
         }
         KeyCode::BackTab | KeyCode::Up => {
-            app.form.focused_field = app.form.focused_field.prev();
+            if !app.form.expanded {
+                // Collapsed: cycle within required fields only
+                app.form.focused_field = match app.form.focused_field {
+                    FormField::Alias => FormField::Hostname,
+                    // Any other field (including Hostname): go to Alias
+                    _ => FormField::Alias,
+                };
+            } else {
+                app.form.focused_field = app.form.focused_field.prev();
+            }
             app.form.sync_cursor_to_end();
             app.form.update_hint();
         }
@@ -1447,7 +1489,11 @@ fn handle_confirm_host_key_reset(app: &mut App, key: KeyEvent) {
                             format!("Removed host key for {}. Reconnecting...", hostname),
                             false,
                         );
-                        app.pending_connect = Some((alias, askpass));
+                        if app.demo_mode {
+                            app.set_status("Demo mode. Connection disabled.".to_string(), false);
+                        } else {
+                            app.pending_connect = Some((alias, askpass));
+                        }
                     }
                     Ok(result) => {
                         let stderr = String::from_utf8_lossy(&result.stderr);
@@ -1843,6 +1889,7 @@ fn handle_provider_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<A
                             auto_sync: section.auto_sync,
                             focused_field: first_field,
                             cursor_pos,
+                            expanded: true,
                         }
                     } else {
                         ProviderFormFields {
@@ -1859,6 +1906,7 @@ fn handle_provider_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<A
                             auto_sync: !matches!(name.as_str(), "proxmox"),
                             focused_field: first_field,
                             cursor_pos: 0,
+                            expanded: false,
                         }
                     };
                     app.screen = Screen::ProviderForm {
@@ -1870,6 +1918,10 @@ fn handle_provider_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<A
             }
         }
         KeyCode::Char('s') => {
+            if app.demo_mode {
+                app.set_status("Demo mode. Sync disabled.".to_string(), false);
+                return;
+            }
             if let Some(index) = app.ui.provider_list_state.selected() {
                 let sorted = app.sorted_provider_names();
                 if let Some(name) = sorted.get(index) {
@@ -2021,12 +2073,72 @@ fn handle_provider_form(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<A
         }
         KeyCode::Tab | KeyCode::Down => {
             warn_aws_token_format(app, &provider_name);
-            app.provider_form.focused_field = app.provider_form.focused_field.next(fields);
+            if !app.provider_form.expanded {
+                let all = crate::app::ProviderFormField::fields_for(&provider_name);
+                let req_count = all
+                    .iter()
+                    .filter(|f| {
+                        crate::app::ProviderFormField::is_required_field(**f, &provider_name)
+                    })
+                    .count();
+                let required = &all[..req_count];
+                if required.is_empty() {
+                    // Fallback: no required fields, use full field list
+                    app.provider_form.focused_field = app.provider_form.focused_field.next(fields);
+                } else {
+                    let pos = required
+                        .iter()
+                        .position(|f| *f == app.provider_form.focused_field);
+                    if let Some(idx) = pos {
+                        if idx + 1 < required.len() {
+                            app.provider_form.focused_field = required[idx + 1];
+                        } else if req_count < all.len() {
+                            // Last required field: expand and focus first optional
+                            app.provider_form.expanded = true;
+                            app.provider_form.focused_field = all[req_count];
+                        } else {
+                            // No optional fields, wrap
+                            app.provider_form.focused_field = required[0];
+                        }
+                    } else {
+                        app.provider_form.focused_field =
+                            app.provider_form.focused_field.next(fields);
+                    }
+                }
+            } else {
+                app.provider_form.focused_field = app.provider_form.focused_field.next(fields);
+            }
             app.provider_form.sync_cursor_to_end();
         }
         KeyCode::BackTab | KeyCode::Up => {
             warn_aws_token_format(app, &provider_name);
-            app.provider_form.focused_field = app.provider_form.focused_field.prev(fields);
+            if !app.provider_form.expanded {
+                let all = crate::app::ProviderFormField::fields_for(&provider_name);
+                let req_count = all
+                    .iter()
+                    .filter(|f| {
+                        crate::app::ProviderFormField::is_required_field(**f, &provider_name)
+                    })
+                    .count();
+                let required = &all[..req_count];
+                if required.is_empty() {
+                    // Fallback: no required fields, use full field list
+                    app.provider_form.focused_field = app.provider_form.focused_field.prev(fields);
+                } else {
+                    let pos = required
+                        .iter()
+                        .position(|f| *f == app.provider_form.focused_field);
+                    if let Some(idx) = pos {
+                        let prev_idx = if idx > 0 { idx - 1 } else { required.len() - 1 };
+                        app.provider_form.focused_field = required[prev_idx];
+                    } else {
+                        // Focus is on a non-required field while collapsed; go to last required
+                        app.provider_form.focused_field = required[required.len() - 1];
+                    }
+                }
+            } else {
+                app.provider_form.focused_field = app.provider_form.focused_field.prev(fields);
+            }
             app.provider_form.sync_cursor_to_end();
         }
         KeyCode::Left => {
@@ -2262,6 +2374,14 @@ fn handle_region_picker(app: &mut App, key: KeyEvent) {
 }
 
 fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
+    if app.demo_mode {
+        app.set_status(
+            "Demo mode. Provider config changes disabled.".to_string(),
+            false,
+        );
+        app.screen = Screen::Providers;
+        return;
+    }
     let provider_name = match &app.screen {
         Screen::ProviderForm { provider } => provider.clone(),
         _ => return,
@@ -2757,6 +2877,10 @@ fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
                 }
             } else if !app.tunnel_list.is_empty() {
                 // Start
+                if app.demo_mode {
+                    app.set_status("Demo mode. Tunnels disabled.".to_string(), false);
+                    return;
+                }
                 let askpass = app
                     .hosts
                     .iter()
@@ -3100,6 +3224,10 @@ fn run_or_prompt_params(
     terminal_mode: bool,
     events_tx: &mpsc::Sender<AppEvent>,
 ) {
+    if app.demo_mode {
+        app.set_status("Demo mode. Execution disabled.".to_string(), false);
+        return;
+    }
     let params = crate::snippet::parse_params(&snippet.command);
     if !params.is_empty() {
         app.snippet_param_form = Some(crate::app::SnippetParamFormState::new(&params));
@@ -3838,6 +3966,10 @@ fn handle_containers(
         }
         KeyCode::Char('R') => {
             // Refresh container list
+            if app.demo_mode {
+                app.set_status("Demo mode. Container refresh disabled.".to_string(), false);
+                return Ok(());
+            }
             if let Some(ref mut state) = app.container_state {
                 if state.action_in_progress.is_some() {
                     return Ok(());
@@ -3893,6 +4025,10 @@ fn container_action(
         return;
     };
     if crate::containers::validate_container_id(&container.id).is_err() {
+        return;
+    }
+    if app.demo_mode {
+        app.set_status("Demo mode. Container actions disabled.".to_string(), false);
         return;
     }
     let Some(runtime) = state.runtime else {
@@ -4667,6 +4803,7 @@ mod tests {
             auto_sync: true,
             focused_field: field,
             cursor_pos: 0,
+            expanded: true, // Tests assume all fields visible
         };
         app
     }
@@ -4782,6 +4919,7 @@ mod tests {
             auto_sync: false,
             focused_field: ProviderFormField::Token,
             cursor_pos: 0,
+            expanded: false,
         };
 
         let (tx, _rx) = mpsc::channel();
@@ -4821,6 +4959,7 @@ mod tests {
             auto_sync: true,
             focused_field: ProviderFormField::Token,
             cursor_pos: 0,
+            expanded: false,
         };
 
         let (tx, _rx) = mpsc::channel();
@@ -5001,6 +5140,7 @@ mod tests {
             auto_sync: true,
             focused_field: ProviderFormField::Token,
             cursor_pos: 0,
+            expanded: false,
         };
         app
     }
@@ -5091,6 +5231,7 @@ mod tests {
             auto_sync: true,
             focused_field: ProviderFormField::Token,
             cursor_pos: 0,
+            expanded: false,
         };
         app
     }
@@ -5166,6 +5307,7 @@ mod tests {
             auto_sync: true,
             focused_field: ProviderFormField::Token,
             cursor_pos: 0,
+            expanded: false,
         };
         app
     }
@@ -5701,6 +5843,7 @@ mod tests {
         let mut app = make_app("Host test\n  HostName test.com\n");
         app.screen = Screen::AddHost;
         app.form = crate::app::HostForm::new();
+        app.form.expanded = true; // Tests assume all fields visible
         app
     }
 
@@ -9916,5 +10059,295 @@ Host do-web2
         handle_key_event(&mut app, key(KeyCode::Char('!')), &tx).unwrap();
         assert!(!app.filter_down_only);
         assert!(app.search.query.is_none());
+    }
+
+    // ─── Progressive disclosure: host form ─────────────────────────
+
+    #[test]
+    fn host_form_new_starts_collapsed() {
+        let form = HostForm::new();
+        assert!(!form.expanded);
+    }
+
+    #[test]
+    fn host_form_from_entry_starts_expanded() {
+        let config = SshConfigFile {
+            elements: SshConfigFile::parse_content("Host test\n  HostName test.com\n"),
+            path: PathBuf::from("/tmp/test_config"),
+            crlf: false,
+            bom: false,
+        };
+        let entries = config.host_entries();
+        let form = HostForm::from_entry(&entries[0]);
+        assert!(form.expanded);
+    }
+
+    #[test]
+    fn host_form_new_pattern_starts_expanded() {
+        let form = HostForm::new_pattern();
+        assert!(form.expanded);
+    }
+
+    #[test]
+    fn host_form_tab_from_alias_stays_collapsed() {
+        let mut app = make_app("");
+        app.form = HostForm::new();
+        app.form.focused_field = FormField::Alias;
+        app.screen = Screen::AddHost;
+        let tx = mpsc::channel().0;
+        handle_key_event(&mut app, key(KeyCode::Tab), &tx).unwrap();
+        assert_eq!(app.form.focused_field, FormField::Hostname);
+        assert!(!app.form.expanded);
+    }
+
+    #[test]
+    fn host_form_tab_from_hostname_expands() {
+        let mut app = make_app("");
+        app.form = HostForm::new();
+        app.form.focused_field = FormField::Hostname;
+        app.screen = Screen::AddHost;
+        let tx = mpsc::channel().0;
+        handle_key_event(&mut app, key(KeyCode::Tab), &tx).unwrap();
+        assert!(app.form.expanded);
+        assert_eq!(app.form.focused_field, FormField::User);
+    }
+
+    #[test]
+    fn host_form_collapsed_backtab_wraps() {
+        let mut app = make_app("");
+        app.form = HostForm::new();
+        app.form.focused_field = FormField::Alias;
+        app.screen = Screen::AddHost;
+        let tx = mpsc::channel().0;
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+            &tx,
+        )
+        .unwrap();
+        assert_eq!(app.form.focused_field, FormField::Hostname);
+        assert!(!app.form.expanded);
+    }
+
+    #[test]
+    fn host_form_expanded_does_not_trigger_dirty() {
+        let mut app = make_app("");
+        app.form = HostForm::new();
+        app.form.alias = "test".to_string();
+        app.screen = Screen::AddHost;
+        app.capture_form_baseline();
+        app.form.expanded = true;
+        assert!(!app.host_form_is_dirty());
+    }
+
+    // ─── Progressive disclosure: provider form ─────────────────────
+
+    #[test]
+    fn provider_form_new_starts_collapsed() {
+        let form = ProviderFormFields::new();
+        assert!(!form.expanded);
+    }
+
+    #[test]
+    fn provider_required_fields_aws() {
+        let required = crate::app::ProviderFormField::required_fields_for("aws");
+        assert!(required.contains(&crate::app::ProviderFormField::Token));
+        assert!(required.contains(&crate::app::ProviderFormField::Profile));
+        assert!(required.contains(&crate::app::ProviderFormField::Regions));
+    }
+
+    #[test]
+    fn provider_required_fields_proxmox() {
+        let required = crate::app::ProviderFormField::required_fields_for("proxmox");
+        assert!(required.contains(&crate::app::ProviderFormField::Url));
+        assert!(required.contains(&crate::app::ProviderFormField::Token));
+        // AliasPrefix is optional
+        assert!(!required.contains(&crate::app::ProviderFormField::AliasPrefix));
+    }
+
+    #[test]
+    fn provider_optional_fields_are_complement() {
+        for provider in &[
+            "aws",
+            "digitalocean",
+            "proxmox",
+            "gcp",
+            "azure",
+            "oracle",
+            "ovh",
+            "scaleway",
+        ] {
+            let all = crate::app::ProviderFormField::fields_for(provider);
+            let required = crate::app::ProviderFormField::required_fields_for(provider);
+            let optional = crate::app::ProviderFormField::optional_fields_for(provider);
+            assert_eq!(
+                required.len() + optional.len(),
+                all.len(),
+                "Field count mismatch for provider {}",
+                provider
+            );
+        }
+    }
+
+    #[test]
+    fn provider_mandatory_fields_aws_token_and_profile() {
+        use crate::app::ProviderFormField;
+        assert!(
+            ProviderFormField::is_mandatory_field(ProviderFormField::Token, "aws"),
+            "AWS Token should be mandatory (asterisked)"
+        );
+        assert!(
+            ProviderFormField::is_mandatory_field(ProviderFormField::Profile, "aws"),
+            "AWS Profile should be mandatory (asterisked)"
+        );
+    }
+
+    #[test]
+    fn provider_mandatory_fields_tailscale_token_optional() {
+        use crate::app::ProviderFormField;
+        assert!(
+            !ProviderFormField::is_mandatory_field(ProviderFormField::Token, "tailscale"),
+            "Tailscale Token should not be mandatory (empty = CLI mode)"
+        );
+    }
+
+    #[test]
+    fn provider_mandatory_fields_ovh_regions() {
+        use crate::app::ProviderFormField;
+        assert!(
+            ProviderFormField::is_mandatory_field(ProviderFormField::Regions, "ovh"),
+            "OVH Regions (Endpoint) should be mandatory"
+        );
+    }
+
+    #[test]
+    fn provider_required_fields_prefix_of_all_fields() {
+        use crate::app::ProviderFormField;
+        for provider in &[
+            "aws",
+            "digitalocean",
+            "proxmox",
+            "gcp",
+            "azure",
+            "oracle",
+            "ovh",
+            "scaleway",
+            "tailscale",
+            "transip",
+            "leaseweb",
+            "i3d",
+        ] {
+            let all = ProviderFormField::fields_for(provider);
+            let required = ProviderFormField::required_fields_for(provider);
+            assert_eq!(
+                &all[..required.len()],
+                required.as_slice(),
+                "Required fields must be a prefix of fields_for() for {}",
+                provider
+            );
+        }
+    }
+
+    #[test]
+    fn provider_form_expanded_does_not_trigger_dirty() {
+        let mut app = make_app("");
+        app.screen = Screen::ProviderForm {
+            provider: "digitalocean".to_string(),
+        };
+        app.provider_form = ProviderFormFields::new();
+        app.provider_form.token = "tok".to_string();
+        app.capture_provider_form_baseline();
+        app.provider_form.expanded = true;
+        assert!(!app.provider_form_is_dirty());
+    }
+
+    // ─── Host form collapsed Enter-saves ───────────────────────────
+
+    #[test]
+    fn host_form_collapsed_enter_saves() {
+        let mut app = make_app("");
+        app.form = HostForm::new();
+        app.form.alias = "myhost".to_string();
+        app.form.hostname = "myhost.local".to_string();
+        app.form.focused_field = FormField::Hostname;
+        app.screen = Screen::AddHost;
+        app.capture_form_mtime();
+        app.capture_form_baseline();
+        let tx = mpsc::channel().0;
+        handle_key_event(&mut app, key(KeyCode::Enter), &tx).unwrap();
+        assert!(
+            matches!(app.screen, Screen::HostList),
+            "Expected HostList after save, got {:?}",
+            app.screen
+        );
+    }
+
+    // ─── Provider form progressive disclosure navigation ───────────
+
+    #[test]
+    fn provider_form_tab_from_last_required_expands() {
+        // DigitalOcean has one required field: Token
+        let mut app = make_app("");
+        app.screen = Screen::ProviderForm {
+            provider: "digitalocean".to_string(),
+        };
+        app.provider_form = ProviderFormFields::new();
+        app.provider_form.token = "tok".to_string();
+        // Token is the only required field for DO
+        app.provider_form.focused_field = crate::app::ProviderFormField::Token;
+        app.provider_form.expanded = false;
+        let tx = mpsc::channel().0;
+        handle_key_event(&mut app, key(KeyCode::Tab), &tx).unwrap();
+        assert!(app.provider_form.expanded);
+        // First optional field for DO is AliasPrefix
+        assert_eq!(
+            app.provider_form.focused_field,
+            crate::app::ProviderFormField::AliasPrefix
+        );
+    }
+
+    #[test]
+    fn provider_form_collapsed_backtab_wraps() {
+        // AWS has 3 required fields: Token, Profile, Regions
+        let mut app = make_app("");
+        app.screen = Screen::ProviderForm {
+            provider: "aws".to_string(),
+        };
+        app.provider_form = ProviderFormFields::new();
+        app.provider_form.focused_field = crate::app::ProviderFormField::Token;
+        app.provider_form.expanded = false;
+        let tx = mpsc::channel().0;
+        handle_key_event(
+            &mut app,
+            KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+            &tx,
+        )
+        .unwrap();
+        // Token is first required; BackTab wraps to last required (Regions)
+        assert_eq!(
+            app.provider_form.focused_field,
+            crate::app::ProviderFormField::Regions
+        );
+        assert!(!app.provider_form.expanded);
+    }
+
+    #[test]
+    fn provider_form_tab_within_collapsed_required() {
+        // AWS: Token -> Profile -> Regions (all required)
+        let mut app = make_app("");
+        app.screen = Screen::ProviderForm {
+            provider: "aws".to_string(),
+        };
+        app.provider_form = ProviderFormFields::new();
+        app.provider_form.focused_field = crate::app::ProviderFormField::Token;
+        app.provider_form.expanded = false;
+        let tx = mpsc::channel().0;
+        handle_key_event(&mut app, key(KeyCode::Tab), &tx).unwrap();
+        // Token -> Profile (mid-required, should NOT expand)
+        assert_eq!(
+            app.provider_form.focused_field,
+            crate::app::ProviderFormField::Profile
+        );
+        assert!(!app.provider_form.expanded);
     }
 }

@@ -13,6 +13,9 @@ impl SshConfigFile {
     /// Acquires an advisory lock to prevent concurrent writes from multiple
     /// purple processes or background sync threads.
     pub fn write(&self) -> Result<()> {
+        if crate::demo_flag::is_demo() {
+            return Ok(());
+        }
         // Resolve symlinks so we write through to the real file
         let target_path = fs::canonicalize(&self.path).unwrap_or_else(|_| self.path.clone());
 

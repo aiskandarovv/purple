@@ -59,7 +59,7 @@ impl ProviderConfig {
     }
 
     /// Parse INI-style provider config.
-    fn parse(content: &str) -> Self {
+    pub(crate) fn parse(content: &str) -> Self {
         let mut sections = Vec::new();
         let mut current: Option<ProviderSection> = None;
 
@@ -147,6 +147,9 @@ impl ProviderConfig {
     /// Save provider config to ~/.purple/providers (atomic write, chmod 600).
     /// Respects path_override when set (used in tests).
     pub fn save(&self) -> io::Result<()> {
+        if crate::demo_flag::is_demo() {
+            return Ok(());
+        }
         let path = match &self.path_override {
             Some(p) => p.clone(),
             None => match config_path() {

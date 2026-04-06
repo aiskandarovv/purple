@@ -41,6 +41,18 @@ impl SshConfigFile {
         })
     }
 
+    /// Create an SshConfigFile from raw content string (for demo/test use).
+    /// Uses a synthetic path; the file is never read from or written to disk.
+    pub fn from_content(content: &str, synthetic_path: PathBuf) -> Self {
+        let elements = Self::parse_content_with_includes(content, None, MAX_INCLUDE_DEPTH);
+        SshConfigFile {
+            elements,
+            path: synthetic_path,
+            crlf: false,
+            bom: false,
+        }
+    }
+
     /// Parse SSH config content from a string (without Include resolution).
     /// Used by tests to create SshConfigFile from inline strings.
     #[allow(dead_code)]

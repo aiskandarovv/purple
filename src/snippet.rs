@@ -105,6 +105,9 @@ impl SnippetStore {
 
     /// Save snippets to ~/.purple/snippets (atomic write, chmod 600).
     pub fn save(&self) -> io::Result<()> {
+        if crate::demo_flag::is_demo() {
+            return Ok(());
+        }
         let path = match &self.path_override {
             Some(p) => p.clone(),
             None => match config_path() {
