@@ -1,3 +1,7 @@
+## 2.27.2
+
+- Record connection history when running snippets on hosts via TUI
+
 ## 2.27.1
 
 - Fix group bar selector not following selected host in tagged view

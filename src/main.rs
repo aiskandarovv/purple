@@ -982,6 +982,10 @@ fn run_tui(mut app: App) -> Result<()> {
                 stderr,
                 exit_code,
             }) => {
+                if exit_code == Some(0) {
+                    app.history.record(&alias);
+                    app.apply_sort();
+                }
                 if let Some(ref mut state) = app.snippet_output {
                     if state.run_id == run_id {
                         state.results.push(app::SnippetHostOutput {
