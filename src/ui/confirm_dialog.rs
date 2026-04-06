@@ -186,13 +186,15 @@ pub fn render_confirm_purge_stale(
     frame.render_widget(paragraph, area);
 }
 
-/// Block-art logo for the welcome screen (4 lines).
+/// Block-art logo for the welcome screen (6 lines, ANSI Shadow style).
 /// Lines are trimmed; render code pads to max display width for alignment.
-const LOGO: [&str; 4] = [
-    "        \u{259C}   ",
-    "\u{259B}\u{258C}\u{258C}\u{258C}\u{259B}\u{2598}\u{259B}\u{258C}\u{2590} \u{2588}\u{258C}",
-    "\u{2599}\u{258C}\u{2599}\u{258C}\u{258C} \u{2599}\u{258C}\u{2590}\u{2596}\u{2599}\u{2596}",
-    "\u{258C}     \u{258C}     ",
+const LOGO: [&str; 6] = [
+    "\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557} \u{2588}\u{2588}\u{2557}   \u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557} \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557} \u{2588}\u{2588}\u{2557}     \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557}",
+    "\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2551}   \u{2588}\u{2588}\u{2551}\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2551}     \u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2550}\u{2550}\u{255D}",
+    "\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2554}\u{255D}\u{2588}\u{2588}\u{2551}   \u{2588}\u{2588}\u{2551}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2554}\u{255D}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2554}\u{255D}\u{2588}\u{2588}\u{2551}     \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557}  ",
+    "\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2550}\u{255D} \u{2588}\u{2588}\u{2551}   \u{2588}\u{2588}\u{2551}\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2550}\u{255D} \u{2588}\u{2588}\u{2551}     \u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{255D}  ",
+    "\u{2588}\u{2588}\u{2551}     \u{255A}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2554}\u{255D}\u{2588}\u{2588}\u{2551}  \u{2588}\u{2588}\u{2551}\u{2588}\u{2588}\u{2551}     \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557}",
+    "\u{255A}\u{2550}\u{255D}      \u{255A}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{255D} \u{255A}\u{2550}\u{255D}  \u{255A}\u{2550}\u{255D}\u{255A}\u{2550}\u{255D}     \u{255A}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{255D}\u{255A}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{255D}",
 ];
 
 /// Typewriter delay: ms after logo reveal before text starts.
@@ -293,8 +295,8 @@ pub fn render_welcome(
         .max()
         .unwrap_or(0);
 
-    // border(2) + blank(3) + logo(4) + blank(3) + subtitle(1) + hint(1) + blank(1) + footer(1) + blank(3) = 21 base
-    let content_height = 21 + extra;
+    // border(2) + blank(3) + logo(6) + blank(3) + subtitle(1) + hint(1) + blank(1) + footer(1) + blank(3) = 23 base
+    let content_height = 23 + extra;
     // Minimum width: fits longest text line ("Your original config has been backed up")
     // with comfortable padding. Logo width + padding, or 56 chars minimum.
     let dialog_width = ((logo_max_w as u16) + 24).max(56);
@@ -438,7 +440,7 @@ fn welcome_height_and_lines(
     if has_backup {
         extra += 3;
     }
-    let height = 21 + extra;
+    let height = 23 + extra;
 
     // Text lines = height - border(2)
     let lines = height - 2;

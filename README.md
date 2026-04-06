@@ -4,9 +4,9 @@
 
 [![crates.io](https://img.shields.io/crates/v/purple-ssh?color=b44aff&labelColor=0a0a14)](https://crates.io/crates/purple-ssh)
 [![downloads](https://img.shields.io/crates/d/purple-ssh?color=b44aff&labelColor=0a0a14)](https://crates.io/crates/purple-ssh)
-[![MIT](https://img.shields.io/badge/License-MIT-b44aff?labelColor=0a0a14)](LICENSE)
-[![Built With Ratatui](https://img.shields.io/badge/Built_With-Ratatui-b44aff?labelColor=0a0a14&logo=ratatui&logoColor=fff)](https://ratatui.rs/)
-[![Website](https://img.shields.io/badge/Website-getpurple.sh-00f0ff?labelColor=0a0a14)](https://getpurple.sh)
+[![mit](https://img.shields.io/badge/license-mit-b44aff?labelColor=0a0a14)](LICENSE)
+[![built with ratatui](https://img.shields.io/badge/built_with-ratatui-b44aff?labelColor=0a0a14&logo=ratatui&logoColor=fff)](https://ratatui.rs/)
+[![Website](https://img.shields.io/badge/website-getpurple.sh-00f0ff?labelColor=0a0a14)](https://getpurple.sh)
 
 ![purple terminal SSH client demo](demo.gif)
 
