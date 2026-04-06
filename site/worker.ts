@@ -177,7 +177,7 @@ const LANDING_PAGE = `<!DOCTYPE html>
   "url": "https://getpurple.sh",
   "downloadUrl": "https://getpurple.sh",
   "installUrl": "https://github.com/erickochen/purple/releases",
-  "softwareVersion": "2.27.2",
+  "softwareVersion": "2.27.3",
   "datePublished": "2024-10-01",
   "dateModified": "2026-04-06",
   "softwareRequirements": "macOS or Linux",
@@ -905,7 +905,7 @@ footer .sep { margin: 0 0.3em; }
           <button class="copy-btn copy-inline" id="copy-btn" onclick="copy(this)" style="display:none">copy</button>
         </div>
         <div class="install-output" id="install-output" style="display:none">
-          <div>Downloading purple v2.27.2 for darwin-arm64...</div>
+          <div>Downloading purple v2.27.3 for darwin-arm64...</div>
           <div>Installing to /usr/local/bin/purple... <span class="success">done.</span></div>
         </div>
         <div class="alt-installs" id="alt-installs" style="display:none">
@@ -1015,7 +1015,7 @@ footer .sep { margin: 0 0.3em; }
         <summary>Can AI assistants use purple?</summary>
         <div class="answer">Yes. Run <code>purple mcp</code> to start the MCP server. Claude Code, Cursor and other agents get five tools: list_hosts, get_host, run_command, list_containers and container_action.</div>
       </details>
-      <div class="man-foot"><span>purple v2.27.2</span><span>2026-04-06</span><span>PURPLE(1)</span></div>
+      <div class="man-foot"><span>purple v2.27.3</span><span>2026-04-06</span><span>PURPLE(1)</span></div>
     </div>
   </div>
 
@@ -1418,7 +1418,7 @@ A: Yes. purple uses the Bitwarden CLI (bw) for Bitwarden password sources. If yo
 
 ## Status
 
-- Current version: 2.27.2 (April 2026)
+- Current version: 2.27.3 (April 2026)
 - Release cadence: approximately bi-weekly
 - Test suite: 5000+ tests (unit, integration, property-based and HTTP mocking)
 - CI: fmt, clippy, test on macOS and Linux, cargo-deny, MSRV 1.86 check

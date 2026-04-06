@@ -1,3 +1,8 @@
+## 2.27.3
+
+- New welcome screen logo (ANSI Shadow style)
+- Lowercase README badges
+
 ## 2.27.2
 
 - Record connection history when running snippets on hosts via TUI
