@@ -48,6 +48,7 @@ I wanted one place for all of that. So I built it.
 🔍 **Everything at a glance.** Connection info, jump route, activity sparkline, tags, tunnels, snippets, containers and server metadata. Health dots show which hosts are up. Group by provider, tag or flat.
 
 <br clear="both">
+<br>
 
 ⚡ **Instant fuzzy search.** Names, IPs, tags, users. Frecency sorting puts your most-used hosts on top. Works the same with 5 hosts or 500. Scoped search within groups.
 
