@@ -467,8 +467,47 @@ fn render_field_content(
         FormField::IdentityFile | FormField::ProxyJump | FormField::AskPass
     );
 
-    // Show placeholder only when field is empty and focused
-    let content = if value.is_empty() && is_focused && !is_picker {
+    // Inherited hint for this field (value + source pattern).
+    let inherited_hint = match field {
+        FormField::ProxyJump => form.inherited.proxy_jump.as_ref(),
+        FormField::User => form.inherited.user.as_ref(),
+        FormField::IdentityFile => form.inherited.identity_file.as_ref(),
+        _ => None,
+    };
+
+    // Inherited hints are shown regardless of focus (unlike input placeholders) because
+    // they are informational: they show the effective SSH config, not an input prompt.
+    let content = if let (true, Some((inh_val, inh_src))) = (value.is_empty(), inherited_hint) {
+        let inner_width = area.width as usize;
+        // Detect self-referencing ProxyJump loop.
+        let is_loop = field == FormField::ProxyJump
+            && crate::ssh_config::model::proxy_jump_contains_self(inh_val, &form.alias);
+        if is_loop {
+            let msg = format!("loops via {}", inh_src);
+            let display = super::truncate(&msg, inner_width);
+            Line::from(vec![Span::styled(display, theme::error())])
+        } else {
+            let source_suffix = format!("  \u{2190} {}", inh_src);
+            let val_budget = inner_width.saturating_sub(source_suffix.width());
+            let display = super::truncate(inh_val, val_budget);
+            if is_picker && is_focused {
+                let arrow_pos = inner_width.saturating_sub(1);
+                let used = display.width() + source_suffix.width();
+                let gap = arrow_pos.saturating_sub(used);
+                Line::from(vec![
+                    Span::styled(display, theme::muted()),
+                    Span::styled(source_suffix, theme::muted()),
+                    Span::raw(" ".repeat(gap)),
+                    Span::styled("\u{25B8}", theme::muted()),
+                ])
+            } else {
+                Line::from(vec![
+                    Span::styled(display, theme::muted()),
+                    Span::styled(source_suffix, theme::muted()),
+                ])
+            }
+        }
+    } else if value.is_empty() && is_focused && !is_picker {
         let ph = placeholder_for(field, form.is_pattern);
         Line::from(Span::styled(ph, theme::muted()))
     } else if is_picker && is_focused {

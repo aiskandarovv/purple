@@ -69,6 +69,10 @@ struct Cli {
     #[arg(long, value_name = "SHELL")]
     completions: Option<Shell>,
 
+    /// Override theme for this session
+    #[arg(long)]
+    theme: Option<String>,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -101,7 +105,7 @@ enum Commands {
         #[arg(short, long)]
         group: Option<String>,
     },
-    /// Sync hosts from cloud providers (DigitalOcean, Vultr, Linode, Hetzner, UpCloud, Proxmox VE, AWS EC2, Scaleway, GCP, Azure, Tailscale, Oracle Cloud)
+    /// Sync hosts from cloud providers (DigitalOcean, Vultr, Linode, Hetzner, UpCloud, Proxmox VE, AWS EC2, Scaleway, GCP, Azure, Tailscale, Oracle Cloud, OVHcloud, Leaseweb, i3D.net, TransIP)
     Sync {
         /// Sync a specific provider (default: all configured)
         provider: Option<String>,
@@ -138,6 +142,22 @@ enum Commands {
     Update,
     /// Start MCP server (Model Context Protocol) for AI agent integration
     Mcp,
+    /// Manage color themes
+    Theme {
+        #[command(subcommand)]
+        command: ThemeCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum ThemeCommands {
+    /// List available themes
+    List,
+    /// Set the active theme
+    Set {
+        /// Theme name
+        name: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -145,7 +165,7 @@ enum Commands {
 enum ProviderCommands {
     /// Add or update a provider configuration
     Add {
-        /// Provider name (digitalocean, vultr, linode, hetzner, upcloud, proxmox, aws, scaleway, gcp, azure, tailscale, oracle)
+        /// Provider name (digitalocean, vultr, linode, hetzner, upcloud, proxmox, aws, scaleway, gcp, azure, tailscale, oracle, ovh, leaseweb, i3d, transip)
         provider: String,
 
         /// API token (or set PURPLE_TOKEN env var, or use --token-stdin)
@@ -334,6 +354,18 @@ fn main() -> Result<()> {
     ui::theme::init();
     let cli = Cli::parse();
 
+    if let Some(ref name) = cli.theme {
+        if let Some(theme) = ui::theme::ThemeDef::find_builtin(name).or_else(|| {
+            ui::theme::ThemeDef::load_custom()
+                .into_iter()
+                .find(|t| t.name.eq_ignore_ascii_case(name))
+        }) {
+            ui::theme::set_theme(theme);
+        } else {
+            anyhow::bail!("Unknown theme: {}", name);
+        }
+    }
+
     // Shell completions (no config file needed)
     if let Some(shell) = cli.completions {
         let mut cmd = Cli::command();
@@ -359,6 +391,51 @@ fn main() -> Result<()> {
     if let Some(Commands::Mcp) = cli.command {
         let config_path = resolve_config_path(&cli.config)?;
         return mcp::run(&config_path);
+    }
+    if let Some(Commands::Theme { command }) = cli.command {
+        match command {
+            ThemeCommands::List => {
+                let current = preferences::load_theme().unwrap_or_else(|| "Purple".to_string());
+                println!("Built-in themes:");
+                for theme in ui::theme::ThemeDef::builtins() {
+                    let marker = if theme.name.eq_ignore_ascii_case(&current) {
+                        "*"
+                    } else {
+                        " "
+                    };
+                    println!("  {} {}", marker, theme.name);
+                }
+                let custom = ui::theme::ThemeDef::load_custom();
+                if !custom.is_empty() {
+                    println!("\nCustom themes:");
+                    for theme in &custom {
+                        let marker = if theme.name.eq_ignore_ascii_case(&current) {
+                            "*"
+                        } else {
+                            " "
+                        };
+                        println!("  {} {}", marker, theme.name);
+                    }
+                }
+            }
+            ThemeCommands::Set { name } => {
+                let found = ui::theme::ThemeDef::find_builtin(&name).or_else(|| {
+                    ui::theme::ThemeDef::load_custom()
+                        .into_iter()
+                        .find(|t| t.name.eq_ignore_ascii_case(&name))
+                });
+                match found {
+                    Some(theme) => {
+                        preferences::save_theme(&theme.name)?;
+                        println!("Theme set to: {}", theme.name);
+                    }
+                    None => {
+                        anyhow::bail!("Unknown theme: {}", name);
+                    }
+                }
+            }
+        }
+        return Ok(());
     }
 
     let config_path = resolve_config_path(&cli.config)?;
@@ -394,7 +471,8 @@ fn main() -> Result<()> {
         Some(Commands::Provider { .. })
         | Some(Commands::Update)
         | Some(Commands::Password { .. })
-        | Some(Commands::Mcp) => unreachable!(),
+        | Some(Commands::Mcp)
+        | Some(Commands::Theme { .. }) => unreachable!(),
         None => {}
     }
 
@@ -1417,7 +1495,7 @@ fn handle_sync(
     let sections: Vec<&providers::config::ProviderSection> = if let Some(name) = provider_name {
         if providers::get_provider(name).is_none() {
             eprintln!(
-                "Never heard of '{}'. Try: digitalocean, vultr, linode, hetzner, upcloud, proxmox, aws, scaleway, gcp, azure, tailscale, oracle.",
+                "Never heard of '{}'. Try: digitalocean, vultr, linode, hetzner, upcloud, proxmox, aws, scaleway, gcp, azure, tailscale, oracle, ovh, leaseweb, i3d, transip.",
                 name
             );
             std::process::exit(1);
@@ -1450,7 +1528,7 @@ fn handle_sync(
             Some(p) => p,
             None => {
                 eprintln!(
-                    "Skipping unknown provider '{}'. Try: digitalocean, vultr, linode, hetzner, upcloud, proxmox, aws, scaleway, gcp, azure, tailscale, oracle.",
+                    "Skipping unknown provider '{}'. Try: digitalocean, vultr, linode, hetzner, upcloud, proxmox, aws, scaleway, gcp, azure, tailscale, oracle, ovh, leaseweb, i3d, transip.",
                     section.provider
                 );
                 any_failures = true;
@@ -1586,7 +1664,7 @@ fn handle_provider_command(command: ProviderCommands) -> Result<()> {
                 Some(p) => p,
                 None => {
                     eprintln!(
-                        "Never heard of '{}'. Try: digitalocean, vultr, linode, hetzner, upcloud, proxmox, aws, scaleway, gcp, azure, tailscale, oracle.",
+                        "Never heard of '{}'. Try: digitalocean, vultr, linode, hetzner, upcloud, proxmox, aws, scaleway, gcp, azure, tailscale, oracle, ovh, leaseweb, i3d, transip.",
                         provider
                     );
                     std::process::exit(1);

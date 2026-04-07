@@ -30,6 +30,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             Screen::KeyDetail { .. } => key_detail_lines(),
             Screen::HostDetail { .. } => host_detail_lines(),
             Screen::TagPicker => tag_picker_lines(),
+            Screen::ThemePicker => vec![
+                help_line("j/k", "up / down"),
+                help_line("Enter", "select theme"),
+                help_line("?", "help"),
+                help_line("Esc", "cancel"),
+            ],
             _ => vec![],
         };
         (lines, vec![])
@@ -131,7 +137,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
     let [k, l] = super::footer_action("Esc", " close");
     spans.extend([k, l]);
-    frame.render_widget(Paragraph::new(Line::from(spans)), rows[2]);
+    super::render_footer_with_status(frame, rows[2], spans, app);
 }
 
 fn context_title(screen: &Screen) -> &'static str {
@@ -147,6 +153,7 @@ fn context_title(screen: &Screen) -> &'static str {
         Screen::KeyDetail { .. } => "Key Detail",
         Screen::HostDetail { .. } => "All Directives",
         Screen::TagPicker => "Tags",
+        Screen::ThemePicker => "Theme",
         _ => "Help",
     }
 }
@@ -259,7 +266,7 @@ fn host_list_columns() -> (Vec<Line<'static>>, Vec<Line<'static>>) {
     col2.push(help_line("I", "import known_hosts"));
 
     col1.push(help_line("Shift+Tab", "prev field"));
-    col2.push(blank());
+    col2.push(help_line("m", "theme"));
 
     col1.push(help_line("Enter", "save / picker"));
     col2.push(help_line("q/Esc", "quit"));

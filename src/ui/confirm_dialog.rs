@@ -7,6 +7,10 @@ use unicode_width::UnicodeWidthStr;
 use super::theme;
 use crate::app::App;
 
+// Confirm dialogs are compact modals (y/Esc) with no separate footer row.
+// Status messages are not shown here. Any active status will be visible
+// once the user closes the dialog and returns to the parent screen.
+
 pub fn render(frame: &mut Frame, _app: &App, alias: &str) {
     let area = super::centered_rect_fixed(52, 7, frame.area());
 

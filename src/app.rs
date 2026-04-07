@@ -154,6 +154,7 @@ pub enum Screen {
         index: usize,
     },
     TagPicker,
+    ThemePicker,
     Providers,
     ProviderForm {
         provider: String,
@@ -275,6 +276,9 @@ pub struct HostForm {
     /// Progressive disclosure: false = only required fields visible, true = all.
     /// Excluded from dirty detection (UI-only state).
     pub expanded: bool,
+    /// Inherited values from matching patterns (value, source pattern).
+    /// Shown as dimmed placeholders when the field is empty.
+    pub inherited: crate::ssh_config::model::InheritedHints,
 }
 
 impl HostForm {
@@ -293,6 +297,7 @@ impl HostForm {
             form_hint: None,
             is_pattern: false,
             expanded: false,
+            inherited: Default::default(),
         }
     }
 
@@ -304,7 +309,12 @@ impl HostForm {
         }
     }
 
-    pub fn from_entry(entry: &HostEntry) -> Self {
+    /// Create form from a raw HostEntry (without pattern inheritance applied).
+    /// The `inherited` hints are computed separately and passed in.
+    pub fn from_entry(
+        entry: &HostEntry,
+        inherited: crate::ssh_config::model::InheritedHints,
+    ) -> Self {
         let alias = entry.alias.clone();
         let cursor_pos = alias.chars().count();
         Self {
@@ -321,6 +331,7 @@ impl HostForm {
             form_hint: None,
             is_pattern: false,
             expanded: true,
+            inherited,
         }
     }
 
@@ -341,6 +352,7 @@ impl HostForm {
             form_hint: None,
             is_pattern: true,
             expanded: true,
+            inherited: Default::default(),
         }
     }
 
@@ -1566,6 +1578,11 @@ pub struct UiSelection {
     pub show_proxyjump_picker: bool,
     pub proxyjump_picker_state: ListState,
     pub tag_picker_state: ListState,
+    pub theme_picker_state: ListState,
+    pub theme_picker_builtins: Vec<crate::ui::theme::ThemeDef>,
+    pub theme_picker_custom: Vec<crate::ui::theme::ThemeDef>,
+    pub theme_picker_saved_name: String,
+    pub theme_picker_original: Option<crate::ui::theme::ThemeDef>,
     pub provider_list_state: ListState,
     pub tunnel_list_state: ListState,
     pub snippet_picker_state: ListState,
@@ -1840,6 +1857,11 @@ impl App {
                 show_proxyjump_picker: false,
                 proxyjump_picker_state: ListState::default(),
                 tag_picker_state: ListState::default(),
+                theme_picker_state: ListState::default(),
+                theme_picker_builtins: Vec::new(),
+                theme_picker_custom: Vec::new(),
+                theme_picker_saved_name: String::new(),
+                theme_picker_original: None,
                 provider_list_state: ListState::default(),
                 tunnel_list_state: ListState::default(),
                 snippet_picker_state: ListState::default(),
@@ -3011,6 +3033,7 @@ impl App {
                 | Screen::ConfirmPurgeStale { .. }
                 | Screen::ConfirmImport { .. }
                 | Screen::TagPicker
+                | Screen::ThemePicker
         ) || self.tag_input.is_some()
         {
             return;
@@ -3479,14 +3502,16 @@ impl App {
     pub fn add_host_from_form(&mut self) -> Result<String, String> {
         let entry = self.form.to_entry();
         let alias = entry.alias.clone();
-        if self.config.has_host(&alias) {
+        let duplicate = if self.form.is_pattern {
+            self.config.has_host_block(&alias)
+        } else {
+            self.config.has_host(&alias)
+        };
+        if duplicate {
             return Err(if self.form.is_pattern {
                 format!("Pattern '{}' already exists.", alias)
             } else {
-                format!(
-                    "'{}' already exists. Aliases are like fingerprints — unique.",
-                    alias
-                )
+                format!("'{}' already exists. Aliases must be unique.", alias)
             });
         }
         let len_before = self.config.elements.len();
@@ -3511,17 +3536,28 @@ impl App {
     pub fn edit_host_from_form(&mut self, old_alias: &str) -> Result<String, String> {
         let entry = self.form.to_entry();
         let alias = entry.alias.clone();
-        if !self.config.has_host(old_alias) {
-            return Err("Host no longer exists.".to_string());
+        let exists = if self.form.is_pattern {
+            self.config.has_host_block(old_alias)
+        } else {
+            self.config.has_host(old_alias)
+        };
+        if !exists {
+            return Err(if self.form.is_pattern {
+                "Pattern no longer exists.".to_string()
+            } else {
+                "Host no longer exists.".to_string()
+            });
         }
-        if alias != old_alias && self.config.has_host(&alias) {
+        let duplicate = if self.form.is_pattern {
+            alias != old_alias && self.config.has_host_block(&alias)
+        } else {
+            alias != old_alias && self.config.has_host(&alias)
+        };
+        if duplicate {
             return Err(if self.form.is_pattern {
                 format!("Pattern '{}' already exists.", alias)
             } else {
-                format!(
-                    "'{}' already exists. Aliases are like fingerprints — unique.",
-                    alias
-                )
+                format!("'{}' already exists. Aliases must be unique.", alias)
             });
         }
         let old_entry = if self.form.is_pattern {
@@ -5585,7 +5621,7 @@ Host do-alpha
             askpass: Some("keychain".to_string()),
             ..Default::default()
         };
-        let form = HostForm::from_entry(&entry);
+        let form = HostForm::from_entry(&entry, Default::default());
         assert_eq!(form.askpass, "keychain");
     }
 
@@ -5597,8 +5633,56 @@ Host do-alpha
             askpass: None,
             ..Default::default()
         };
-        let form = HostForm::from_entry(&entry);
+        let form = HostForm::from_entry(&entry, Default::default());
         assert_eq!(form.askpass, "");
+    }
+
+    #[test]
+    fn test_form_from_entry_with_inherited_hints() {
+        use crate::ssh_config::model::InheritedHints;
+        let entry = HostEntry {
+            alias: "myserver".to_string(),
+            hostname: "10.0.0.1".to_string(),
+            ..Default::default()
+        };
+        let hints = InheritedHints {
+            proxy_jump: Some(("bastion".to_string(), "web-*".to_string())),
+            user: Some(("admin".to_string(), "*".to_string())),
+            identity_file: None,
+        };
+        let form = HostForm::from_entry(&entry, hints);
+        // Form fields are empty (raw entry has no own values).
+        assert_eq!(form.proxy_jump, "");
+        assert_eq!(form.user, "");
+        // Inherited hints are carried through.
+        let (val, src) = form.inherited.proxy_jump.as_ref().unwrap();
+        assert_eq!(val, "bastion");
+        assert_eq!(src, "web-*");
+        let (val, src) = form.inherited.user.as_ref().unwrap();
+        assert_eq!(val, "admin");
+        assert_eq!(src, "*");
+        assert!(form.inherited.identity_file.is_none());
+    }
+
+    #[test]
+    fn test_form_clone_carries_enriched_values() {
+        // When cloning a host, inherited values become own values in the form.
+        // Clone uses the enriched entry (from host_entries with inheritance)
+        // and passes Default::default() for hints.
+        let entry = HostEntry {
+            alias: "web-prod".to_string(),
+            hostname: "10.0.0.1".to_string(),
+            proxy_jump: "bastion".to_string(), // enriched: includes inherited
+            user: "team".to_string(),
+            ..Default::default()
+        };
+        let form = HostForm::from_entry(&entry, Default::default());
+        // Values are in the form fields (editable, not dimmed).
+        assert_eq!(form.proxy_jump, "bastion");
+        assert_eq!(form.user, "team");
+        // No inherited hints (clone is self-contained).
+        assert!(form.inherited.proxy_jump.is_none());
+        assert!(form.inherited.user.is_none());
     }
 
     #[test]
@@ -5943,6 +6027,61 @@ Host do-alpha
         assert!(serialized.contains("purple:askpass vault:secret/ssh#pass"));
     }
 
+    #[test]
+    fn test_edit_pattern_from_form_finds_multi_host_pattern() {
+        // Multi-host patterns like "Host web-* db-*" have spaces in the pattern.
+        // edit_host_from_form must find them via has_host_block, not has_host.
+        let mut app = make_app("Host web-* db-*\n  User deploy\n");
+        assert_eq!(app.patterns.len(), 1);
+        assert_eq!(app.patterns[0].pattern, "web-* db-*");
+
+        app.form = HostForm::from_pattern_entry(&app.patterns[0]);
+        assert!(app.form.is_pattern);
+        app.form.user = "admin".to_string();
+
+        let result = app.edit_host_from_form("web-* db-*");
+        assert!(result.is_ok(), "expected success, got: {:?}", result);
+    }
+
+    #[test]
+    fn test_edit_single_pattern_from_form() {
+        let mut app = make_app("Host *.example.com\n  User deploy\n");
+        assert_eq!(app.patterns.len(), 1);
+        app.form = HostForm::from_pattern_entry(&app.patterns[0]);
+        app.form.user = "admin".to_string();
+
+        let result = app.edit_host_from_form("*.example.com");
+        assert!(result.is_ok(), "expected success, got: {:?}", result);
+    }
+
+    #[test]
+    fn test_edit_pattern_duplicate_detection() {
+        let mut app = make_app("Host web-* db-*\n  User deploy\nHost cache-*\n  User cache\n");
+        let pat = app
+            .patterns
+            .iter()
+            .find(|p| p.pattern == "web-* db-*")
+            .unwrap()
+            .clone();
+        app.form = HostForm::from_pattern_entry(&pat);
+        app.form.alias = "cache-*".to_string();
+        let result = app.edit_host_from_form("web-* db-*");
+        assert_eq!(result, Err("Pattern 'cache-*' already exists.".to_string()));
+    }
+
+    #[test]
+    fn test_add_pattern_duplicate_detection() {
+        let mut app = make_app("Host web-* db-*\n  User deploy\n");
+        app.form = HostForm::new_pattern();
+        app.form.alias = "web-* db-*".to_string();
+        app.form.user = "admin".to_string();
+        let result = app.add_host_from_form();
+        assert_eq!(
+            result,
+            Err("Pattern 'web-* db-*' already exists.".to_string())
+        );
+    }
+
     // --- pending_connect carries askpass ---
 
     #[test]
@@ -5985,7 +6124,7 @@ Host do-alpha
                 askpass: askpass.clone(),
                 ..Default::default()
             };
-            let form = HostForm::from_entry(&entry);
+            let form = HostForm::from_entry(&entry, Default::default());
             let back = form.to_entry();
             assert_eq!(back.askpass, *askpass, "Roundtrip failed for {:?}", askpass);
         }

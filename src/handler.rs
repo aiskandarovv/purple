@@ -101,6 +101,7 @@ pub fn handle_key_event(
         Screen::KeyDetail { .. } => handle_key_detail(app, key),
         Screen::HostDetail { .. } => handle_host_detail(app, key),
         Screen::TagPicker => handle_tag_picker_screen(app, key),
+        Screen::ThemePicker => handle_theme_picker(app, key),
         Screen::Providers => handle_provider_list(app, key, events_tx),
         Screen::ProviderForm { .. } => handle_provider_form(app, key, events_tx),
         Screen::TunnelList { .. } => handle_tunnel_list(app, key),
@@ -285,7 +286,17 @@ fn open_edit_form(app: &mut App, host: HostEntry) -> bool {
         return false;
     }
     let stale_hint = host.stale.is_some().then(|| stale_provider_hint(&host));
-    app.form = HostForm::from_entry(&host);
+    // Load raw entry (without pattern inheritance) so inherited values are not
+    // shown as editable own values. Compute inherited hints separately.
+    let raw = match app.config.raw_host_entry(&host.alias) {
+        Some(entry) => entry,
+        None => {
+            app.set_status("Host not found in config.".to_string(), true);
+            return false;
+        }
+    };
+    let inherited = app.config.inherited_hints(&host.alias);
+    app.form = HostForm::from_entry(&raw, inherited);
     if let Some(hint) = stale_hint {
         app.set_status(format!("Stale host.{}", hint), true);
     }
@@ -473,7 +484,9 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
                     None
                 };
                 let copy_alias = format!("{}-copy", host.alias);
-                let mut form = HostForm::from_entry(host);
+                // Clone uses the enriched entry (with inheritance) so the copy
+                // is self-contained. No inherited hints needed.
+                let mut form = HostForm::from_entry(host, Default::default());
                 form.alias = copy_alias;
                 form.cursor_pos = form.alias.chars().count();
                 if let Some(hint) = stale_hint {
@@ -752,6 +765,32 @@ fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEv
         }
         KeyCode::Char('#') => {
             app.open_tag_picker();
+        }
+        KeyCode::Char('m') => {
+            let current = crate::ui::theme::current_theme().name;
+            let builtins = crate::ui::theme::ThemeDef::builtins();
+            let custom = crate::ui::theme::ThemeDef::load_custom();
+            let idx = builtins
+                .iter()
+                .position(|t| t.name.eq_ignore_ascii_case(&current))
+                .or_else(|| {
+                    if custom.is_empty() {
+                        None
+                    } else {
+                        custom
+                            .iter()
+                            .position(|t| t.name.eq_ignore_ascii_case(&current))
+                            .map(|i| builtins.len() + 1 + i) // +1 for divider
+                    }
+                })
+                .unwrap_or(0);
+            app.ui.theme_picker_state.select(Some(idx));
+            app.ui.theme_picker_builtins = builtins;
+            app.ui.theme_picker_custom = custom;
+            app.ui.theme_picker_saved_name =
+                crate::preferences::load_theme().unwrap_or_else(|| "Purple".to_string());
+            app.ui.theme_picker_original = Some(crate::ui::theme::current_theme());
+            app.screen = Screen::ThemePicker;
         }
         KeyCode::Char('T') => {
             if app.is_pattern_selected() {
@@ -1799,6 +1838,115 @@ fn handle_tag_picker_screen(app: &mut App, key: KeyEvent) {
         }
         _ => {}
     }
+}
+
+fn handle_theme_picker(app: &mut App, key: KeyEvent) {
+    let builtins = &app.ui.theme_picker_builtins;
+    let custom = &app.ui.theme_picker_custom;
+    let has_custom = !custom.is_empty();
+    let divider_idx = if has_custom {
+        Some(builtins.len())
+    } else {
+        None
+    };
+    let total = builtins.len() + if has_custom { 1 + custom.len() } else { 0 };
+
+    if total == 0 {
+        app.screen = Screen::HostList;
+        return;
+    }
+
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => {
+            // Restore the theme that was active when the picker opened
+            if let Some(original) = app.ui.theme_picker_original.take() {
+                crate::ui::theme::set_theme(original);
+            }
+            app.ui.theme_picker_builtins = Vec::new();
+            app.ui.theme_picker_custom = Vec::new();
+            app.ui.theme_picker_saved_name = String::new();
+            app.screen = Screen::HostList;
+        }
+        KeyCode::Char('?') => {
+            let old = std::mem::replace(&mut app.screen, Screen::HostList);
+            app.screen = Screen::Help {
+                return_screen: Box::new(old),
+            };
+        }
+        KeyCode::Char('j') | KeyCode::Down => {
+            let current = app.ui.theme_picker_state.selected().unwrap_or(0);
+            let mut next = current + 1;
+            if next >= total {
+                next = 0;
+            }
+            if divider_idx == Some(next) {
+                next += 1;
+                if next >= total {
+                    next = 0;
+                }
+            }
+            app.ui.theme_picker_state.select(Some(next));
+            preview_theme_at_index(next, builtins, custom, divider_idx);
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            let current = app.ui.theme_picker_state.selected().unwrap_or(0);
+            let mut next = if current == 0 { total - 1 } else { current - 1 };
+            if divider_idx == Some(next) {
+                next = if next == 0 { total - 1 } else { next - 1 };
+            }
+            app.ui.theme_picker_state.select(Some(next));
+            preview_theme_at_index(next, builtins, custom, divider_idx);
+        }
+        KeyCode::Enter => {
+            if let Some(theme) = theme_at_index(
+                app.ui.theme_picker_state.selected().unwrap_or(0),
+                builtins,
+                custom,
+                divider_idx,
+            ) {
+                if !crate::demo_flag::is_demo() {
+                    let _ = crate::preferences::save_theme(&theme.name);
+                }
+                crate::ui::theme::set_theme(theme);
+            }
+            app.ui.theme_picker_builtins = Vec::new();
+            app.ui.theme_picker_custom = Vec::new();
+            app.ui.theme_picker_saved_name = String::new();
+            app.ui.theme_picker_original = None;
+            app.screen = Screen::HostList;
+        }
+        _ => {}
+    }
+}
+
+fn preview_theme_at_index(
+    idx: usize,
+    builtins: &[crate::ui::theme::ThemeDef],
+    custom: &[crate::ui::theme::ThemeDef],
+    divider_idx: Option<usize>,
+) {
+    if let Some(theme) = theme_at_index(idx, builtins, custom, divider_idx) {
+        crate::ui::theme::set_theme(theme);
+    }
+}
+
+fn theme_at_index(
+    idx: usize,
+    builtins: &[crate::ui::theme::ThemeDef],
+    custom: &[crate::ui::theme::ThemeDef],
+    divider_idx: Option<usize>,
+) -> Option<crate::ui::theme::ThemeDef> {
+    if idx < builtins.len() {
+        return Some(builtins[idx].clone());
+    }
+    if let Some(div) = divider_idx {
+        if idx == div {
+            return None; // divider row
+        }
+        let custom_idx = idx - div - 1;
+        return custom.get(custom_idx).cloned();
+    }
+    None
 }
 
 fn handle_provider_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEvent>) {
@@ -6450,7 +6598,7 @@ mod tests {
         );
         // Simulate what happens when user presses 'e' on a host
         let entry = app.config.host_entries()[0].clone();
-        app.form = crate::app::HostForm::from_entry(&entry);
+        app.form = crate::app::HostForm::from_entry(&entry, Default::default());
         assert_eq!(app.form.askpass, "vault:secret/ssh#pw");
     }
 
@@ -6458,7 +6606,7 @@ mod tests {
     fn test_edit_form_empty_askpass_when_none() {
         let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n");
         let entry = app.config.host_entries()[0].clone();
-        app.form = crate::app::HostForm::from_entry(&entry);
+        app.form = crate::app::HostForm::from_entry(&entry, Default::default());
         assert_eq!(app.form.askpass, "");
     }
 
@@ -10078,7 +10226,7 @@ Host do-web2
             bom: false,
         };
         let entries = config.host_entries();
-        let form = HostForm::from_entry(&entries[0]);
+        let form = HostForm::from_entry(&entries[0], Default::default());
         assert!(form.expanded);
     }
 
@@ -10349,5 +10497,45 @@ Host do-web2
             crate::app::ProviderFormField::Profile
         );
         assert!(!app.provider_form.expanded);
+    }
+
+    // --- theme_at_index tests ---
+
+    #[test]
+    fn theme_at_index_returns_builtin() {
+        let builtins = crate::ui::theme::ThemeDef::builtins();
+        let custom: Vec<crate::ui::theme::ThemeDef> = vec![];
+        let result = super::theme_at_index(0, &builtins, &custom, None);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().name, "Purple");
+    }
+
+    #[test]
+    fn theme_at_index_returns_none_for_divider() {
+        let builtins = crate::ui::theme::ThemeDef::builtins();
+        let custom = vec![crate::ui::theme::ThemeDef::purple()];
+        let divider_idx = Some(builtins.len());
+        let result = super::theme_at_index(builtins.len(), &builtins, &custom, divider_idx);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn theme_at_index_returns_custom_after_divider() {
+        let builtins = crate::ui::theme::ThemeDef::builtins();
+        let mut custom_theme = crate::ui::theme::ThemeDef::purple();
+        custom_theme.name = "My Custom".to_string();
+        let custom = vec![custom_theme];
+        let divider_idx = Some(builtins.len());
+        let result = super::theme_at_index(builtins.len() + 1, &builtins, &custom, divider_idx);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().name, "My Custom");
+    }
+
+    #[test]
+    fn theme_at_index_out_of_bounds_returns_none() {
+        let builtins = crate::ui::theme::ThemeDef::builtins();
+        let custom: Vec<crate::ui::theme::ThemeDef> = vec![];
+        let result = super::theme_at_index(999, &builtins, &custom, None);
+        assert!(result.is_none());
     }
 }

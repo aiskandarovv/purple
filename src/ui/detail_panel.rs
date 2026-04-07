@@ -102,6 +102,85 @@ use crate::ssh_config::model::ConfigElement;
 
 const LABEL_WIDTH: usize = 14;
 
+/// Testable detail panel data — what the detail panel will render.
+/// Extracted from `App` state without requiring a `Frame`.
+#[cfg(test)]
+#[derive(Debug)]
+#[allow(dead_code)]
+pub struct DetailInfo {
+    pub has_route: bool,
+    pub is_proxy_loop: bool,
+    pub route_hops: Vec<String>,
+    pub pattern_matches: Vec<String>,
+    pub pattern_proxy_jumps: Vec<(String, String)>, // (pattern, proxy_jump value)
+    pub has_tags: bool,
+    pub has_provider_meta: bool,
+    pub has_tunnels: bool,
+    pub has_containers: bool,
+}
+
+/// Compute detail panel information for a host without rendering.
+#[cfg(test)]
+pub fn compute_detail_info(
+    host: &crate::ssh_config::model::HostEntry,
+    hosts: &[crate::ssh_config::model::HostEntry],
+    config: &crate::ssh_config::model::SshConfigFile,
+) -> DetailInfo {
+    let is_proxy_loop = !host.proxy_jump.is_empty()
+        && crate::ssh_config::model::proxy_jump_contains_self(&host.proxy_jump, &host.alias);
+    let chain = if is_proxy_loop {
+        Vec::new()
+    } else {
+        resolve_proxy_chain(host, hosts)
+    };
+    let inherited = config.matching_patterns(&host.alias);
+    DetailInfo {
+        has_route: !is_proxy_loop && !host.proxy_jump.is_empty() && !chain.is_empty(),
+        is_proxy_loop,
+        route_hops: chain.iter().map(|(name, _, _)| name.clone()).collect(),
+        pattern_matches: inherited.iter().map(|p| p.pattern.clone()).collect(),
+        pattern_proxy_jumps: inherited
+            .iter()
+            .filter(|p| !p.proxy_jump.is_empty())
+            .map(|p| (p.pattern.clone(), p.proxy_jump.clone()))
+            .collect(),
+        has_tags: !host.tags.is_empty()
+            || !host.provider_tags.is_empty()
+            || host.provider.is_some(),
+        has_provider_meta: !host.provider_meta.is_empty(),
+        has_tunnels: host.tunnel_count > 0,
+        has_containers: false, // requires app.container_cache, not testable here
+    }
+}
+
+/// Testable info for the pattern-selected detail view.
+#[cfg(test)]
+#[derive(Debug)]
+pub struct PatternDetailInfo {
+    pub matching_aliases: Vec<String>,
+    pub has_directives: bool,
+    pub has_tags: bool,
+}
+
+/// Compute pattern detail info without rendering.
+/// Mirrors `render_pattern_detail` logic.
+#[cfg(test)]
+pub fn compute_pattern_detail_info(
+    pattern: &crate::ssh_config::model::PatternEntry,
+    hosts: &[crate::ssh_config::model::HostEntry],
+) -> PatternDetailInfo {
+    let matching_aliases: Vec<String> = hosts
+        .iter()
+        .filter(|h| crate::ssh_config::model::host_pattern_matches(&pattern.pattern, &h.alias))
+        .map(|h| h.alias.clone())
+        .collect();
+    PatternDetailInfo {
+        matching_aliases,
+        has_directives: !pattern.directives.is_empty(),
+        has_tags: !pattern.tags.is_empty(),
+    }
+}
+
 /// Short label for a password source.
 fn password_label(source: &str) -> &'static str {
     if source == "keychain" {
@@ -412,36 +491,79 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect, spinner_tick: u64) {
 
     // Route visualisation (only when ProxyJump resolves to known hosts)
     if !host.proxy_jump.is_empty() {
-        let chain = resolve_proxy_chain(host, &app.hosts);
-        if !chain.is_empty() {
+        let is_loop =
+            crate::ssh_config::model::proxy_jump_contains_self(&host.proxy_jump, &host.alias);
+        if is_loop {
             section_open(&mut lines, "ROUTE", box_width);
-            // hop_width: content width minus "  ● " prefix (4 chars)
-            let hop_width = box_width.saturating_sub(4 + 4); // box borders (4) + indent+bullet (4)
+            let inner = box_width.saturating_sub(4);
             section_line(
                 &mut lines,
-                vec![
-                    Span::styled("  \u{25CB} ", theme::muted()),
-                    Span::styled("you", theme::muted()),
-                ],
+                vec![Span::styled("ProxyJump loop", theme::error())],
                 box_width,
             );
-            for (name, hostname, in_config) in chain.iter().rev() {
+            let fix = format!("add !{} to pattern", host.alias);
+            section_line(
+                &mut lines,
+                vec![Span::styled(super::truncate(&fix, inner), theme::muted())],
+                box_width,
+            );
+            section_close(&mut lines, box_width);
+        } else {
+            let chain = resolve_proxy_chain(host, &app.hosts);
+            if !chain.is_empty() {
+                section_open(&mut lines, "ROUTE", box_width);
+                // hop_width: content width minus "  ● " prefix (4 chars)
+                let hop_width = box_width.saturating_sub(4 + 4); // box borders (4) + indent+bullet (4)
+                section_line(
+                    &mut lines,
+                    vec![
+                        Span::styled("  \u{25CB} ", theme::muted()),
+                        Span::styled("you", theme::muted()),
+                    ],
+                    box_width,
+                );
+                for (name, hostname, in_config) in chain.iter().rev() {
+                    section_line(
+                        &mut lines,
+                        vec![Span::styled("    \u{2502}", theme::muted())],
+                        box_width,
+                    );
+                    let name_style = if *in_config {
+                        theme::bold()
+                    } else {
+                        theme::error()
+                    };
+                    let name_trunc = super::truncate(name, hop_width);
+                    let remaining = hop_width.saturating_sub(name_trunc.width());
+                    let ip = if *in_config && name != hostname && remaining > 4 {
+                        format!(
+                            "  {}",
+                            super::truncate(hostname, remaining.saturating_sub(2))
+                        )
+                    } else {
+                        String::new()
+                    };
+                    section_line(
+                        &mut lines,
+                        vec![
+                            Span::styled("  \u{25CF} ", theme::muted()),
+                            Span::styled(name_trunc, name_style),
+                            Span::styled(ip, theme::muted()),
+                        ],
+                        box_width,
+                    );
+                }
                 section_line(
                     &mut lines,
                     vec![Span::styled("    \u{2502}", theme::muted())],
                     box_width,
                 );
-                let name_style = if *in_config {
-                    theme::bold()
-                } else {
-                    theme::error()
-                };
-                let name_trunc = super::truncate(name, hop_width);
-                let remaining = hop_width.saturating_sub(name_trunc.width());
-                let ip = if *in_config && name != hostname && remaining > 4 {
+                let alias_trunc = super::truncate(&host.alias, hop_width);
+                let remaining = hop_width.saturating_sub(alias_trunc.width());
+                let target_ip = if remaining > 4 {
                     format!(
                         "  {}",
-                        super::truncate(hostname, remaining.saturating_sub(2))
+                        super::truncate(&host.hostname, remaining.saturating_sub(2))
                     )
                 } else {
                     String::new()
@@ -449,38 +571,14 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect, spinner_tick: u64) {
                 section_line(
                     &mut lines,
                     vec![
-                        Span::styled("  \u{25CF} ", theme::muted()),
-                        Span::styled(name_trunc, name_style),
-                        Span::styled(ip, theme::muted()),
+                        Span::styled("  \u{25CF} ", theme::accent()),
+                        Span::styled(alias_trunc, theme::bold()),
+                        Span::styled(target_ip, theme::muted()),
                     ],
                     box_width,
                 );
+                section_close(&mut lines, box_width);
             }
-            section_line(
-                &mut lines,
-                vec![Span::styled("    \u{2502}", theme::muted())],
-                box_width,
-            );
-            let alias_trunc = super::truncate(&host.alias, hop_width);
-            let remaining = hop_width.saturating_sub(alias_trunc.width());
-            let target_ip = if remaining > 4 {
-                format!(
-                    "  {}",
-                    super::truncate(&host.hostname, remaining.saturating_sub(2))
-                )
-            } else {
-                String::new()
-            };
-            section_line(
-                &mut lines,
-                vec![
-                    Span::styled("  \u{25CF} ", theme::accent()),
-                    Span::styled(alias_trunc, theme::bold()),
-                    Span::styled(target_ip, theme::muted()),
-                ],
-                box_width,
-            );
-            section_close(&mut lines, box_width);
         }
     }
 
@@ -624,18 +722,9 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect, spinner_tick: u64) {
         section_close(&mut lines, box_width);
     }
 
-    // Inherited directives section — match against alias and hostname for display.
-    // OpenSSH Host keyword matches alias only, but patterns like "10.30.0.*" apply
-    // when the user types the IP directly, so we show those too.
-    let mut inherited = app.config.matching_patterns(&host.alias);
-    if !host.hostname.is_empty() {
-        let hostname_matches = app.config.matching_patterns(&host.hostname);
-        for entry in hostname_matches {
-            if !inherited.iter().any(|e| e.pattern == entry.pattern) {
-                inherited.push(entry);
-            }
-        }
-    }
+    // Inherited directives section — alias-only matching (SSH-faithful).
+    // OpenSSH Host keyword matches only the alias typed on the command line.
+    let inherited = app.config.matching_patterns(&host.alias);
     for pattern_entry in &inherited {
         section_open(&mut lines, "PATTERN MATCH", box_width);
         section_line(
@@ -742,18 +831,11 @@ fn render_pattern_detail(
         section_close(&mut lines, box_width);
     }
 
-    // Matches section
+    // Matches section — alias-only matching (SSH-faithful).
     let matching_aliases: Vec<String> = app
         .hosts
         .iter()
-        .filter(|h| {
-            crate::ssh_config::model::host_pattern_matches(&pattern.pattern, &h.alias)
-                || (!h.hostname.is_empty()
-                    && crate::ssh_config::model::host_pattern_matches(
-                        &pattern.pattern,
-                        &h.hostname,
-                    ))
-        })
+        .filter(|h| crate::ssh_config::model::host_pattern_matches(&pattern.pattern, &h.alias))
         .map(|h| h.alias.clone())
         .collect();
 
@@ -1518,5 +1600,289 @@ mod tests {
     #[test]
     fn password_label_custom() {
         assert_eq!(password_label("/usr/bin/my-askpass"), "custom");
+    }
+
+    // =========================================================================
+    // Detail panel section logic tests (via compute_detail_info)
+    // =========================================================================
+
+    use crate::ssh_config::model::SshConfigFile;
+
+    fn parse_config(s: &str) -> SshConfigFile {
+        SshConfigFile {
+            elements: SshConfigFile::parse_content(s),
+            path: std::path::PathBuf::from("/tmp/test"),
+            crlf: false,
+            bom: false,
+        }
+    }
+
+    #[test]
+    fn detail_pattern_match_alias_only() {
+        // Pattern "web-*" should appear for host "web-prod" (alias match).
+        let config =
+            parse_config("Host web-*\n  ProxyJump bastion\n\nHost web-prod\n  Hostname 10.0.0.1\n");
+        let hosts = config.host_entries();
+        let info = compute_detail_info(&hosts[0], &hosts, &config);
+        assert_eq!(info.pattern_matches, vec!["web-*"]);
+        assert_eq!(
+            info.pattern_proxy_jumps,
+            vec![("web-*".to_string(), "bastion".to_string())]
+        );
+    }
+
+    #[test]
+    fn detail_pattern_match_no_hostname_match() {
+        // Pattern "10.30.0.*" should NOT appear for host "myserver" with Hostname 10.30.0.5.
+        // SSH Host patterns match alias only, not resolved hostname.
+        let config = parse_config(
+            "Host 10.30.0.*\n  ProxyJump bastion\n\nHost myserver\n  Hostname 10.30.0.5\n",
+        );
+        let hosts = config.host_entries();
+        let info = compute_detail_info(&hosts[0], &hosts, &config);
+        assert!(info.pattern_matches.is_empty());
+        assert!(info.pattern_proxy_jumps.is_empty());
+    }
+
+    #[test]
+    fn detail_pattern_match_star_applies() {
+        // "Host *" matches every alias.
+        let config = parse_config(
+            "Host *\n  User admin\n  ProxyJump gw\n\nHost myserver\n  Hostname 10.0.0.1\n",
+        );
+        let hosts = config.host_entries();
+        let info = compute_detail_info(&hosts[0], &hosts, &config);
+        assert_eq!(info.pattern_matches, vec!["*"]);
+        assert_eq!(
+            info.pattern_proxy_jumps,
+            vec![("*".to_string(), "gw".to_string())]
+        );
+    }
+
+    #[test]
+    fn detail_pattern_match_negation_excludes() {
+        // "Host * !bastion" should NOT match "bastion".
+        let config =
+            parse_config("Host * !bastion\n  ProxyJump gw\n\nHost bastion\n  Hostname 10.0.0.1\n");
+        let hosts = config.host_entries();
+        let info = compute_detail_info(&hosts[0], &hosts, &config);
+        assert!(info.pattern_matches.is_empty());
+    }
+
+    #[test]
+    fn detail_route_from_inherited_proxy_jump() {
+        // Host inherits ProxyJump via pattern. Route should show the bastion hop.
+        let config = parse_config(
+            "Host web-*\n  ProxyJump bastion\n\nHost bastion\n  Hostname 1.2.3.4\n\nHost web-prod\n  Hostname 10.0.0.1\n",
+        );
+        let hosts = config.host_entries();
+        let web_prod = hosts.iter().find(|h| h.alias == "web-prod").unwrap();
+        let info = compute_detail_info(web_prod, &hosts, &config);
+        assert!(info.has_route);
+        assert_eq!(info.route_hops, vec!["bastion"]);
+    }
+
+    #[test]
+    fn detail_no_route_without_proxy_jump() {
+        let config = parse_config("Host myserver\n  Hostname 10.0.0.1\n");
+        let hosts = config.host_entries();
+        let info = compute_detail_info(&hosts[0], &hosts, &config);
+        assert!(!info.has_route);
+        assert!(info.route_hops.is_empty());
+    }
+
+    #[test]
+    fn detail_route_with_own_proxy_jump() {
+        let config = parse_config(
+            "Host bastion\n  Hostname 1.2.3.4\n\nHost myserver\n  Hostname 10.0.0.1\n  ProxyJump bastion\n",
+        );
+        let hosts = config.host_entries();
+        let server = hosts.iter().find(|h| h.alias == "myserver").unwrap();
+        let info = compute_detail_info(server, &hosts, &config);
+        assert!(info.has_route);
+        assert_eq!(info.route_hops, vec!["bastion"]);
+    }
+
+    #[test]
+    fn detail_multiple_pattern_matches() {
+        // Two patterns match "web-prod": "web-*" and "*".
+        let config = parse_config(
+            "Host web-*\n  User team\n\nHost *\n  ServerAliveInterval 60\n\nHost web-prod\n  Hostname 10.0.0.1\n",
+        );
+        let hosts = config.host_entries();
+        let info = compute_detail_info(&hosts[0], &hosts, &config);
+        assert_eq!(info.pattern_matches, vec!["web-*", "*"]);
+    }
+
+    #[test]
+    fn detail_tags_shown_when_present() {
+        let config = parse_config("Host myserver\n  Hostname 10.0.0.1\n  # purple:tags prod,web\n");
+        let hosts = config.host_entries();
+        let info = compute_detail_info(&hosts[0], &hosts, &config);
+        assert!(info.has_tags);
+    }
+
+    #[test]
+    fn detail_tags_hidden_when_empty() {
+        let config = parse_config("Host myserver\n  Hostname 10.0.0.1\n");
+        let hosts = config.host_entries();
+        let info = compute_detail_info(&hosts[0], &hosts, &config);
+        assert!(!info.has_tags);
+    }
+
+    #[test]
+    fn detail_self_referencing_proxy_jump_shows_loop() {
+        // "Host *" with "ProxyJump gateway" on gateway itself = loop.
+        let config = parse_config(
+            "Host *\n  ProxyJump gateway\n\n\
+             Host gateway\n  Hostname 10.0.0.1\n\n\
+             Host backend\n  Hostname 10.0.0.2\n",
+        );
+        let hosts = config.host_entries();
+        let gateway = hosts.iter().find(|h| h.alias == "gateway").unwrap();
+        let backend = hosts.iter().find(|h| h.alias == "backend").unwrap();
+        let gw_info = compute_detail_info(gateway, &hosts, &config);
+        assert!(gw_info.is_proxy_loop);
+        assert!(!gw_info.has_route); // loop replaces route
+        // backend is not a loop.
+        let be_info = compute_detail_info(backend, &hosts, &config);
+        assert!(!be_info.is_proxy_loop);
+        assert!(be_info.has_route);
+    }
+
+    #[test]
+    fn detail_comma_proxy_jump_self_reference_shows_loop() {
+        let config = parse_config(
+            "Host *\n  ProxyJump hop1,gateway\n\n\
+             Host gateway\n  Hostname 10.0.0.1\n",
+        );
+        let hosts = config.host_entries();
+        let gateway = hosts.iter().find(|h| h.alias == "gateway").unwrap();
+        let info = compute_detail_info(gateway, &hosts, &config);
+        assert!(info.is_proxy_loop);
+        assert!(!info.has_route);
+    }
+
+    // =========================================================================
+    // Pattern-selected detail view tests (via compute_pattern_detail_info)
+    // =========================================================================
+
+    #[test]
+    fn pattern_detail_matches_alias_only() {
+        // "Host web-*" should match "web-prod" (alias match) but NOT "myserver"
+        // even if myserver has Hostname matching the pattern.
+        let config = parse_config(
+            "Host web-*\n  ProxyJump bastion\n\n\
+             Host web-prod\n  Hostname 10.0.0.1\n\n\
+             Host myserver\n  Hostname web-staging.example.com\n",
+        );
+        let hosts = config.host_entries();
+        let patterns = config.pattern_entries();
+        let info = compute_pattern_detail_info(&patterns[0], &hosts);
+        assert_eq!(info.matching_aliases, vec!["web-prod"]);
+    }
+
+    #[test]
+    fn pattern_detail_ip_pattern_no_hostname_match() {
+        // "Host 10.30.0.*" should NOT list "myserver" even though its Hostname
+        // is 10.30.0.5. SSH matches alias only.
+        let config = parse_config(
+            "Host 10.30.0.*\n  ProxyJump bastion\n\n\
+             Host myserver\n  Hostname 10.30.0.5\n\n\
+             Host 10.30.0.5\n  User root\n",
+        );
+        let hosts = config.host_entries();
+        let patterns = config.pattern_entries();
+        let info = compute_pattern_detail_info(&patterns[0], &hosts);
+        // Only "10.30.0.5" (alias match), NOT "myserver" (hostname match).
+        assert_eq!(info.matching_aliases, vec!["10.30.0.5"]);
+    }
+
+    #[test]
+    fn pattern_detail_star_matches_all_hosts() {
+        let config = parse_config(
+            "Host *\n  ServerAliveInterval 60\n\n\
+             Host alpha\n  Hostname 1.1.1.1\n\n\
+             Host beta\n  Hostname 2.2.2.2\n",
+        );
+        let hosts = config.host_entries();
+        let patterns = config.pattern_entries();
+        let info = compute_pattern_detail_info(&patterns[0], &hosts);
+        assert_eq!(info.matching_aliases.len(), 2);
+        assert!(info.matching_aliases.contains(&"alpha".to_string()));
+        assert!(info.matching_aliases.contains(&"beta".to_string()));
+    }
+
+    #[test]
+    fn pattern_detail_negation_excludes() {
+        // "Host * !bastion" should match "web" but NOT "bastion".
+        let config = parse_config(
+            "Host * !bastion\n  ProxyJump gw\n\n\
+             Host web\n  Hostname 10.0.0.1\n\n\
+             Host bastion\n  Hostname 10.0.0.99\n",
+        );
+        let hosts = config.host_entries();
+        let patterns = config.pattern_entries();
+        let info = compute_pattern_detail_info(&patterns[0], &hosts);
+        assert_eq!(info.matching_aliases, vec!["web"]);
+    }
+
+    #[test]
+    fn pattern_detail_no_matches() {
+        // Pattern "staging-*" matches no concrete hosts.
+        let config =
+            parse_config("Host staging-*\n  User deploy\n\nHost web-prod\n  Hostname 10.0.0.1\n");
+        let hosts = config.host_entries();
+        let patterns = config.pattern_entries();
+        let info = compute_pattern_detail_info(&patterns[0], &hosts);
+        assert!(info.matching_aliases.is_empty());
+    }
+
+    #[test]
+    fn pattern_detail_has_directives() {
+        let config = parse_config("Host web-*\n  ProxyJump bastion\n  User team\n");
+        let patterns = config.pattern_entries();
+        let info = compute_pattern_detail_info(&patterns[0], &[]);
+        assert!(info.has_directives);
+    }
+
+    #[test]
+    fn pattern_detail_empty_directives() {
+        // A pattern block with no directives (only the Host line).
+        let config = parse_config("Host web-*\n");
+        let patterns = config.pattern_entries();
+        let info = compute_pattern_detail_info(&patterns[0], &[]);
+        assert!(!info.has_directives);
+    }
+
+    #[test]
+    fn pattern_detail_has_tags() {
+        let config = parse_config("Host web-*\n  User team\n  # purple:tags internal,vpn\n");
+        let patterns = config.pattern_entries();
+        let info = compute_pattern_detail_info(&patterns[0], &[]);
+        assert!(info.has_tags);
+    }
+
+    #[test]
+    fn pattern_detail_no_tags() {
+        let config = parse_config("Host web-*\n  User team\n");
+        let patterns = config.pattern_entries();
+        let info = compute_pattern_detail_info(&patterns[0], &[]);
+        assert!(!info.has_tags);
+    }
+
+    #[test]
+    fn pattern_detail_multiple_negations() {
+        // "Host * !web-* !bastion" should exclude both web-prod and bastion.
+        let config = parse_config(
+            "Host * !web-* !bastion\n  ServerAliveInterval 60\n\n\
+             Host web-prod\n  Hostname 10.0.0.1\n\n\
+             Host bastion\n  Hostname 10.0.0.99\n\n\
+             Host db-01\n  Hostname 10.0.0.2\n",
+        );
+        let hosts = config.host_entries();
+        let patterns = config.pattern_entries();
+        let info = compute_pattern_detail_info(&patterns[0], &hosts);
+        assert_eq!(info.matching_aliases, vec!["db-01"]);
     }
 }

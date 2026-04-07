@@ -41,14 +41,21 @@ pub(crate) struct OverlayAnim {
     pub(crate) duration_ms: u128,
 }
 
+/// Captured overlay state for close animation. Bundles the buffer snapshot with the
+/// dim flag so they are always in sync (the close animation knows whether to dim).
+pub(crate) struct OverlayCloseState {
+    pub(crate) buffer: Buffer,
+    pub(crate) dimmed: bool,
+}
+
 /// Animation state kept separate from App (render-layer concern).
 pub struct AnimationState {
     pub spinner_tick: u64,
     pub(crate) prev_was_overlay: bool,
     pub(crate) detail_anim: Option<DetailAnim>,
     pub(crate) overlay_anim: Option<OverlayAnim>,
-    /// Saved overlay buffer for close animation (captured once when overlay is stable).
-    pub(crate) overlay_buffer: Option<Buffer>,
+    /// Saved overlay state for close animation (captured once when overlay is stable).
+    pub(crate) overlay_close: Option<OverlayCloseState>,
 }
 
 impl AnimationState {
@@ -58,7 +65,7 @@ impl AnimationState {
             prev_was_overlay: false,
             detail_anim: None,
             overlay_anim: None,
-            overlay_buffer: None,
+            overlay_close: None,
         }
     }
 
@@ -100,7 +107,7 @@ impl AnimationState {
             let was_closing = self.overlay_anim.as_ref().is_some_and(|a| !a.opening);
             self.overlay_anim = None;
             if was_closing {
-                self.overlay_buffer = None;
+                self.overlay_close = None;
             }
         }
     }
@@ -142,7 +149,7 @@ impl AnimationState {
                 },
             });
         } else if !is_overlay && self.prev_was_overlay {
-            if self.overlay_buffer.is_some() {
+            if self.overlay_close.is_some() {
                 self.overlay_anim = Some(OverlayAnim {
                     start: Instant::now(),
                     opening: false,
@@ -312,7 +319,10 @@ mod tests {
         };
         anim.detect_transitions(&mut app);
         // Simulate saved buffer
-        anim.overlay_buffer = Some(Buffer::empty(Rect::new(0, 0, 80, 24)));
+        anim.overlay_close = Some(OverlayCloseState {
+            buffer: Buffer::empty(Rect::new(0, 0, 80, 24)),
+            dimmed: true,
+        });
 
         app.screen = Screen::HostList;
         anim.detect_transitions(&mut app);
@@ -373,7 +383,10 @@ mod tests {
             return_screen: Box::new(Screen::HostList),
         };
         anim.detect_transitions(&mut app);
-        anim.overlay_buffer = Some(Buffer::empty(Rect::new(0, 0, 80, 24)));
+        anim.overlay_close = Some(OverlayCloseState {
+            buffer: Buffer::empty(Rect::new(0, 0, 80, 24)),
+            dimmed: true,
+        });
 
         // Close
         app.screen = Screen::HostList;
@@ -383,7 +396,7 @@ mod tests {
             Instant::now() - std::time::Duration::from_millis(500);
         anim.tick_overlay_anim();
         assert!(anim.overlay_anim.is_none());
-        assert!(anim.overlay_buffer.is_none());
+        assert!(anim.overlay_close.is_none());
     }
 
     #[test]
@@ -524,5 +537,11 @@ mod tests {
         anim.detect_transitions(&mut app);
         assert!(anim.detail_anim.is_some());
         assert!(anim.overlay_anim.is_some());
+    }
+
+    #[test]
+    fn overlay_close_state_initially_none() {
+        let anim = AnimationState::new();
+        assert!(anim.overlay_close.is_none());
     }
 }

@@ -169,6 +169,15 @@ pub struct PatternEntry {
     pub directives: Vec<(String, String)>,
 }
 
+/// Inherited field hints from matching patterns. Each field is `Some((value,
+/// source_pattern))` when a pattern provides that directive, `None` otherwise.
+#[derive(Debug, Clone, Default)]
+pub struct InheritedHints {
+    pub proxy_jump: Option<(String, String)>,
+    pub user: Option<(String, String)>,
+    pub identity_file: Option<(String, String)>,
+}
+
 /// Returns true if the host pattern contains wildcards, character classes,
 /// negation or whitespace-separated multi-patterns (*, ?, [], !, space/tab).
 /// These are SSH match patterns, not concrete hosts.
@@ -317,6 +326,45 @@ pub fn host_pattern_matches(host_pattern: &str, alias: &str) -> bool {
     }
 
     any_positive_match
+}
+
+/// Returns true if any hop in a (possibly comma-separated) ProxyJump value
+/// matches the given alias. Strips optional `user@` prefix and `:port`
+/// suffix from each hop before comparing. Handles IPv6 bracket notation
+/// `[addr]:port`. Used to detect self-referencing loops.
+pub fn proxy_jump_contains_self(proxy_jump: &str, alias: &str) -> bool {
+    proxy_jump.split(',').any(|hop| {
+        let h = hop.trim();
+        // Strip optional user@ prefix (take everything after the first @).
+        let h = h.split_once('@').map_or(h, |(_, host)| host);
+        // Strip optional :port suffix. Handle [IPv6]:port bracket notation.
+        let h = if let Some(bracketed) = h.strip_prefix('[') {
+            bracketed.split_once(']').map_or(h, |(host, _)| host)
+        } else {
+            h.rsplit_once(':').map_or(h, |(host, _)| host)
+        };
+        h == alias
+    })
+}
+
+/// Apply first-match-wins inheritance from a pattern to mutable field refs.
+/// Only fills fields that are still empty. Self-referencing ProxyJump values
+/// are assigned (SSH would do the same) so the UI can warn about the loop.
+fn apply_first_match_fields(
+    proxy_jump: &mut String,
+    user: &mut String,
+    identity_file: &mut String,
+    p: &PatternEntry,
+) {
+    if proxy_jump.is_empty() && !p.proxy_jump.is_empty() {
+        proxy_jump.clone_from(&p.proxy_jump);
+    }
+    if user.is_empty() && !p.user.is_empty() {
+        user.clone_from(&p.user);
+    }
+    if identity_file.is_empty() && !p.identity_file.is_empty() {
+        identity_file.clone_from(&p.identity_file);
+    }
 }
 
 impl HostBlock {
@@ -772,10 +820,104 @@ impl HostBlock {
 
 impl SshConfigFile {
     /// Get all host entries as convenience views (including from Include files).
+    /// Pattern-inherited directives (ProxyJump, User, IdentityFile) are merged
+    /// using SSH-faithful alias-only matching so indicators like ↗ reflect what
+    /// SSH will actually apply when connecting via `ssh <alias>`.
     pub fn host_entries(&self) -> Vec<HostEntry> {
         let mut entries = Vec::new();
         Self::collect_host_entries(&self.elements, &mut entries);
+        self.apply_pattern_inheritance(&mut entries);
         entries
+    }
+
+    /// Get a single host entry by alias without pattern inheritance applied.
+    /// Returns the raw directives from the host's own block only. Used by the
+    /// edit form so inherited values can be shown as dimmed placeholders.
+    pub fn raw_host_entry(&self, alias: &str) -> Option<HostEntry> {
+        Self::find_raw_host_entry(&self.elements, alias)
+    }
+
+    fn find_raw_host_entry(elements: &[ConfigElement], alias: &str) -> Option<HostEntry> {
+        for e in elements {
+            match e {
+                ConfigElement::HostBlock(block)
+                    if !is_host_pattern(&block.host_pattern) && block.host_pattern == alias =>
+                {
+                    return Some(block.to_host_entry());
+                }
+                ConfigElement::Include(inc) => {
+                    for file in &inc.resolved_files {
+                        if let Some(mut found) = Self::find_raw_host_entry(&file.elements, alias) {
+                            if found.source_file.is_none() {
+                                found.source_file = Some(file.path.clone());
+                            }
+                            return Some(found);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// Apply SSH first-match-wins pattern inheritance to host entries.
+    /// Matches patterns against the alias only (SSH-faithful: `Host` patterns
+    /// match the token typed on the command line, not the resolved `Hostname`).
+    fn apply_pattern_inheritance(&self, entries: &mut [HostEntry]) {
+        // Patterns are pre-collected once. Host entries never contain pattern
+        // aliases — collect_host_entries skips is_host_pattern blocks.
+        let all_patterns = self.pattern_entries();
+        for entry in entries.iter_mut() {
+            if !entry.proxy_jump.is_empty()
+                && !entry.user.is_empty()
+                && !entry.identity_file.is_empty()
+            {
+                continue;
+            }
+            for p in &all_patterns {
+                if !host_pattern_matches(&p.pattern, &entry.alias) {
+                    continue;
+                }
+                apply_first_match_fields(
+                    &mut entry.proxy_jump,
+                    &mut entry.user,
+                    &mut entry.identity_file,
+                    p,
+                );
+                if !entry.proxy_jump.is_empty()
+                    && !entry.user.is_empty()
+                    && !entry.identity_file.is_empty()
+                {
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Compute pattern-provided field hints for a host alias. Returns first-match
+    /// values and their source patterns for ProxyJump, User and IdentityFile.
+    /// These are returned regardless of whether the host has its own values for
+    /// those fields. The caller (form rendering) decides visibility based on
+    /// whether the field is empty. Matches by alias only (SSH-faithful).
+    pub fn inherited_hints(&self, alias: &str) -> InheritedHints {
+        let patterns = self.matching_patterns(alias);
+        let mut hints = InheritedHints::default();
+        for p in &patterns {
+            if hints.proxy_jump.is_none() && !p.proxy_jump.is_empty() {
+                hints.proxy_jump = Some((p.proxy_jump.clone(), p.pattern.clone()));
+            }
+            if hints.user.is_none() && !p.user.is_empty() {
+                hints.user = Some((p.user.clone(), p.pattern.clone()));
+            }
+            if hints.identity_file.is_none() && !p.identity_file.is_empty() {
+                hints.identity_file = Some((p.identity_file.clone(), p.pattern.clone()));
+            }
+            if hints.proxy_jump.is_some() && hints.user.is_some() && hints.identity_file.is_some() {
+                break;
+            }
+        }
+        hints
     }
 
     /// Get all pattern entries as convenience views (including from Include files).
@@ -1066,6 +1208,16 @@ impl SshConfigFile {
             }
         }
         false
+    }
+
+    /// Check if a host block with exactly this host_pattern exists (top-level only).
+    /// Unlike `has_host` which splits multi-host patterns and checks individual parts,
+    /// this matches the full `Host` line pattern string (e.g. "web-* db-*").
+    /// Does not search Include files (patterns from includes are read-only).
+    pub fn has_host_block(&self, pattern: &str) -> bool {
+        self.elements
+            .iter()
+            .any(|e| matches!(e, ConfigElement::HostBlock(block) if block.host_pattern == pattern))
     }
 
     /// Check if a host alias is from an included file (read-only).
@@ -4040,6 +4192,408 @@ Host complex
         assert_eq!(reparsed.host_entries().len(), 1);
         assert_eq!(reparsed.pattern_entries().len(), 1);
         assert_eq!(reparsed.pattern_entries()[0].pattern, "10.30.0.*");
+    }
+
+    #[test]
+    fn host_entries_inherit_proxy_jump_from_wildcard_pattern() {
+        // Host "web-*" defines ProxyJump bastion. Host "web-prod" should inherit it.
+        let config =
+            parse_str("Host web-*\n  ProxyJump bastion\n\nHost web-prod\n  Hostname 10.0.0.1\n");
+        let hosts = config.host_entries();
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].alias, "web-prod");
+        assert_eq!(hosts[0].proxy_jump, "bastion");
+    }
+
+    #[test]
+    fn host_entries_inherit_proxy_jump_from_star_pattern() {
+        // Host "*" defines ProxyJump bastion. All hosts without their own ProxyJump inherit it.
+        let config = parse_str(
+            "Host myserver\n  Hostname 10.0.0.1\n\nHost *\n  ProxyJump gateway\n  User admin\n",
+        );
+        let hosts = config.host_entries();
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].proxy_jump, "gateway");
+        assert_eq!(hosts[0].user, "admin");
+    }
+
+    #[test]
+    fn host_entries_own_proxy_jump_takes_precedence() {
+        // Host's own ProxyJump should not be overridden by pattern.
+        let config = parse_str(
+            "Host web-*\n  ProxyJump gateway\n\nHost web-prod\n  Hostname 10.0.0.1\n  ProxyJump bastion\n",
+        );
+        let hosts = config.host_entries();
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].proxy_jump, "bastion"); // own value, not gateway
+    }
+
+    #[test]
+    fn host_entries_hostname_pattern_does_not_match_by_hostname() {
+        // SSH Host patterns match alias only, not Hostname. Pattern "10.30.0.*"
+        // should NOT match alias "myserver" even though Hostname is 10.30.0.5.
+        let config = parse_str(
+            "Host 10.30.0.*\n  ProxyJump bastion\n  User debian\n\nHost myserver\n  Hostname 10.30.0.5\n",
+        );
+        let hosts = config.host_entries();
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].alias, "myserver");
+        assert_eq!(hosts[0].proxy_jump, ""); // no match — alias doesn't match pattern
+        assert_eq!(hosts[0].user, ""); // no match
+    }
+
+    #[test]
+    fn host_entries_first_match_wins() {
+        // Two patterns match: first one's value should win.
+        let config = parse_str(
+            "Host web-*\n  User team\n\nHost *\n  User fallback\n\nHost web-prod\n  Hostname 10.0.0.1\n",
+        );
+        let hosts = config.host_entries();
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].user, "team"); // web-* matches first
+    }
+
+    #[test]
+    fn host_entries_no_inheritance_when_all_set() {
+        // Host has all inheritable fields set. No pattern should override.
+        let config = parse_str(
+            "Host *\n  User fallback\n  ProxyJump gw\n  IdentityFile ~/.ssh/other\n\n\
+             Host myserver\n  Hostname 10.0.0.1\n  User root\n  ProxyJump bastion\n  IdentityFile ~/.ssh/mine\n",
+        );
+        let hosts = config.host_entries();
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].user, "root");
+        assert_eq!(hosts[0].proxy_jump, "bastion");
+        assert_eq!(hosts[0].identity_file, "~/.ssh/mine");
+    }
+
+    #[test]
+    fn host_entries_negation_excludes_from_inheritance() {
+        // "Host * !bastion" should NOT apply to bastion.
+        let config = parse_str(
+            "Host * !bastion\n  ProxyJump gateway\n\nHost bastion\n  Hostname 10.0.0.1\n",
+        );
+        let hosts = config.host_entries();
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].alias, "bastion");
+        assert_eq!(hosts[0].proxy_jump, ""); // excluded by negation
+    }
+
+    #[test]
+    fn host_entries_inherit_identity_file_from_pattern() {
+        // Positive test: IdentityFile inherited when host block lacks it.
+        let config = parse_str(
+            "Host *\n  IdentityFile ~/.ssh/default_key\n\nHost myserver\n  Hostname 10.0.0.1\n",
+        );
+        let hosts = config.host_entries();
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].identity_file, "~/.ssh/default_key");
+    }
+
+    #[test]
+    fn host_entries_multiple_hosts_mixed_inheritance() {
+        // Three hosts: one inherits ProxyJump, one has its own, one is the bastion.
+        let config = parse_str(
+            "Host web-*\n  ProxyJump bastion\n\n\
+             Host web-prod\n  Hostname 10.0.0.1\n\n\
+             Host web-staging\n  Hostname 10.0.0.2\n  ProxyJump gateway\n\n\
+             Host bastion\n  Hostname 10.0.0.99\n",
+        );
+        let hosts = config.host_entries();
+        assert_eq!(hosts.len(), 3);
+        let prod = hosts.iter().find(|h| h.alias == "web-prod").unwrap();
+        let staging = hosts.iter().find(|h| h.alias == "web-staging").unwrap();
+        let bastion = hosts.iter().find(|h| h.alias == "bastion").unwrap();
+        assert_eq!(prod.proxy_jump, "bastion"); // inherited
+        assert_eq!(staging.proxy_jump, "gateway"); // own value
+        assert_eq!(bastion.proxy_jump, ""); // no match
+    }
+
+    #[test]
+    fn host_entries_partial_inheritance() {
+        // Host has ProxyJump and User set, but no IdentityFile. Only IdentityFile inherited.
+        let config = parse_str(
+            "Host *\n  User fallback\n  ProxyJump gw\n  IdentityFile ~/.ssh/default\n\n\
+             Host myserver\n  Hostname 10.0.0.1\n  User root\n  ProxyJump bastion\n",
+        );
+        let hosts = config.host_entries();
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].user, "root"); // own
+        assert_eq!(hosts[0].proxy_jump, "bastion"); // own
+        assert_eq!(hosts[0].identity_file, "~/.ssh/default"); // inherited
+    }
+
+    #[test]
+    fn host_entries_alias_is_ip_matches_ip_pattern() {
+        // When alias itself is an IP, it matches IP-based patterns directly.
+        let config =
+            parse_str("Host 10.0.0.*\n  ProxyJump bastion\n\nHost 10.0.0.5\n  User root\n");
+        let hosts = config.host_entries();
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].alias, "10.0.0.5");
+        assert_eq!(hosts[0].proxy_jump, "bastion");
+    }
+
+    #[test]
+    fn host_entries_no_hostname_still_inherits_by_alias() {
+        // Host without Hostname directive still inherits via alias matching.
+        let config = parse_str("Host *\n  User admin\n\nHost myserver\n  Port 2222\n");
+        let hosts = config.host_entries();
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].user, "admin"); // inherited via alias match on "*"
+        assert!(hosts[0].hostname.is_empty()); // no hostname set
+    }
+
+    #[test]
+    fn host_entries_self_referencing_proxy_jump_assigned() {
+        // Self-referencing ProxyJump IS assigned (SSH would do the same).
+        // The UI detects and warns via proxy_jump_contains_self.
+        let config = parse_str(
+            "Host *\n  ProxyJump gateway\n\n\
+             Host gateway\n  Hostname 10.0.0.1\n\n\
+             Host backend\n  Hostname 10.0.0.2\n",
+        );
+        let hosts = config.host_entries();
+        let gateway = hosts.iter().find(|h| h.alias == "gateway").unwrap();
+        let backend = hosts.iter().find(|h| h.alias == "backend").unwrap();
+        assert_eq!(gateway.proxy_jump, "gateway"); // self-ref assigned
+        assert_eq!(backend.proxy_jump, "gateway");
+        // Detection helper identifies the loop.
+        assert!(proxy_jump_contains_self(
+            &gateway.proxy_jump,
+            &gateway.alias
+        ));
+        assert!(!proxy_jump_contains_self(
+            &backend.proxy_jump,
+            &backend.alias
+        ));
+    }
+
+    #[test]
+    fn proxy_jump_contains_self_comma_separated() {
+        assert!(proxy_jump_contains_self("hop1,gateway", "gateway"));
+        assert!(proxy_jump_contains_self("gateway,hop2", "gateway"));
+        assert!(proxy_jump_contains_self("hop1, gateway", "gateway"));
+        assert!(proxy_jump_contains_self("gateway", "gateway"));
+        assert!(!proxy_jump_contains_self("hop1,hop2", "gateway"));
+        assert!(!proxy_jump_contains_self("", "gateway"));
+        assert!(!proxy_jump_contains_self("gateway-2", "gateway"));
+        // user@host and host:port forms
+        assert!(proxy_jump_contains_self("admin@gateway", "gateway"));
+        assert!(proxy_jump_contains_self("gateway:2222", "gateway"));
+        assert!(proxy_jump_contains_self("admin@gateway:2222", "gateway"));
+        assert!(proxy_jump_contains_self(
+            "hop1,admin@gateway:2222",
+            "gateway"
+        ));
+        assert!(!proxy_jump_contains_self("admin@gateway-2", "gateway"));
+        assert!(!proxy_jump_contains_self("admin@other:2222", "gateway"));
+        // IPv6 bracket notation
+        assert!(proxy_jump_contains_self("[::1]:2222", "::1"));
+        assert!(proxy_jump_contains_self("user@[::1]:2222", "::1"));
+        assert!(!proxy_jump_contains_self("[::2]:2222", "::1"));
+        assert!(proxy_jump_contains_self("hop1,[::1]:2222", "::1"));
+    }
+
+    // =========================================================================
+    // raw_host_entry tests
+    // =========================================================================
+
+    #[test]
+    fn raw_host_entry_returns_without_inheritance() {
+        let config = parse_str(
+            "Host *\n  ProxyJump gw\n  User admin\n\nHost myserver\n  Hostname 10.0.0.1\n",
+        );
+        let raw = config.raw_host_entry("myserver").unwrap();
+        assert_eq!(raw.alias, "myserver");
+        assert_eq!(raw.hostname, "10.0.0.1");
+        assert_eq!(raw.proxy_jump, ""); // not inherited
+        assert_eq!(raw.user, ""); // not inherited
+        // Contrast with host_entries which applies inheritance:
+        let enriched = config.host_entries();
+        assert_eq!(enriched[0].proxy_jump, "gw");
+        assert_eq!(enriched[0].user, "admin");
+    }
+
+    #[test]
+    fn raw_host_entry_preserves_own_values() {
+        let config = parse_str(
+            "Host *\n  ProxyJump gw\n\nHost myserver\n  Hostname 10.0.0.1\n  ProxyJump bastion\n",
+        );
+        let raw = config.raw_host_entry("myserver").unwrap();
+        assert_eq!(raw.proxy_jump, "bastion"); // own value preserved
+    }
+
+    #[test]
+    fn raw_host_entry_returns_none_for_missing() {
+        let config = parse_str("Host myserver\n  Hostname 10.0.0.1\n");
+        assert!(config.raw_host_entry("nonexistent").is_none());
+    }
+
+    #[test]
+    fn raw_host_entry_returns_none_for_pattern() {
+        let config = parse_str("Host 10.30.0.*\n  ProxyJump bastion\n");
+        assert!(config.raw_host_entry("10.30.0.*").is_none());
+    }
+
+    // =========================================================================
+    // inherited_hints tests
+    // =========================================================================
+
+    #[test]
+    fn inherited_hints_returns_value_and_source() {
+        let config = parse_str(
+            "Host web-*\n  ProxyJump bastion\n  User team\n\nHost web-prod\n  Hostname 10.0.0.1\n",
+        );
+        let hints = config.inherited_hints("web-prod");
+        let (val, src) = hints.proxy_jump.unwrap();
+        assert_eq!(val, "bastion");
+        assert_eq!(src, "web-*");
+        let (val, src) = hints.user.unwrap();
+        assert_eq!(val, "team");
+        assert_eq!(src, "web-*");
+        assert!(hints.identity_file.is_none());
+    }
+
+    #[test]
+    fn inherited_hints_first_match_wins_with_source() {
+        let config = parse_str(
+            "Host web-*\n  User team\n\nHost *\n  User fallback\n  ProxyJump gw\n\nHost web-prod\n  Hostname 10.0.0.1\n",
+        );
+        let hints = config.inherited_hints("web-prod");
+        // User comes from web-* (first match), not * (second match).
+        let (val, src) = hints.user.unwrap();
+        assert_eq!(val, "team");
+        assert_eq!(src, "web-*");
+        // ProxyJump comes from * (only source).
+        let (val, src) = hints.proxy_jump.unwrap();
+        assert_eq!(val, "gw");
+        assert_eq!(src, "*");
+    }
+
+    #[test]
+    fn inherited_hints_no_match_returns_default() {
+        let config =
+            parse_str("Host web-*\n  ProxyJump bastion\n\nHost myserver\n  Hostname 10.0.0.1\n");
+        let hints = config.inherited_hints("myserver");
+        // "myserver" does not match "web-*"
+        assert!(hints.proxy_jump.is_none());
+        assert!(hints.user.is_none());
+        assert!(hints.identity_file.is_none());
+    }
+
+    #[test]
+    fn inherited_hints_partial_fields_from_different_patterns() {
+        let config = parse_str(
+            "Host web-*\n  ProxyJump bastion\n\nHost *\n  IdentityFile ~/.ssh/default\n\nHost web-prod\n  Hostname 10.0.0.1\n",
+        );
+        let hints = config.inherited_hints("web-prod");
+        let (val, src) = hints.proxy_jump.unwrap();
+        assert_eq!(val, "bastion");
+        assert_eq!(src, "web-*");
+        let (val, src) = hints.identity_file.unwrap();
+        assert_eq!(val, "~/.ssh/default");
+        assert_eq!(src, "*");
+        assert!(hints.user.is_none());
+    }
+
+    #[test]
+    fn inherited_hints_negation_excludes() {
+        // "Host * !bastion" should NOT produce hints for "bastion".
+        let config = parse_str(
+            "Host * !bastion\n  ProxyJump gateway\n  User admin\n\n\
+             Host bastion\n  Hostname 10.0.0.1\n",
+        );
+        let hints = config.inherited_hints("bastion");
+        assert!(hints.proxy_jump.is_none());
+        assert!(hints.user.is_none());
+    }
+
+    #[test]
+    fn inherited_hints_returned_even_when_host_has_own_values() {
+        // inherited_hints is independent of the host's own values — it reports
+        // what patterns provide. The form decides visibility via value.is_empty().
+        let config = parse_str(
+            "Host *\n  ProxyJump gateway\n  User admin\n\n\
+             Host myserver\n  Hostname 10.0.0.1\n  ProxyJump bastion\n  User root\n",
+        );
+        let hints = config.inherited_hints("myserver");
+        // Hints are returned even though host has own ProxyJump and User.
+        let (val, _) = hints.proxy_jump.unwrap();
+        assert_eq!(val, "gateway");
+        let (val, _) = hints.user.unwrap();
+        assert_eq!(val, "admin");
+    }
+
+    #[test]
+    fn inheritance_across_include_boundary() {
+        // Pattern in an included file applies to a host in the main config.
+        let included_elements =
+            SshConfigFile::parse_content("Host web-*\n  ProxyJump bastion\n  User team\n");
+        let main_elements = vec![
+            ConfigElement::Include(IncludeDirective {
+                raw_line: "Include conf.d/*".to_string(),
+                pattern: "conf.d/*".to_string(),
+                resolved_files: vec![IncludedFile {
+                    path: PathBuf::from("/etc/ssh/conf.d/patterns.conf"),
+                    elements: included_elements,
+                }],
+            }),
+            // Host in main config, after the include.
+            ConfigElement::HostBlock(HostBlock {
+                host_pattern: "web-prod".to_string(),
+                raw_host_line: "Host web-prod".to_string(),
+                directives: vec![Directive {
+                    key: "HostName".to_string(),
+                    value: "10.0.0.1".to_string(),
+                    raw_line: "  HostName 10.0.0.1".to_string(),
+                    is_non_directive: false,
+                }],
+            }),
+        ];
+        let config = SshConfigFile {
+            elements: main_elements,
+            path: PathBuf::from("/tmp/test_config"),
+            crlf: false,
+            bom: false,
+        };
+        // host_entries should inherit from the included pattern.
+        let hosts = config.host_entries();
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].alias, "web-prod");
+        assert_eq!(hosts[0].proxy_jump, "bastion");
+        assert_eq!(hosts[0].user, "team");
+        // inherited_hints should also find the included pattern.
+        let hints = config.inherited_hints("web-prod");
+        let (val, src) = hints.proxy_jump.unwrap();
+        assert_eq!(val, "bastion");
+        assert_eq!(src, "web-*");
+    }
+
+    #[test]
+    fn inheritance_host_in_include_pattern_in_main() {
+        // Host in an included file, pattern in main config.
+        let included_elements =
+            SshConfigFile::parse_content("Host web-prod\n  HostName 10.0.0.1\n");
+        let mut main_elements = SshConfigFile::parse_content("Host web-*\n  ProxyJump bastion\n");
+        main_elements.push(ConfigElement::Include(IncludeDirective {
+            raw_line: "Include conf.d/*".to_string(),
+            pattern: "conf.d/*".to_string(),
+            resolved_files: vec![IncludedFile {
+                path: PathBuf::from("/etc/ssh/conf.d/hosts.conf"),
+                elements: included_elements,
+            }],
+        }));
+        let config = SshConfigFile {
+            elements: main_elements,
+            path: PathBuf::from("/tmp/test_config"),
+            crlf: false,
+            bom: false,
+        };
+        let hosts = config.host_entries();
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].alias, "web-prod");
+        assert_eq!(hosts[0].proxy_jump, "bastion");
     }
 
     #[test]

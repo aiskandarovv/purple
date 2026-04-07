@@ -2889,8 +2889,40 @@ fn has_host_detects_multi_pattern() {
     assert!(config.has_host("prod"));
     assert!(config.has_host("staging"));
     assert!(!config.has_host("dev"));
-    // Exact full pattern still works
+    // Full pattern string is not an individual alias
     assert!(!config.has_host("prod staging"));
+}
+
+#[test]
+fn has_host_block_matches_multi_word_pattern() {
+    let config = parse_str("Host web-* db-*\n  User deploy\n");
+    assert!(config.has_host_block("web-* db-*"));
+}
+
+#[test]
+fn has_host_block_rejects_partial_match() {
+    let config = parse_str("Host web-* db-*\n  User deploy\n");
+    assert!(!config.has_host_block("web-*"));
+    assert!(!config.has_host_block("db-*"));
+}
+
+#[test]
+fn has_host_block_matches_single_wildcard() {
+    let config = parse_str("Host *.example.com\n  User deploy\n");
+    assert!(config.has_host_block("*.example.com"));
+}
+
+#[test]
+fn has_host_block_returns_false_when_absent() {
+    let config = parse_str("Host myserver\n  HostName 1.2.3.4\n");
+    assert!(!config.has_host_block("nonexistent"));
+}
+
+#[test]
+fn has_host_block_three_token_pattern() {
+    let config = parse_str("Host web-* db-* cache-*\n  User deploy\n");
+    assert!(config.has_host_block("web-* db-* cache-*"));
+    assert!(!config.has_host_block("web-*"));
 }
 
 #[test]

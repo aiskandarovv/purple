@@ -1,3 +1,15 @@
+## 2.30.0
+
+- Color themes. 11 built-in themes with live preview (`m` key)
+- Custom themes from `~/.purple/themes/*.toml`
+- CLI: `purple theme list`, `purple theme set <name>` and `--theme <name>` session override
+- Pattern inheritance: ProxyJump, User and IdentityFile from pattern blocks (e.g. `Host *`, `Host web-*`) now inherited by matching hosts. ↗ indicator and ping logic reflect inherited ProxyJump
+- Edit form shows inherited values as dimmed placeholders with source pattern (e.g. `gateway  ← *`)
+- Self-referencing ProxyJump loop detection: ↗ in error color, ROUTE warning in detail panel and fix hint in edit form when a pattern assigns a host as its own jump host
+- Fix detail panel PATTERN MATCH section no longer shows hostname-matched patterns that SSH would not apply
+- Fix error messages now show in overlay footers instead of behind dimmed background
+- Fix editing multi-host patterns (e.g. `Host web-* db-*`) failing with false "no longer exists" error
+
 ## 2.29.0
 
 - Progressive disclosure in host and provider forms. Required fields shown first, arrow down reveals optional fields

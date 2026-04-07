@@ -198,6 +198,16 @@ pub fn save_slow_threshold(ms: u16) -> io::Result<()> {
     save_value("slow_threshold_ms", &ms.to_string())
 }
 
+/// Load theme name from ~/.purple/preferences. Returns None if missing.
+pub fn load_theme() -> Option<String> {
+    load_value("theme").filter(|v| !v.is_empty())
+}
+
+/// Save theme name to ~/.purple/preferences.
+pub fn save_theme(name: &str) -> io::Result<()> {
+    save_value("theme", name)
+}
+
 /// Load auto_ping preference. Returns true if missing (default: enabled).
 pub fn load_auto_ping() -> bool {
     load_value("auto_ping")
@@ -769,6 +779,24 @@ mod tests {
         let val = parse_value(content, "slow_threshold_ms");
         let threshold: u16 = val.and_then(|v| v.parse().ok()).unwrap_or(200);
         assert_eq!(threshold, 200);
+    }
+
+    #[test]
+    fn save_and_load_theme_roundtrip() {
+        with_temp_prefs("theme_roundtrip", |_path| {
+            save_theme("catppuccin-mocha").unwrap();
+            let loaded = load_theme();
+            assert_eq!(loaded, Some("catppuccin-mocha".to_string()));
+        });
+    }
+
+    #[test]
+    fn load_theme_missing_returns_none() {
+        with_temp_prefs("theme_missing", |path| {
+            std::fs::write(path, "sort_mode=alpha\n").unwrap();
+            let loaded = load_theme();
+            assert_eq!(loaded, None);
+        });
     }
 
     #[test]

@@ -89,7 +89,7 @@ purple is a terminal cockpit for your servers. It turns ~/.ssh/config into a sea
 - Auto-reload: detects external config changes every 4 seconds
 - Self-update mechanism (macOS and Linux curl installs). Homebrew and cargo users update via their package manager
 - Shell completions (bash, zsh, fish)
-- Minimal UI with monochrome base and subtle color for status. Works in any terminal, respects NO_COLOR
+- 11 built-in color themes (default: Purple) with custom theme support (~/.purple/themes/*.toml). Works in any terminal, respects NO_COLOR
 
 ## Install
 
@@ -144,6 +144,9 @@ purple password set myserver        # Store password in OS keychain
 purple password remove myserver     # Remove from keychain
 purple update                       # Self-update
 purple mcp                          # Start MCP server for AI agents (stdio JSON-RPC)
+purple --theme ocean                # Launch TUI with a specific theme
+purple theme list                   # List available themes (built-in + custom)
+purple theme set <name>             # Set the default theme
 purple --completions zsh            # Generate shell completions
 
 ## Cloud provider sync
@@ -344,9 +347,12 @@ A: MCP (Model Context Protocol) is a standard for connecting AI assistants to ex
 Q: Does purple work with Vaultwarden (self-hosted Bitwarden)?
 A: Yes. purple uses the Bitwarden CLI (bw) for Bitwarden password sources. If you use Vaultwarden, configure the CLI to point to your server with bw config server https://your-vaultwarden-url. Then set bw:item-name as the password source for a host. Purple will retrieve passwords from your Vaultwarden instance.
 
+Q: Can I change the color theme?
+A: Press m in the host list to open the theme picker with live preview. 11 built-in themes included. Custom themes from ~/.purple/themes/*.toml. CLI: purple theme set <name>.
+
 ## Status
 
-- Current version: 2.29.0 (April 2026)
+- Current version: 2.30.0 (April 2026)
 - Release cadence: approximately bi-weekly
 - Test suite: 5000+ tests (unit, integration, property-based and HTTP mocking)
 - CI: fmt, clippy, test on macOS and Linux, cargo-deny, MSRV 1.86 check
@@ -354,7 +360,7 @@ A: Yes. purple uses the Bitwarden CLI (bw) for Bitwarden password sources. If yo
 
 ## Data storage
 
-purple does not use a proprietary database. All host configuration lives in ~/.ssh/config. Tags, provider tracking and metadata are stored as comments in the same file. Provider credentials are stored in ~/.purple/providers. Snippets are stored in ~/.purple/snippets. Connection history is stored in ~/.purple/history.tsv. Preferences (sort mode, view mode, slow_threshold_ms, auto_ping) are stored in ~/.purple/preferences. Nothing is transmitted to external servers.
+purple does not use a proprietary database. All host configuration lives in ~/.ssh/config. Tags, provider tracking and metadata are stored as comments in the same file. Provider credentials are stored in ~/.purple/providers. Snippets are stored in ~/.purple/snippets. Connection history is stored in ~/.purple/history.tsv. Preferences (sort mode, view mode, theme, slow_threshold_ms, auto_ping) are stored in ~/.purple/preferences. Nothing is transmitted to external servers.
 
 ## Limitations
 

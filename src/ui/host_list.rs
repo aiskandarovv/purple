@@ -919,7 +919,15 @@ fn build_host_item<'a>(
             host_used += port_suffix_w;
         }
         if has_jump {
-            spans.push(Span::styled(" \u{2197}", theme::muted())); // ↗
+            let jump_style = if crate::ssh_config::model::proxy_jump_contains_self(
+                &host.proxy_jump,
+                &host.alias,
+            ) {
+                theme::error() // self-referencing loop
+            } else {
+                theme::muted()
+            };
+            spans.push(Span::styled(" \u{2197}", jump_style)); // ↗
             host_used += 2;
         }
         if has_tunnels {

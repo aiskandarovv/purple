@@ -15,6 +15,7 @@ mod snippet_param_form;
 mod snippet_picker;
 mod tag_picker;
 pub mod theme;
+mod theme_picker;
 mod tunnel_form;
 mod tunnel_list;
 
@@ -45,13 +46,17 @@ pub fn render(frame: &mut Frame, app: &mut App, anim: &mut crate::animation::Ani
         return;
     }
 
-    // Render host list with animated detail panel width.
+    // Render host list with animated detail panel width. When an overlay is active,
+    // hide the status so it only appears in the overlay's own footer.
+    // Note: host_list::render does not set app.status, so the unconditional restore
+    // is safe. If that invariant ever changes, use get_or_insert semantics instead.
+    let has_overlay = !matches!(app.screen, Screen::HostList);
+    let status = if has_overlay { app.status.take() } else { None };
     let detail_progress = anim.detail_anim_progress();
     host_list::render(frame, app, anim.spinner_tick, detail_progress);
-
-    // Status messages show in the host list footer (including behind overlays),
-    // but not in overlay footers. render_overlay hides app.status while the
-    // overlay renders so render_footer_with_status calls inside overlays ignore it.
+    if let Some(s) = status {
+        app.status = Some(s);
+    }
     match &app.screen {
         Screen::HostList => {
             render_overlay_close(frame, anim);
@@ -86,6 +91,9 @@ pub fn render(frame: &mut Frame, app: &mut App, anim: &mut crate::animation::Ani
         }
         Screen::TagPicker => {
             render_overlay(frame, app, anim, tag_picker::render);
+        }
+        Screen::ThemePicker => {
+            render_overlay_nodim(frame, app, anim, theme_picker::render);
         }
         Screen::Providers => {
             render_overlay(frame, app, anim, |frame, app| {
@@ -175,20 +183,43 @@ pub fn render(frame: &mut Frame, app: &mut App, anim: &mut crate::animation::Ani
     }
 }
 
-/// Render an overlay with buffer-capture animation.
-///
-/// Hides app.status while rendering and applies scale-clip animation
-/// for smooth open transitions. Saves the buffer for close animation.
+/// Render an overlay with dimmed background and scale-clip animation.
 fn render_overlay(
     frame: &mut Frame,
     app: &mut App,
     anim: &mut crate::animation::AnimationState,
     f: impl FnOnce(&mut Frame, &mut App),
 ) {
-    let status = app.status.take();
-    dim_background(frame);
+    render_overlay_inner(frame, app, anim, true, f);
+}
 
-    // Save dimmed host list before overlay renders (needed for open animation).
+/// Render an overlay without dimming the background.
+/// Used for the theme picker so the live preview stays visible.
+fn render_overlay_nodim(
+    frame: &mut Frame,
+    app: &mut App,
+    anim: &mut crate::animation::AnimationState,
+    f: impl FnOnce(&mut Frame, &mut App),
+) {
+    render_overlay_inner(frame, app, anim, false, f);
+}
+
+/// Shared overlay render logic. Applies scale-clip animation for smooth open
+/// transitions. Saves the buffer and dim flag together in `OverlayCloseState`
+/// for the close animation. Status messages remain visible so overlay footers
+/// can display them via `render_footer_with_status`.
+fn render_overlay_inner(
+    frame: &mut Frame,
+    app: &mut App,
+    anim: &mut crate::animation::AnimationState,
+    dim: bool,
+    f: impl FnOnce(&mut Frame, &mut App),
+) {
+    if dim {
+        dim_background(frame);
+    }
+
+    // Save host list before overlay renders (needed for open animation).
     let progress = anim.overlay_anim_progress();
     let animating_open = progress.is_some();
     let pre_overlay = if animating_open {
@@ -199,9 +230,13 @@ fn render_overlay(
 
     f(frame, app);
 
-    // Save overlay buffer for close animation once (first stable frame).
-    if !animating_open && anim.overlay_buffer.is_none() {
-        anim.overlay_buffer = Some(frame.buffer_mut().clone());
+    // Save overlay state for close animation once (first stable frame).
+    // The dim flag is captured alongside the buffer so close knows whether to dim.
+    if !animating_open && anim.overlay_close.is_none() {
+        anim.overlay_close = Some(crate::animation::OverlayCloseState {
+            buffer: frame.buffer_mut().clone(),
+            dimmed: dim,
+        });
     }
 
     // Apply opening animation: clip overlay to a growing scaled region.
@@ -210,8 +245,6 @@ fn render_overlay(
             apply_scale_clip(frame, &saved, progress);
         }
     }
-
-    app.status = status;
 }
 
 /// Dim all cells in the frame buffer so the host list behind an overlay appears muted.
@@ -242,6 +275,7 @@ fn dim_background(frame: &mut Frame) {
 }
 
 /// Render the close animation: paint saved overlay buffer with shrinking scale clip.
+/// Uses the dim flag captured alongside the buffer so it matches the open animation.
 fn render_overlay_close(frame: &mut Frame, anim: &mut crate::animation::AnimationState) {
     let is_closing = anim.overlay_anim.as_ref().is_some_and(|a| !a.opening);
     if !is_closing {
@@ -253,14 +287,16 @@ fn render_overlay_close(frame: &mut Frame, anim: &mut crate::animation::Animatio
         None => return,
     };
 
-    if let Some(ref saved) = anim.overlay_buffer {
+    if let Some(ref state) = anim.overlay_close {
         if progress > 0.0 {
-            dim_background(frame);
+            if state.dimmed {
+                dim_background(frame);
+            }
             let area = frame.area();
             let (left, right, top, bottom) = scale_clip_rect(area, progress);
             for y in top..bottom {
                 for x in left..right {
-                    if let Some(cell) = saved.cell((x, y)) {
+                    if let Some(cell) = state.buffer.cell((x, y)) {
                         frame.buffer_mut()[(x, y)] = cell.clone();
                     }
                 }
@@ -444,4 +480,385 @@ pub fn centered_rect_fixed(width: u16, height: u16, area: Rect) -> Rect {
     let x = area.x + area.width.saturating_sub(width) / 2;
     let y = area.y + area.height.saturating_sub(height) / 2;
     Rect::new(x, y, width.min(area.width), height.min(area.height))
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::style::Color;
+
+    use super::*;
+
+    fn make_app() -> App {
+        use std::path::PathBuf;
+        let config = crate::ssh_config::model::SshConfigFile {
+            elements: crate::ssh_config::model::SshConfigFile::parse_content(""),
+            path: PathBuf::from("/tmp/test_config"),
+            crlf: false,
+            bom: false,
+        };
+        App::new(config)
+    }
+
+    #[test]
+    fn dim_background_applies_dim_modifier() {
+        let backend = TestBackend::new(10, 3);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                // Write some text so cells are non-empty.
+                let area = frame.area();
+                frame.render_widget(ratatui::widgets::Paragraph::new("hello"), area);
+                dim_background(frame);
+                let buf = frame.buffer_mut();
+                for x in 0..5 {
+                    assert!(
+                        buf[(x, 0)].modifier.contains(Modifier::DIM),
+                        "cell ({x}, 0) should have DIM modifier"
+                    );
+                }
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn dim_background_preserves_bg_color_cells() {
+        let backend = TestBackend::new(10, 3);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                let buf = frame.buffer_mut();
+                // Set a cell with a background color.
+                buf[(0, 0)].set_bg(Color::Blue);
+                buf[(0, 0)].set_fg(Color::White);
+                dim_background(frame);
+                let buf = frame.buffer_mut();
+                // Cells with bg color should only get DIM, not fg recolor.
+                assert!(buf[(0, 0)].modifier.contains(Modifier::DIM));
+                assert_eq!(buf[(0, 0)].fg, Color::White);
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn render_overlay_inner_captures_dimmed_true() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = make_app();
+        let mut anim = crate::animation::AnimationState::new();
+        terminal
+            .draw(|frame| {
+                render_overlay_inner(frame, &mut app, &mut anim, true, |_frame, _app| {});
+            })
+            .unwrap();
+        let close = anim.overlay_close.as_ref().unwrap();
+        assert!(close.dimmed);
+    }
+
+    #[test]
+    fn render_overlay_inner_captures_dimmed_false() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = make_app();
+        let mut anim = crate::animation::AnimationState::new();
+        terminal
+            .draw(|frame| {
+                render_overlay_inner(frame, &mut app, &mut anim, false, |_frame, _app| {});
+            })
+            .unwrap();
+        let close = anim.overlay_close.as_ref().unwrap();
+        assert!(!close.dimmed);
+    }
+
+    #[test]
+    fn render_overlay_inner_preserves_status_during_render() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = make_app();
+        app.status = Some(crate::app::StatusMessage {
+            text: "test".to_string(),
+            is_error: false,
+            tick_count: 0,
+        });
+        let mut anim = crate::animation::AnimationState::new();
+        terminal
+            .draw(|frame| {
+                render_overlay_inner(frame, &mut app, &mut anim, true, |_frame, app| {
+                    assert!(
+                        app.status.is_some(),
+                        "status should be visible during overlay render"
+                    );
+                });
+            })
+            .unwrap();
+        assert!(
+            app.status.is_some(),
+            "status should still be present after overlay render"
+        );
+    }
+
+    #[test]
+    fn overlay_footer_renders_status_text_in_buffer() {
+        let backend = TestBackend::new(80, 3);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = make_app();
+        app.status = Some(crate::app::StatusMessage {
+            text: "sync failed".to_string(),
+            is_error: true,
+            tick_count: 0,
+        });
+        let mut anim = crate::animation::AnimationState::new();
+        terminal
+            .draw(|frame| {
+                render_overlay_inner(frame, &mut app, &mut anim, false, |frame, app| {
+                    let area = frame.area();
+                    // Render a footer row using the last line of the frame.
+                    let footer = ratatui::layout::Rect::new(0, area.height - 1, area.width, 1);
+                    render_footer_with_status(frame, footer, vec![], app);
+                });
+            })
+            .unwrap();
+        // Read the last row from the buffer and check the status text is present.
+        let buf = terminal.backend().buffer();
+        let mut line = String::new();
+        for x in 0..80 {
+            line.push_str(buf[(x, 2)].symbol());
+        }
+        assert!(
+            line.contains("sync failed"),
+            "status text should appear in overlay footer buffer, got: {line:?}"
+        );
+    }
+
+    #[test]
+    fn host_list_footer_has_no_status_when_overlay_active() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = make_app();
+        app.status = Some(crate::app::StatusMessage {
+            text: "sync failed".to_string(),
+            is_error: true,
+            tick_count: 0,
+        });
+        // Simulate an overlay being active.
+        app.screen = crate::app::Screen::Help {
+            return_screen: Box::new(crate::app::Screen::HostList),
+        };
+        let has_overlay = !matches!(app.screen, crate::app::Screen::HostList);
+        assert!(has_overlay, "should detect overlay");
+        // Mimic render(): take status during host list render, then restore.
+        let status = app.status.take();
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                let footer = ratatui::layout::Rect::new(0, area.height - 1, area.width, 1);
+                render_footer_with_status(frame, footer, vec![], &app);
+            })
+            .unwrap();
+        // Host list footer should NOT contain the status text.
+        let buf = terminal.backend().buffer();
+        let mut line = String::new();
+        for x in 0..80 {
+            line.push_str(buf[(x, 23)].symbol());
+        }
+        assert!(
+            !line.contains("sync failed"),
+            "host list footer should not show status when overlay active, got: {line:?}"
+        );
+        // Restore and verify status is preserved for overlay.
+        if let Some(s) = status {
+            app.status = Some(s);
+        }
+        assert!(
+            app.status.is_some(),
+            "status should be restored for overlay footer"
+        );
+    }
+
+    #[test]
+    fn render_overlay_inner_saves_close_state() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = make_app();
+        let mut anim = crate::animation::AnimationState::new();
+        assert!(anim.overlay_close.is_none());
+        terminal
+            .draw(|frame| {
+                render_overlay_inner(frame, &mut app, &mut anim, true, |_frame, _app| {});
+            })
+            .unwrap();
+        assert!(anim.overlay_close.is_some());
+    }
+
+    #[test]
+    fn scale_clip_rect_full_progress_covers_area() {
+        let area = Rect::new(0, 0, 80, 24);
+        let (left, right, top, bottom) = scale_clip_rect(area, 1.0);
+        assert_eq!(left, 0);
+        assert_eq!(right, 80);
+        assert_eq!(top, 0);
+        assert_eq!(bottom, 24);
+    }
+
+    #[test]
+    fn scale_clip_rect_zero_progress_is_empty() {
+        let area = Rect::new(0, 0, 80, 24);
+        let (left, right, top, bottom) = scale_clip_rect(area, 0.0);
+        assert_eq!(right - left, 0);
+        assert_eq!(bottom - top, 0);
+    }
+
+    #[test]
+    fn scale_clip_rect_half_progress_centered() {
+        let area = Rect::new(0, 0, 80, 24);
+        let (left, right, top, bottom) = scale_clip_rect(area, 0.5);
+        let w = right - left;
+        let h = bottom - top;
+        assert_eq!(w, 40);
+        assert_eq!(h, 12);
+        // Centered
+        assert_eq!(left, 20);
+        assert_eq!(top, 6);
+    }
+
+    // --- render_overlay_close tests ---
+
+    /// Helper: set up a closing animation at ~50% progress with a saved buffer and dim flag.
+    fn setup_close_anim(anim: &mut crate::animation::AnimationState, dimmed: bool) {
+        use std::time::{Duration, Instant};
+        let duration = Duration::from_secs(1);
+        anim.overlay_close = Some(crate::animation::OverlayCloseState {
+            buffer: ratatui::buffer::Buffer::empty(Rect::new(0, 0, 20, 5)),
+            dimmed,
+        });
+        // Start halfway through the close animation so the clip is small enough
+        // that corner cells remain outside it (and thus show the dim effect).
+        anim.overlay_anim = Some(crate::animation::OverlayAnim {
+            start: Instant::now() - duration / 2,
+            opening: false,
+            duration_ms: duration.as_millis(),
+        });
+    }
+
+    #[test]
+    fn render_overlay_close_dims_when_close_state_dimmed() {
+        let backend = TestBackend::new(20, 5);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut anim = crate::animation::AnimationState::new();
+        setup_close_anim(&mut anim, true);
+        terminal
+            .draw(|frame| {
+                // Write visible text so we can detect dimming.
+                let area = frame.area();
+                frame.render_widget(ratatui::widgets::Paragraph::new("ABCDE"), area);
+                render_overlay_close(frame, &mut anim);
+                // Cells outside the shrinking clip should be dimmed.
+                let buf = frame.buffer_mut();
+                // Corner cell (0,4) is outside any reasonable clip at the start of close.
+                assert!(
+                    buf[(0, 4)].modifier.contains(Modifier::DIM),
+                    "background should be dimmed during close of a dimmed overlay"
+                );
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn render_overlay_close_no_dim_when_close_state_not_dimmed() {
+        let backend = TestBackend::new(20, 5);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut anim = crate::animation::AnimationState::new();
+        setup_close_anim(&mut anim, false);
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                frame.render_widget(ratatui::widgets::Paragraph::new("ABCDE"), area);
+                render_overlay_close(frame, &mut anim);
+                let buf = frame.buffer_mut();
+                assert!(
+                    !buf[(0, 4)].modifier.contains(Modifier::DIM),
+                    "background should NOT be dimmed during close of a non-dimmed overlay"
+                );
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn render_overlay_close_skips_when_not_closing() {
+        let backend = TestBackend::new(20, 5);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut anim = crate::animation::AnimationState::new();
+        // No close animation set up.
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                frame.render_widget(ratatui::widgets::Paragraph::new("ABCDE"), area);
+                render_overlay_close(frame, &mut anim);
+                let buf = frame.buffer_mut();
+                // Nothing should change.
+                assert!(
+                    !buf[(0, 0)].modifier.contains(Modifier::DIM),
+                    "no dimming when there is no close animation"
+                );
+            })
+            .unwrap();
+    }
+
+    // --- apply_scale_clip tests ---
+
+    #[test]
+    fn apply_scale_clip_restores_cells_outside_clip() {
+        let backend = TestBackend::new(10, 4);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                // Render overlay content (fills entire buffer).
+                frame.render_widget(ratatui::widgets::Paragraph::new("OVERLAY OK"), area);
+
+                // Create a "saved" background buffer with different content.
+                let mut saved = ratatui::buffer::Buffer::empty(area);
+                for x in 0..area.width {
+                    for y in 0..area.height {
+                        saved[(x, y)].set_symbol("B");
+                    }
+                }
+
+                // Apply clip at 50% progress: center 5x2 region keeps overlay,
+                // outer cells restored from saved.
+                apply_scale_clip(frame, &saved, 0.5);
+
+                let buf = frame.buffer_mut();
+                // (0,0) is outside the clip and should be restored to "B".
+                assert_eq!(buf[(0, 0)].symbol(), "B");
+                // Center cell should still have overlay content.
+                let cx = area.width / 2;
+                let cy = area.height / 2;
+                assert_ne!(buf[(cx, cy)].symbol(), "B");
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn apply_scale_clip_full_progress_keeps_all_overlay() {
+        let backend = TestBackend::new(10, 4);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                frame.render_widget(ratatui::widgets::Paragraph::new("OVERLAY OK"), area);
+                let mut saved = ratatui::buffer::Buffer::empty(area);
+                for x in 0..area.width {
+                    for y in 0..area.height {
+                        saved[(x, y)].set_symbol("B");
+                    }
+                }
+                // Full progress: nothing should be restored from saved.
+                apply_scale_clip(frame, &saved, 1.0);
+                let buf = frame.buffer_mut();
+                assert_eq!(buf[(0, 0)].symbol(), "O"); // First char of "OVERLAY OK"
+            })
+            .unwrap();
+    }
 }
