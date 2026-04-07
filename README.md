@@ -43,12 +43,11 @@ I wanted one place for all of that. So I built it.
 
 ## What you get
 
-<table>
-<tr>
-<td width="55%"><img src="screenshots/detail.png" alt="detail panel"></td>
-<td width="45%" valign="top">🔍 <strong>Everything at a glance.</strong> Connection info, jump route, activity sparkline, tags, tunnels, snippets, containers and server metadata. Health dots show which hosts are up. Group by provider, tag or flat.</td>
-</tr>
-</table>
+<img src="screenshots/detail.png" width="55%" align="left" alt="detail panel">
+
+🔍 **Everything at a glance.** Connection info, jump route, activity sparkline, tags, tunnels, snippets, containers and server metadata. Health dots show which hosts are up. Group by provider, tag or flat.
+
+<br clear="both">
 
 ⚡ **Instant fuzzy search.** Names, IPs, tags, users. Frecency sorting puts your most-used hosts on top. Works the same with 5 hosts or 500. Scoped search within groups.
 
