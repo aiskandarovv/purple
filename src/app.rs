@@ -2280,6 +2280,11 @@ impl App {
                         *tag_counts.entry(tag.clone()).or_insert(0) += 1;
                     }
                 }
+                for pattern in &self.patterns {
+                    for tag in &pattern.tags {
+                        *tag_counts.entry(tag.clone()).or_insert(0) += 1;
+                    }
+                }
                 let mut sorted: Vec<(String, usize)> = tag_counts.into_iter().collect();
                 sorted.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
                 let top: Vec<(String, usize)> = sorted.into_iter().take(10).collect();
@@ -2907,7 +2912,9 @@ impl App {
                 .patterns
                 .iter()
                 .enumerate()
-                .filter(|(_, p)| contains_ci(&p.pattern, &query))
+                .filter(|(_, p)| {
+                    contains_ci(&p.pattern, &query) || p.tags.iter().any(|t| contains_ci(t, &query))
+                })
                 .map(|(i, _)| i)
                 .collect();
         }
@@ -3745,7 +3752,11 @@ impl App {
             if tag.is_empty() {
                 return false;
             }
-            let tag_exists = self.hosts.iter().any(|h| h.tags.iter().any(|t| t == tag));
+            let tag_exists = self.hosts.iter().any(|h| h.tags.iter().any(|t| t == tag))
+                || self
+                    .patterns
+                    .iter()
+                    .any(|p| p.tags.iter().any(|t| t == tag));
             if !tag_exists {
                 self.group_by = GroupBy::None;
                 self.group_filter = None;
@@ -6841,6 +6852,35 @@ Host 10.30.0.*
     }
 
     #[test]
+    fn general_search_matches_pattern_tags() {
+        let config_str = "\
+Host myserver
+  HostName 1.1.1.1
+
+Host 10.30.0.*
+  User debian
+  # purple:tags internal
+";
+        let mut app = make_app(config_str);
+        app.start_search();
+        app.search.query = Some("internal".to_string());
+        app.apply_filter();
+        assert!(
+            app.search.filtered_indices.is_empty(),
+            "host should not match"
+        );
+        assert_eq!(
+            app.search.filtered_pattern_indices.len(),
+            1,
+            "pattern with matching tag should appear in general search"
+        );
+        assert_eq!(
+            app.patterns[app.search.filtered_pattern_indices[0]].pattern,
+            "10.30.0.*"
+        );
+    }
+
+    #[test]
     fn pattern_placeholder_text() {
         use crate::app::FormField;
         use crate::ui::host_form::{placeholder_text, placeholder_text_pattern};
@@ -7588,6 +7628,29 @@ Host web1
 
         assert!(!cleared, "empty tag sentinel should not be cleared");
         assert_eq!(app.group_by, GroupBy::Tag(String::new()));
+    }
+
+    #[test]
+    fn clear_stale_group_tag_keeps_when_tag_only_on_pattern() {
+        let content = "\
+Host web1
+  HostName 1.1.1.1
+  # purple:tags staging
+
+Host 10.0.0.*
+  User root
+  # purple:tags production
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Tag("production".to_string());
+
+        let cleared = app.clear_stale_group_tag();
+
+        assert!(
+            !cleared,
+            "tag existing only on a pattern should not be cleared"
+        );
+        assert_eq!(app.group_by, GroupBy::Tag("production".to_string()));
     }
 
     // --- Group filter (tab navigation) ---
@@ -8512,6 +8575,54 @@ Host cache1
         assert!(!app.group_tab_order.is_empty());
         assert_eq!(app.group_tab_order[0], "common");
         assert_eq!(app.group_tab_order[1], "rare");
+    }
+
+    #[test]
+    fn group_tab_order_tag_mode_includes_pattern_tags() {
+        let content = "\
+Host web1
+  HostName 1.1.1.1
+  # purple:tags prod
+
+Host 10.0.0.*
+  User root
+  # purple:tags internal
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Tag("prod".to_string());
+        app.apply_sort();
+
+        assert!(
+            app.group_tab_order.contains(&"internal".to_string()),
+            "pattern-only tag should appear in group_tab_order"
+        );
+        assert!(
+            app.group_tab_order.contains(&"prod".to_string()),
+            "host tag should also appear"
+        );
+    }
+
+    #[test]
+    fn group_host_counts_includes_patterns() {
+        let content = "\
+Host web1
+  HostName 1.1.1.1
+  # purple:tags prod
+
+Host 10.0.0.*
+  User root
+  # purple:tags prod
+";
+        let mut app = make_app(content);
+        app.group_by = GroupBy::Tag("prod".to_string());
+        app.apply_sort();
+
+        // group_host_counts for "prod" should count both the host and the pattern
+        assert_eq!(
+            app.group_host_counts.get("prod"),
+            Some(&2),
+            "prod group should count both hosts and patterns"
+        );
     }
 
     #[test]

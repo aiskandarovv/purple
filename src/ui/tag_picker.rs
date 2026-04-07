@@ -43,6 +43,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 *counts.entry("stale").or_insert(0) += 1;
             }
         }
+        for pattern in &app.patterns {
+            for tag in &pattern.tags {
+                *counts.entry(tag.as_str()).or_insert(0) += 1;
+            }
+        }
         counts
     };
 

@@ -1,3 +1,10 @@
+## 2.30.1
+
+- Fix pattern tags missing from tag grouping tabs and counts
+- Fix tag picker showing (0) for tags that only exist on patterns
+- Fix generic search not matching pattern tags
+- Fix group-by-tag clearing when tag only exists on a pattern
+
 ## 2.30.0
 
 - Color themes. 11 built-in themes with live preview (`m` key)
