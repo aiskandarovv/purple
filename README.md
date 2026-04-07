@@ -45,30 +45,22 @@ I wanted one place for all of that. So I built it.
 
 <table>
 <tr>
-<td width="50%" valign="top">
-<img src="screenshots/detail.png" alt="detail panel">
-<br>
-🔍 <strong>Everything at a glance.</strong> Connection info, jump route, activity sparkline, tags, tunnels, snippets, containers and server metadata. Health dots show which hosts are up. Group by provider, tag or flat.
-</td>
-<td width="50%" valign="top">
-<img src="screenshots/search.png" alt="fuzzy search">
-<br>
-⚡ <strong>Instant fuzzy search.</strong> Names, IPs, tags, users. Frecency sorting puts your most-used hosts on top. Works the same with 5 hosts or 500. Scoped search within groups.
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-<img src="screenshots/providers.png" alt="cloud providers">
-<br>
-☁️ <strong>16 cloud providers.</strong> AWS, DigitalOcean, Hetzner, GCP, Azure, Proxmox VE, Vultr, Linode, UpCloud, Scaleway, Tailscale, Oracle Cloud, OVHcloud, Leaseweb, i3D.net and TransIP. VMs appear, IPs update, stale hosts dim. Region, instance type, OS and status synced as metadata.
-</td>
-<td width="50%" valign="top">
-<img src="screenshots/containers.png" alt="containers">
-<br>
-🐳 <strong>Containers over SSH.</strong> Docker and Podman. Start, stop, restart. No agent on the remote, no extra ports. Just SSH.
-</td>
+<td width="55%"><img src="screenshots/detail.png" alt="detail panel"></td>
+<td width="45%" valign="top">🔍 <strong>Everything at a glance.</strong> Connection info, jump route, activity sparkline, tags, tunnels, snippets, containers and server metadata. Health dots show which hosts are up. Group by provider, tag or flat.</td>
 </tr>
 </table>
+
+⚡ **Instant fuzzy search.** Names, IPs, tags, users. Frecency sorting puts your most-used hosts on top. Works the same with 5 hosts or 500. Scoped search within groups.
+
+![fuzzy search](screenshots/search.png)
+
+☁️ **16 cloud providers.** AWS, DigitalOcean, Hetzner, GCP, Azure, Proxmox VE, Vultr, Linode, UpCloud, Scaleway, Tailscale, Oracle Cloud, OVHcloud, Leaseweb, i3D.net and TransIP. VMs appear, IPs update, stale hosts dim. Region, instance type, OS and status synced as metadata.
+
+![cloud providers](screenshots/providers.png)
+
+🐳 **Containers over SSH.** Docker and Podman. Start, stop, restart. No agent on the remote, no extra ports. Just SSH.
+
+![containers](screenshots/containers.png)
 
 **And more.** Visual file transfer with split-pane explorer. Multi-host command execution with snippets. Automatic password retrieval from OS Keychain, 1Password, Bitwarden, pass and HashiCorp Vault. MCP server for AI agents like Claude Code and Cursor. See the [wiki](https://github.com/erickochen/purple/wiki) for details.
 
