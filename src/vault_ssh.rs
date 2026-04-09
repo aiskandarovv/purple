@@ -368,6 +368,16 @@ pub fn check_cert_validity(cert_path: &Path) -> CertStatus {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
+    // Sanity check: ssh-keygen -L on a non-certificate file may succeed on
+    // some platforms (e.g. older OpenSSH on Linux) without printing cert
+    // metadata. Require a "Type:" header that mentions "cert" before parsing.
+    let has_cert_type = stdout
+        .lines()
+        .any(|l| l.trim().starts_with("Type:") && l.contains("cert"));
+    if !has_cert_type {
+        return CertStatus::Invalid("not a certificate".to_string());
+    }
+
     // Handle certificates signed with no expiration ("Valid: forever").
     for line in stdout.lines() {
         let t = line.trim();
@@ -1800,7 +1810,7 @@ mod tests {
         let dir = unique_tmp_subdir("non_positive");
         let script = dir.join("ssh-keygen");
         // Valid window with `to` == `from`, producing ttl == 0.
-        let body = "#!/bin/sh\nprintf '%s\\n' '        Valid: from 2026-01-01T00:00:00 to 2026-01-01T00:00:00'\nexit 0\n";
+        let body = "#!/bin/sh\nprintf '%s\\n' '        Type: ssh-ed25519-cert-v01@openssh.com'\nprintf '%s\\n' '        Valid: from 2026-01-01T00:00:00 to 2026-01-01T00:00:00'\nexit 0\n";
         std::fs::write(&script, body).unwrap();
         let mut perms = std::fs::metadata(&script).unwrap().permissions();
         perms.set_mode(0o755);
