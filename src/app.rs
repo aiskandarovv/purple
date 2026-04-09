@@ -4596,15 +4596,15 @@ mod tests {
             crlf: false,
             bom: false,
         };
-        App::new(config)
-    }
-
-    fn test_app_with_hosts(hosts: &[&str]) -> App {
-        let mut app = make_app(&hosts.join("\n"));
+        let mut app = App::new(config);
         // Isolate from the real ~/.purple/providers so tests don't
         // pick up the user's vault_role / vault_addr config.
         app.provider_config = crate::providers::config::ProviderConfig::default();
         app
+    }
+
+    fn test_app_with_hosts(hosts: &[&str]) -> App {
+        make_app(&hosts.join("\n"))
     }
 
     #[test]

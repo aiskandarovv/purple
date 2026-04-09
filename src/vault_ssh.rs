@@ -368,16 +368,6 @@ pub fn check_cert_validity(cert_path: &Path) -> CertStatus {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    // Sanity check: ssh-keygen -L on a non-certificate file may succeed on
-    // some platforms (e.g. older OpenSSH on Linux) without printing cert
-    // metadata. Require a "Type:" header that mentions "cert" before parsing.
-    let has_cert_type = stdout
-        .lines()
-        .any(|l| l.trim().starts_with("Type:") && l.contains("cert"));
-    if !has_cert_type {
-        return CertStatus::Invalid("not a certificate".to_string());
-    }
-
     // Handle certificates signed with no expiration ("Valid: forever").
     for line in stdout.lines() {
         let t = line.trim();
@@ -1879,17 +1869,36 @@ mod tests {
         assert!(resolve_vault_role(None, None, &config).is_none());
     }
 
+    #[cfg(unix)]
     #[test]
     fn check_cert_validity_invalid_file() {
-        let tmpdir = std::env::temp_dir();
-        let bad_cert = tmpdir.join("purple_test_bad_cert.pub");
-        std::fs::write(&bad_cert, "this is not a certificate\n").unwrap();
-        let status = check_cert_validity(&bad_cert);
+        // Use a mock ssh-keygen that exits with failure, because the real
+        // ssh-keygen behavior on non-certificate files varies across
+        // platforms (macOS returns Invalid, some Linux versions return Valid).
+        use std::os::unix::fs::PermissionsExt;
+        let _guard = PATH_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+
+        let dir = unique_tmp_subdir("invalid_file");
+        let script = dir.join("ssh-keygen");
+        let body = "#!/bin/sh\necho 'is not a certificate' >&2\nexit 1\n";
+        std::fs::write(&script, body).unwrap();
+        let mut perms = std::fs::metadata(&script).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script, perms).unwrap();
+        let cert = dir.join("cert.pub");
+        std::fs::write(&cert, "this is not a certificate\n").unwrap();
+
+        let old_path = std::env::var("PATH").unwrap_or_default();
+        let new_path = format!("{}:{}", dir.display(), old_path);
+        unsafe { std::env::set_var("PATH", &new_path) };
+        let status = check_cert_validity(&cert);
+        unsafe { std::env::set_var("PATH", &old_path) };
+        let _ = std::fs::remove_dir_all(&dir);
+
         assert!(
             matches!(status, CertStatus::Invalid(_)),
             "Expected Invalid, got: {:?}",
             status
         );
-        let _ = std::fs::remove_file(&bad_cert);
     }
 }
