@@ -62,13 +62,13 @@ I wanted one place for all of that. So I built it.
 
 ![containers](screenshots/containers.png)
 
-**And more.** Visual file transfer with split-pane explorer. Multi-host command execution with snippets. Automatic password retrieval from OS Keychain, 1Password, Bitwarden, pass and HashiCorp Vault. MCP server for AI agents like Claude Code and Cursor. See the [wiki](https://github.com/erickochen/purple/wiki) for details.
+**And more.** Visual file transfer with split-pane explorer. Multi-host command execution with snippets. Automatic password retrieval from OS Keychain, 1Password, Bitwarden, pass and the HashiCorp Vault KV secrets engine. Short-lived SSH certificates signed via the HashiCorp Vault SSH secrets engine. MCP server for AI agents like Claude Code and Cursor. See the [wiki](https://github.com/erickochen/purple/wiki) for details.
 
 ## How it works
 
 purple reads `~/.ssh/config` directly. No database, no daemon, no account. Comments, indentation, Include files, unknown directives. All preserved.
 
-Written in Rust. Single binary. 5000+ tests. MIT license.
+Written in Rust. Single binary. 6000+ tests. MIT license.
 
 ## Links
 

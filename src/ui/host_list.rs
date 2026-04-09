@@ -1189,6 +1189,15 @@ fn footer_spans(detail_active: bool, filter_down_only: bool) -> Vec<Span<'static
         Span::styled(" v ", theme::footer_key()),
         Span::styled(view_label, theme::muted()),
     ];
+    // Always show V so Vault SSH is discoverable. When no role is configured
+    // yet the key still works and produces an informative "set a role" error.
+    spans.push(Span::raw("  "));
+    // `footer_action` already pads the keycap to ` V `; the label is rendered
+    // verbatim so we omit the leading space here. The trailing `Span::raw`
+    // separators on either side provide the visual gap.
+    for s in super::footer_action("V", "vault sign") {
+        spans.push(s);
+    }
     if filter_down_only {
         spans.push(Span::raw("  "));
         spans.push(Span::styled("DOWN ONLY", theme::warning()));

@@ -41,6 +41,7 @@ Host gateway-vpn
   HostName 185.199.108.5
   User openvpn
   # purple:tags infra,vpn
+  # purple:vault-ssh ssh-client-signer/sign/infra
 
 # AWS EC2
 
@@ -52,6 +53,7 @@ Host aws-api-prod
   # purple:tags production,api
   # purple:provider aws:i-0a1b2c3d4e5f60001
   # purple:meta region=us-east-1,instance=t3.medium,os=Amazon Linux 2023,status=running
+  # purple:vault-ssh ssh-client-signer/sign/admin
 
 Host aws-api-staging
   HostName 52.47.100.24
@@ -70,7 +72,6 @@ Host aws-worker-eu
 Host aws-batch-us
   HostName 52.47.100.25
   User ec2-user
-  ProxyJump bastion-ams
   # purple:tags production,batch
   # purple:provider aws:i-0a1b2c3d4e5f60004
   # purple:meta region=us-east-1,instance=c6i.xlarge,os=Amazon Linux 2023,status=running
@@ -216,6 +217,7 @@ user=ec2-user
 profile=production
 regions=us-east-1,eu-central-1
 auto_sync=true
+vault_role=ssh-client-signer/sign/engineer
 
 [digitalocean]
 token=dop_v1_demo
@@ -228,6 +230,8 @@ url=https://192.168.1.10:8006
 token=root@pam!demo=xxx
 alias_prefix=pve
 user=root
+vault_role=ssh-client-signer/sign/ops
+vault_addr=http://localhost:8200
 auto_sync=true
 ";
 
@@ -350,7 +354,7 @@ fn build_demo_container_cache() -> String {
 {{"alias":"db-primary","timestamp":{},"runtime":"Docker","containers":[{{"ID":"a8b9c0d1e2f3","Names":"postgres-primary","Image":"postgres:16-alpine","State":"running","Status":"Up 30 days","Ports":"127.0.0.1:5432->5432/tcp"}},{{"ID":"b9c0d1e2f3a4","Names":"pgbouncer","Image":"pgbouncer:1.21","State":"running","Status":"Up 30 days","Ports":"127.0.0.1:6432->6432/tcp"}},{{"ID":"c0d1e2f3a4b5","Names":"pg-exporter","Image":"prometheuscommunity/postgres-exporter:0.15","State":"running","Status":"Up 30 days","Ports":"127.0.0.1:9187->9187/tcp"}}]}}
 {{"alias":"do-web-ams","timestamp":{},"runtime":"Docker","containers":[{{"ID":"d1e2f3a4b5c6","Names":"nginx","Image":"nginx:1.25","State":"running","Status":"Up 8 days","Ports":"0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp"}},{{"ID":"e2f3a4b5c6d7","Names":"app","Image":"myapp:3.2.1","State":"running","Status":"Up 8 days","Ports":"8080/tcp"}},{{"ID":"f3a4b5c6d7e8","Names":"worker","Image":"myapp:3.2.1","State":"running","Status":"Up 8 days","Ports":""}},{{"ID":"a4b5c6d7e8f9","Names":"redis","Image":"redis:7-alpine","State":"running","Status":"Up 8 days","Ports":"6379/tcp"}},{{"ID":"b5c6d7e8f9a0","Names":"sidekiq","Image":"myapp:3.2.1","State":"exited","Status":"Exited (1) 3 hours ago","Ports":""}}]}}
 {{"alias":"pve-web-01","timestamp":{},"runtime":"Docker","containers":[{{"ID":"c6d7e8f9a0b1","Names":"nginx","Image":"nginx:1.25","State":"running","Status":"Up 20 days","Ports":"0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp"}},{{"ID":"d7e8f9a0b1c2","Names":"webapp","Image":"internal/webapp:1.8.3","State":"running","Status":"Up 20 days","Ports":"127.0.0.1:3000->3000/tcp"}},{{"ID":"e8f9a0b1c2d3","Names":"celery","Image":"internal/webapp:1.8.3","State":"running","Status":"Up 20 days","Ports":""}}]}}
-{{"alias":"aws-api-prod","timestamp":{},"runtime":"Docker","containers":[{{"ID":"f9a0b1c2d3e4","Names":"api","Image":"myteam/api:v4.1.0","State":"running","Status":"Up 6 days","Ports":"0.0.0.0:8080->8080/tcp"}},{{"ID":"a0b1c2d3e4f5","Names":"nginx","Image":"nginx:1.25-alpine","State":"running","Status":"Up 6 days","Ports":"0.0.0.0:443->443/tcp"}},{{"ID":"b1c2d3e4f5a6","Names":"datadog-agent","Image":"datadog/agent:7","State":"running","Status":"Up 6 days","Ports":""}},{{"ID":"c2d3e4f5a6b7","Names":"redis","Image":"redis:7-alpine","State":"running","Status":"Up 6 days","Ports":"127.0.0.1:6379->6379/tcp"}}]}}
+{{"alias":"aws-api-staging","timestamp":{},"runtime":"Docker","containers":[{{"ID":"f9a0b1c2d3e4","Names":"api","Image":"myteam/api:v4.1.0-rc2","State":"running","Status":"Up 2 days","Ports":"0.0.0.0:8080->8080/tcp"}},{{"ID":"a0b1c2d3e4f5","Names":"nginx","Image":"nginx:1.25-alpine","State":"running","Status":"Up 2 days","Ports":"0.0.0.0:443->443/tcp"}},{{"ID":"b1c2d3e4f5a6","Names":"datadog-agent","Image":"datadog/agent:7","State":"running","Status":"Up 2 days","Ports":""}},{{"ID":"c2d3e4f5a6b7","Names":"redis","Image":"redis:7-alpine","State":"running","Status":"Up 2 days","Ports":"127.0.0.1:6379->6379/tcp"}}]}}
 {{"alias":"aws-batch-us","timestamp":{},"runtime":"Docker","containers":[{{"ID":"d3e4f5a6b7c8","Names":"scheduler","Image":"myteam/batch:2.9.0","State":"running","Status":"Up 14 days","Ports":"127.0.0.1:8080->8080/tcp"}},{{"ID":"e4f5a6b7c8d9","Names":"worker-1","Image":"myteam/batch:2.9.0","State":"running","Status":"Up 14 days","Ports":""}},{{"ID":"f5a6b7c8d9e0","Names":"worker-2","Image":"myteam/batch:2.9.0","State":"running","Status":"Up 14 days","Ports":""}},{{"ID":"a6b7c8d9e0f1","Names":"rabbitmq","Image":"rabbitmq:3.13-management","State":"running","Status":"Up 14 days","Ports":"127.0.0.1:5672->5672/tcp, 127.0.0.1:15672->15672/tcp"}},{{"ID":"b7c8d9e0f1a2","Names":"flower","Image":"mher/flower:2.0","State":"running","Status":"Up 14 days","Ports":"127.0.0.1:5555->5555/tcp"}}]}}
 {{"alias":"gateway-vpn","timestamp":{},"runtime":"Docker","containers":[{{"ID":"c8d9e0f1a2b3","Names":"wireguard","Image":"linuxserver/wireguard:1.0","State":"running","Status":"Up 45 days","Ports":"0.0.0.0:51820->51820/udp"}},{{"ID":"d9e0f1a2b3c4","Names":"pihole","Image":"pihole/pihole:2024.07","State":"running","Status":"Up 45 days","Ports":"0.0.0.0:53->53/tcp, 0.0.0.0:53->53/udp, 127.0.0.1:8080->80/tcp"}},{{"ID":"e0f1a2b3c4d5","Names":"unbound","Image":"mvance/unbound:1.20","State":"running","Status":"Up 45 days","Ports":"127.0.0.1:5335->5335/tcp"}}]}}"#,
         ts1, ts2, ts3, ts4, ts5, ts6, ts7,
@@ -417,6 +421,78 @@ pub fn build_demo_app() -> App {
 
     app.has_pinged = true;
     app.ping_checked_at = Some(std::time::Instant::now());
+
+    // Vault SSH cert status (deterministic demo data)
+    {
+        use crate::vault_ssh::CertStatus;
+        let now = std::time::Instant::now();
+        // aws-api-prod: valid cert, 6h remaining out of 8h total
+        app.cert_status_cache.insert(
+            "aws-api-prod".into(),
+            (
+                now,
+                CertStatus::Valid {
+                    expires_at: 0,
+                    remaining_secs: 21600,
+                    total_secs: 28800,
+                },
+                None,
+            ),
+        );
+        // aws-worker-eu: valid cert, 45m remaining out of 8h (warning tier)
+        app.cert_status_cache.insert(
+            "aws-worker-eu".into(),
+            (
+                now,
+                CertStatus::Valid {
+                    expires_at: 0,
+                    remaining_secs: 2700,
+                    total_secs: 28800,
+                },
+                None,
+            ),
+        );
+        // aws-batch-us: valid cert, 4h remaining out of 8h
+        app.cert_status_cache.insert(
+            "aws-batch-us".into(),
+            (
+                now,
+                CertStatus::Valid {
+                    expires_at: 0,
+                    remaining_secs: 14400,
+                    total_secs: 28800,
+                },
+                None,
+            ),
+        );
+        // gateway-vpn: valid cert, 7h remaining out of 8h
+        app.cert_status_cache.insert(
+            "gateway-vpn".into(),
+            (
+                now,
+                CertStatus::Valid {
+                    expires_at: 0,
+                    remaining_secs: 25200,
+                    total_secs: 28800,
+                },
+                None,
+            ),
+        );
+        // pve-web-01: valid cert, 3h remaining out of 8h
+        app.cert_status_cache.insert(
+            "pve-web-01".into(),
+            (
+                now,
+                CertStatus::Valid {
+                    expires_at: 0,
+                    remaining_secs: 10800,
+                    total_secs: 28800,
+                },
+                None,
+            ),
+        );
+        // Others left as Missing (Not signed) for variety
+    }
 
     // SSH keys (fake metadata)
     app.keys = vec![
@@ -516,7 +592,7 @@ mod tests {
         assert!(app.container_cache.contains_key("db-primary"));
         assert!(app.container_cache.contains_key("do-web-ams"));
         assert!(app.container_cache.contains_key("pve-web-01"));
-        assert!(app.container_cache.contains_key("aws-api-prod"));
+        assert!(app.container_cache.contains_key("aws-api-staging"));
         assert!(app.container_cache.contains_key("aws-batch-us"));
         assert!(app.container_cache.contains_key("gateway-vpn"));
     }
@@ -560,6 +636,38 @@ mod tests {
     fn demo_mode_flag_is_set() {
         let (app, _guard) = demo_app();
         assert!(app.demo_mode);
+    }
+
+    #[test]
+    fn demo_app_has_vault_ssh_config() {
+        let (app, _guard) = demo_app();
+        // Two providers have vault_role (inheritance for their hosts).
+        let aws = app.provider_config.section("aws").expect("aws section");
+        assert!(
+            !aws.vault_role.is_empty(),
+            "aws provider should have vault_role set"
+        );
+        let pve = app
+            .provider_config
+            .section("proxmox")
+            .expect("proxmox section");
+        assert!(
+            !pve.vault_role.is_empty(),
+            "proxmox provider should have vault_role set"
+        );
+        assert!(
+            !pve.vault_addr.is_empty(),
+            "proxmox provider should have vault_addr set"
+        );
+        // At least one host has a per-host vault_ssh override.
+        let override_host = app
+            .hosts
+            .iter()
+            .find(|h| h.vault_ssh.as_deref().is_some_and(|s| !s.is_empty()));
+        assert!(
+            override_host.is_some(),
+            "demo should have a host with a vault_ssh override"
+        );
     }
 
     #[test]

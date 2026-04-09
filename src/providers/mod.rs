@@ -563,6 +563,8 @@ mod tests {
             regions: String::new(),
             project: String::new(),
             compartment: String::new(),
+            vault_role: String::new(),
+            vault_addr: String::new(),
         };
         let p = get_provider_with_config("proxmox", &section).unwrap();
         assert_eq!(p.name(), "proxmox");
@@ -583,6 +585,8 @@ mod tests {
             regions: String::new(),
             project: String::new(),
             compartment: String::new(),
+            vault_role: String::new(),
+            vault_addr: String::new(),
         };
         let p = get_provider_with_config("digitalocean", &section).unwrap();
         assert_eq!(p.name(), "digitalocean");
@@ -603,6 +607,8 @@ mod tests {
             regions: "us-central1-a, europe-west1-b".to_string(),
             project: "my-project".to_string(),
             compartment: String::new(),
+            vault_role: String::new(),
+            vault_addr: String::new(),
         };
         let p = get_provider_with_config("gcp", &section).unwrap();
         assert_eq!(p.name(), "gcp");
@@ -623,6 +629,8 @@ mod tests {
             regions: String::new(),
             project: String::new(),
             compartment: String::new(),
+            vault_role: String::new(),
+            vault_addr: String::new(),
         };
         assert!(get_provider_with_config("unknown_provider", &section).is_none());
     }
@@ -873,6 +881,8 @@ mod tests {
                 regions: String::new(),
                 project: String::new(),
                 compartment: String::new(),
+                vault_role: String::new(),
+                vault_addr: String::new(),
             };
             let p = get_provider_with_config(name, &section);
             assert!(

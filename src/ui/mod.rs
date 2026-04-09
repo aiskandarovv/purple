@@ -155,6 +155,12 @@ pub fn render(frame: &mut Frame, app: &mut App, anim: &mut crate::animation::Ani
         Screen::Containers { .. } => {
             render_overlay(frame, app, anim, containers::render);
         }
+        Screen::ConfirmVaultSign { signable } => {
+            let aliases: Vec<String> = signable.iter().map(|(a, _, _, _, _)| a.clone()).collect();
+            render_overlay(frame, app, anim, move |frame, app| {
+                confirm_dialog::render_confirm_vault_sign(frame, app, &aliases)
+            });
+        }
         Screen::ConfirmPurgeStale { aliases, provider } => {
             let aliases = aliases.clone();
             let provider = provider.clone();
@@ -392,15 +398,26 @@ pub fn render_footer_with_status(
         let total_width = area.width as usize;
         let (icon, icon_style, text) = if status.is_error {
             ("\u{26A0}", theme::error(), format!(" {} ", status.text))
+        } else if status.sticky {
+            // Sticky non-error = in-progress action. The spinner character
+            // is embedded in the status text by the caller, so no extra
+            // glyph prefix is needed here.
+            ("", Style::default(), format!(" {} ", status.text))
         } else {
             ("\u{2713} ", theme::success(), format!("{} ", status.text))
         };
-        let status_width = icon.width() + text.width();
+        let available = total_width.saturating_sub(shortcuts_width + icon.width() + 2);
+        let display_text = if text.width() > available && available > 3 {
+            format!(" {} ", truncate(&status.text, available - 1))
+        } else {
+            text
+        };
+        let status_width = icon.width() + display_text.width();
         let gap = total_width.saturating_sub(shortcuts_width + status_width);
         if gap > 0 {
             footer_spans.push(Span::raw(" ".repeat(gap)));
             footer_spans.push(Span::styled(icon, icon_style));
-            footer_spans.push(Span::raw(text));
+            footer_spans.push(Span::raw(display_text));
         }
     }
     frame.render_widget(Paragraph::new(Line::from(footer_spans)), area);
@@ -576,11 +593,7 @@ mod tests {
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = make_app();
-        app.status = Some(crate::app::StatusMessage {
-            text: "test".to_string(),
-            is_error: false,
-            tick_count: 0,
-        });
+        app.set_status("test", false);
         let mut anim = crate::animation::AnimationState::new();
         terminal
             .draw(|frame| {
@@ -603,11 +616,7 @@ mod tests {
         let backend = TestBackend::new(80, 3);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = make_app();
-        app.status = Some(crate::app::StatusMessage {
-            text: "sync failed".to_string(),
-            is_error: true,
-            tick_count: 0,
-        });
+        app.set_status("sync failed", true);
         let mut anim = crate::animation::AnimationState::new();
         terminal
             .draw(|frame| {
@@ -636,11 +645,7 @@ mod tests {
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = make_app();
-        app.status = Some(crate::app::StatusMessage {
-            text: "sync failed".to_string(),
-            is_error: true,
-            tick_count: 0,
-        });
+        app.set_status("sync failed", true);
         // Simulate an overlay being active.
         app.screen = crate::app::Screen::Help {
             return_screen: Box::new(crate::app::Screen::HostList),

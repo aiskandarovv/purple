@@ -18,6 +18,11 @@ pub struct ProviderSection {
     pub regions: String,
     pub project: String,
     pub compartment: String,
+    pub vault_role: String,
+    /// Optional `VAULT_ADDR` override passed to the `vault` CLI when signing
+    /// SSH certs. Empty = inherit parent env. Stored as a plain string so an
+    /// uninitialized field (via `..Default::default()`) stays innocuous.
+    pub vault_addr: String,
 }
 
 /// Default for auto_sync: false for proxmox (N+1 API calls), true for all others.
@@ -99,6 +104,8 @@ impl ProviderConfig {
                     regions: String::new(),
                     project: String::new(),
                     compartment: String::new(),
+                    vault_role: String::new(),
+                    vault_addr: String::new(),
                 });
             } else if let Some(ref mut section) = current {
                 if let Some((key, value)) = trimmed.split_once('=') {
@@ -122,6 +129,24 @@ impl ProviderConfig {
                         "regions" => section.regions = value,
                         "project" => section.project = value,
                         "compartment" => section.compartment = value,
+                        "vault_role" => {
+                            // Silently drop invalid roles so parsing stays infallible.
+                            section.vault_role = if crate::vault_ssh::is_valid_role(&value) {
+                                value
+                            } else {
+                                String::new()
+                            };
+                        }
+                        "vault_addr" => {
+                            // Same silent-drop policy as vault_role: a bad
+                            // value is ignored on parse rather than crashing
+                            // the whole config load.
+                            section.vault_addr = if crate::vault_ssh::is_valid_vault_addr(&value) {
+                                value
+                            } else {
+                                String::new()
+                            };
+                        }
                         _ => {}
                     }
                 }
@@ -211,6 +236,22 @@ impl ProviderConfig {
                     Self::sanitize_value(&section.compartment)
                 ));
             }
+            if !section.vault_role.is_empty()
+                && crate::vault_ssh::is_valid_role(&section.vault_role)
+            {
+                content.push_str(&format!(
+                    "vault_role={}\n",
+                    Self::sanitize_value(&section.vault_role)
+                ));
+            }
+            if !section.vault_addr.is_empty()
+                && crate::vault_ssh::is_valid_vault_addr(&section.vault_addr)
+            {
+                content.push_str(&format!(
+                    "vault_addr={}\n",
+                    Self::sanitize_value(&section.vault_addr)
+                ));
+            }
             if section.auto_sync != default_auto_sync(&section.provider) {
                 content.push_str(if section.auto_sync {
                     "auto_sync=true\n"
@@ -255,6 +296,85 @@ impl ProviderConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vault_role_invalid_is_dropped_on_parse() {
+        let config = ProviderConfig::parse("[aws]\ntoken=abc\nvault_role=-format=json\n");
+        assert_eq!(config.sections.len(), 1);
+        assert!(config.sections[0].vault_role.is_empty());
+    }
+
+    #[test]
+    fn vault_role_valid_is_parsed() {
+        let config = ProviderConfig::parse("[aws]\ntoken=abc\nvault_role=ssh/sign/engineer\n");
+        assert_eq!(config.sections[0].vault_role, "ssh/sign/engineer");
+    }
+
+    #[test]
+    fn vault_role_roundtrip_preserves_value() {
+        // Full parse → save → re-parse roundtrip for the provider-level
+        // vault_role field. Catches regressions where save() forgets to emit
+        // the field or parse() forgets to read it back.
+        let tmp = std::env::temp_dir().join(format!(
+            "purple_vault_role_roundtrip_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let config = ProviderConfig {
+            path_override: Some(tmp.clone()),
+            sections: vec![ProviderSection {
+                provider: "aws".to_string(),
+                token: "abc".to_string(),
+                alias_prefix: "aws".to_string(),
+                user: "ec2-user".to_string(),
+                identity_file: String::new(),
+                url: String::new(),
+                verify_tls: true,
+                profile: String::new(),
+                regions: "us-east-1".to_string(),
+                project: String::new(),
+                compartment: String::new(),
+                vault_role: "ssh-client-signer/sign/engineer".to_string(),
+                vault_addr: String::new(),
+                auto_sync: true,
+            }],
+        };
+        config.save().expect("save failed");
+
+        let content = std::fs::read_to_string(&tmp).expect("read failed");
+        assert!(
+            content.contains("vault_role=ssh-client-signer/sign/engineer"),
+            "serialized form missing vault_role: {}",
+            content
+        );
+
+        let reparsed = ProviderConfig::parse(&content);
+        assert_eq!(reparsed.sections.len(), 1);
+        assert_eq!(
+            reparsed.sections[0].vault_role,
+            "ssh-client-signer/sign/engineer"
+        );
+
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn vault_role_invalid_skipped_on_write() {
+        let mut config = ProviderConfig::parse("[aws]\ntoken=abc\n");
+        // Inject an invalid role directly (bypassing parse) to simulate tampering.
+        config.sections[0].vault_role = "bad role".to_string();
+        // Emulate serialization logic for vault_role.
+        let mut out = String::new();
+        if !config.sections[0].vault_role.is_empty()
+            && crate::vault_ssh::is_valid_role(&config.sections[0].vault_role)
+        {
+            out.push_str("vault_role=");
+        }
+        assert!(out.is_empty(), "invalid role must be skipped on write");
+    }
 
     #[test]
     fn test_parse_empty() {
@@ -328,6 +448,8 @@ token=mytoken
             regions: String::new(),
             project: String::new(),
             compartment: String::new(),
+            vault_role: String::new(),
+            vault_addr: String::new(),
         });
         assert_eq!(config.sections.len(), 1);
     }
@@ -348,6 +470,8 @@ token=mytoken
             regions: String::new(),
             project: String::new(),
             compartment: String::new(),
+            vault_role: String::new(),
+            vault_addr: String::new(),
         });
         assert_eq!(config.sections.len(), 1);
         assert_eq!(config.sections[0].token, "new");
@@ -499,6 +623,8 @@ verify_tls=false
             regions: String::new(),
             project: String::new(),
             compartment: String::new(),
+            vault_role: String::new(),
+            vault_addr: String::new(),
         };
         let mut config = ProviderConfig::default();
         config.set_section(section);
@@ -534,6 +660,8 @@ verify_tls=false
             regions: String::new(),
             project: String::new(),
             compartment: String::new(),
+            vault_role: String::new(),
+            vault_addr: String::new(),
         });
         assert_eq!(config.sections[0].token, "new");
         assert_eq!(config.sections[0].url, "https://pve.local:8006");
@@ -581,6 +709,8 @@ verify_tls=false
             regions: String::new(),
             project: String::new(),
             compartment: String::new(),
+            vault_role: String::new(),
+            vault_addr: String::new(),
         });
         // Re-parse: auto_sync should still be true (default)
         assert!(config.sections[0].auto_sync);
@@ -600,6 +730,8 @@ verify_tls=false
             regions: String::new(),
             project: String::new(),
             compartment: String::new(),
+            vault_role: String::new(),
+            vault_addr: String::new(),
         });
         assert!(!config2.sections[0].auto_sync);
     }
@@ -659,6 +791,8 @@ verify_tls=false
             regions: String::new(),
             project: String::new(),
             compartment: String::new(),
+            vault_role: String::new(),
+            vault_addr: String::new(),
         });
         // Simulate save by rebuilding content string (same logic as save())
         let content =
@@ -905,6 +1039,8 @@ verify_tls=false
             regions: String::new(),
             project: String::new(),
             compartment: String::new(),
+            vault_role: String::new(),
+            vault_addr: String::new(),
         };
         config.set_section(section);
         assert_eq!(config.sections.len(), 1);
@@ -928,6 +1064,8 @@ verify_tls=false
             regions: String::new(),
             project: String::new(),
             compartment: String::new(),
+            vault_role: String::new(),
+            vault_addr: String::new(),
         };
         config.set_section(section);
         assert_eq!(config.sections.len(), 1);
@@ -1243,6 +1381,8 @@ verify_tls=false
                 regions: String::new(),
                 project: String::new(),
                 compartment: String::new(),
+                vault_role: String::new(),
+                vault_addr: String::new(),
             });
         }
         assert_eq!(config.sections.len(), 3);
@@ -1324,6 +1464,8 @@ verify_tls=false
                 regions: String::new(),
                 project: String::new(),
                 compartment: String::new(),
+                vault_role: String::new(),
+                vault_addr: String::new(),
             }],
             path_override: Some(path.clone()),
         };
@@ -1333,5 +1475,111 @@ verify_tls=false
         // Token should be on a single line with newline stripped
         assert!(content.contains("token=abcdef\n"));
         assert!(!content.contains("token=abc\ndef"));
+    }
+
+    #[test]
+    fn provider_vault_role_invalid_characters_rejected_on_parse() {
+        // Values with spaces, shell metacharacters or newlines are silently
+        // dropped so parsing stays infallible but invalid roles never reach
+        // the Vault CLI.
+        let cases = [
+            "[aws]\ntoken=abc\nvault_role=bad role\n",
+            "[aws]\ntoken=abc\nvault_role=role;rm\n",
+            "[aws]\ntoken=abc\nvault_role=role$(x)\n",
+            "[aws]\ntoken=abc\nvault_role=role|cat\n",
+        ];
+        for input in &cases {
+            let config = ProviderConfig::parse(input);
+            assert!(
+                config.sections[0].vault_role.is_empty(),
+                "expected empty vault_role for input: {:?}",
+                input
+            );
+        }
+    }
+
+    #[test]
+    fn test_vault_role_default_empty() {
+        let config = ProviderConfig::parse("[aws]\ntoken=abc\n");
+        assert!(config.sections[0].vault_role.is_empty());
+    }
+
+    #[test]
+    fn test_vault_role_not_written_when_empty() {
+        let tmpdir = std::env::temp_dir();
+        let path = tmpdir.join("purple_test_vault_role_empty.ini");
+        let mut config = ProviderConfig::parse("[aws]\ntoken=abc\n");
+        config.path_override = Some(path.clone());
+        config.save().unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert!(!content.contains("vault_role"));
+    }
+
+    #[test]
+    fn test_vault_role_round_trip() {
+        let tmpdir = std::env::temp_dir();
+        let path = tmpdir.join("purple_test_vault_role_rt.ini");
+        let mut config = ProviderConfig::parse("[aws]\ntoken=abc\nvault_role=ssh/sign/engineer\n");
+        config.path_override = Some(path.clone());
+        config.save().unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert!(content.contains("vault_role=ssh/sign/engineer"));
+    }
+
+    // ---- vault_addr tests ----
+
+    #[test]
+    fn vault_addr_default_empty() {
+        let config = ProviderConfig::parse("[aws]\ntoken=abc\n");
+        assert!(config.sections[0].vault_addr.is_empty());
+    }
+
+    #[test]
+    fn vault_addr_parsed() {
+        let config = ProviderConfig::parse("[aws]\ntoken=abc\nvault_addr=http://127.0.0.1:8200\n");
+        assert_eq!(config.sections[0].vault_addr, "http://127.0.0.1:8200");
+    }
+
+    #[test]
+    fn vault_addr_invalid_dropped_on_parse() {
+        // Whitespace and control chars are not allowed in a VAULT_ADDR.
+        for input in [
+            "[aws]\ntoken=abc\nvault_addr=has space\n",
+            "[aws]\ntoken=abc\nvault_addr=\n",
+        ] {
+            let config = ProviderConfig::parse(input);
+            assert!(
+                config.sections[0].vault_addr.is_empty(),
+                "expected empty vault_addr for input: {:?}",
+                input
+            );
+        }
+    }
+
+    #[test]
+    fn vault_addr_round_trip() {
+        let tmpdir = std::env::temp_dir();
+        let path = tmpdir.join("purple_test_vault_addr_rt.ini");
+        let mut config =
+            ProviderConfig::parse("[aws]\ntoken=abc\nvault_addr=http://127.0.0.1:8200\n");
+        config.path_override = Some(path.clone());
+        config.save().unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert!(content.contains("vault_addr=http://127.0.0.1:8200"));
+    }
+
+    #[test]
+    fn vault_addr_not_written_when_empty() {
+        let tmpdir = std::env::temp_dir();
+        let path = tmpdir.join("purple_test_vault_addr_empty.ini");
+        let mut config = ProviderConfig::parse("[aws]\ntoken=abc\n");
+        config.path_override = Some(path.clone());
+        config.save().unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert!(!content.contains("vault_addr"));
     }
 }

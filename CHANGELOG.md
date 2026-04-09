@@ -1,3 +1,25 @@
+## 2.31.0
+
+- HashiCorp Vault SSH certificate signing
+- Short-lived SSH certificates signed via the HashiCorp Vault SSH secrets engine. Per-host role in `# purple:vault-ssh <mount>/sign/<role>`, per-provider default in `vault_role=`. Host overrides win over provider defaults
+- `V` key bulk-signs every host needing renewal. Press `V` again to cancel. Detail panel shows cert TTL under the `VAULT SSH` section with a "(press V to sign)" affordance when missing, expired or invalid
+- Automatic renewal on connect via `ensure_vault_ssh_if_needed`, so an expired cert is re-signed before the SSH session starts
+- Cert cache under `~/.purple/certs/<alias>-cert.pub`. Background status checks with 5 minute TTL, shorter 30 second backoff on errors
+- Detail panel reflects external `purple vault sign` runs (CLI or another purple instance) within one render frame via mtime-based cache invalidation
+- Vault SSH address configurable per host (`# purple:vault-addr`), per provider (`vault_addr=`) or per CLI invocation (`purple vault sign --vault-addr`). Purple exports the resolved value as `VAULT_ADDR` on the `vault` subprocess, so you no longer need to export it in every shell you launch purple from
+- New "Vault SSH Role" and "Vault SSH Address" fields in the host and provider forms. Progressive disclosure: Address appears when Role is set, with provider inheritance hint
+- CLI: `purple vault sign <alias>` and `purple vault sign --all`, both accepting `--vault-addr <url>`. Shells out to `vault write -field=signed_key` so existing Vault authentication (VAULT_TOKEN, token helpers, OIDC, etc.) applies
+- Bulk sign detects concurrent external `~/.ssh/config` edits via mtime and merges instead of overwriting, so edits in another editor are preserved
+- Virtual tags `vault-ssh` (any host with a resolved role) and `vault-kv` (any host using the `vault:` askpass prefix) for filtering
+- Distinct from the HashiCorp Vault KV secrets engine used as a password source via the `vault:` askpass prefix. UI, CLI and docs keep the two engines strictly separated
+- Vault SSH address normalization: bare IP or hostname auto-expands to `https://IP:8200`. Explicit `http://` for dev-mode Vault servers
+- 30 second timeout on vault CLI subprocess. Previously hung indefinitely when the Vault server was unreachable
+- Friendly error messages for common Vault SSH failures: connection refused, connection timed out, host not found, TLS mismatch (HTTP vs HTTPS), permission denied, token expired
+- Signing progress shows animated spinner. Error messages stay visible until the next action (sticky status)
+- Pre-check on `V`: warns immediately when no Vault address is configured instead of failing silently after the confirm dialog
+- Detail panel Vault SSH section: shows role name instead of full mount path. Address moved to edit form (e) to save space
+- 1000+ new tests covering the Vault SSH write paths, wildcard safety invariants (proptest across 512 random configs), Match block inertness, CRLF preservation, rollback on write failure, mtime cache staleness, subprocess env propagation and CLI flag parsing
+
 ## 2.30.1
 
 - Fix pattern tags missing from tag grouping tabs and counts

@@ -106,6 +106,14 @@ pub struct HostEntry {
     pub tunnel_count: u16,
     /// Password source from purple:askpass comment (e.g. "keychain", "op://...", "pass:...").
     pub askpass: Option<String>,
+    /// Vault SSH certificate signing role from purple:vault-ssh comment.
+    pub vault_ssh: Option<String>,
+    /// Optional Vault HTTP endpoint from purple:vault-addr comment. When
+    /// set, purple passes it as `VAULT_ADDR` to the `vault` subprocess for
+    /// this host's signing, overriding the parent shell. Empty = inherit env.
+    pub vault_addr: Option<String>,
+    /// CertificateFile directive value (e.g. "~/.ssh/my-cert.pub").
+    pub certificate_file: String,
     /// Provider metadata from purple:meta comment (region, plan, etc.).
     pub provider_meta: Vec<(String, String)>,
     /// Unix timestamp when the host was marked stale (disappeared from provider sync).
@@ -128,6 +136,9 @@ impl Default for HostEntry {
             provider: None,
             tunnel_count: 0,
             askpass: None,
+            vault_ssh: None,
+            vault_addr: None,
+            certificate_file: String::new(),
             provider_meta: Vec::new(),
             stale: None,
         }
@@ -512,6 +523,90 @@ impl HostBlock {
         None
     }
 
+    /// Extract vault-ssh role from purple:vault-ssh comment.
+    pub fn vault_ssh(&self) -> Option<String> {
+        for d in &self.directives {
+            if d.is_non_directive {
+                let trimmed = d.raw_line.trim();
+                if let Some(rest) = trimmed.strip_prefix("# purple:vault-ssh ") {
+                    let val = rest.trim();
+                    if !val.is_empty() && crate::vault_ssh::is_valid_role(val) {
+                        return Some(val.to_string());
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Set vault-ssh role. Replaces existing comment or adds one. Empty string removes.
+    pub fn set_vault_ssh(&mut self, role: &str) {
+        let indent = self.detect_indent();
+        self.directives.retain(|d| {
+            !(d.is_non_directive && {
+                let t = d.raw_line.trim();
+                t == "# purple:vault-ssh" || t.starts_with("# purple:vault-ssh ")
+            })
+        });
+        if !role.is_empty() {
+            let pos = self.content_end();
+            self.directives.insert(
+                pos,
+                Directive {
+                    key: String::new(),
+                    value: String::new(),
+                    raw_line: format!("{}# purple:vault-ssh {}", indent, role),
+                    is_non_directive: true,
+                },
+            );
+        }
+    }
+
+    /// Extract the Vault SSH endpoint from a `# purple:vault-addr` comment.
+    /// Returns None when the comment is absent, blank or contains an invalid
+    /// URL value. Validation is intentionally minimal: we reject empty,
+    /// whitespace-containing and control-character values but otherwise let
+    /// the Vault CLI surface its own error on typos.
+    pub fn vault_addr(&self) -> Option<String> {
+        for d in &self.directives {
+            if d.is_non_directive {
+                let trimmed = d.raw_line.trim();
+                if let Some(rest) = trimmed.strip_prefix("# purple:vault-addr ") {
+                    let val = rest.trim();
+                    if !val.is_empty() && crate::vault_ssh::is_valid_vault_addr(val) {
+                        return Some(val.to_string());
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Set vault-addr endpoint. Replaces existing comment or adds one. Empty
+    /// string removes. Caller is expected to have validated the URL upstream
+    /// (e.g. via `is_valid_vault_addr`) — this function does not re-validate.
+    pub fn set_vault_addr(&mut self, url: &str) {
+        let indent = self.detect_indent();
+        self.directives.retain(|d| {
+            !(d.is_non_directive && {
+                let t = d.raw_line.trim();
+                t == "# purple:vault-addr" || t.starts_with("# purple:vault-addr ")
+            })
+        });
+        if !url.is_empty() {
+            let pos = self.content_end();
+            self.directives.insert(
+                pos,
+                Directive {
+                    key: String::new(),
+                    value: String::new(),
+                    raw_line: format!("{}# purple:vault-addr {}", indent, url),
+                    is_non_directive: true,
+                },
+            );
+        }
+    }
+
     /// Set askpass source on a host block. Replaces existing purple:askpass comment or adds one.
     /// Pass an empty string to remove the comment.
     pub fn set_askpass(&mut self, source: &str) {
@@ -734,6 +829,10 @@ impl HostBlock {
                 }
             } else if d.key.eq_ignore_ascii_case("proxyjump") {
                 entry.proxy_jump = d.value.clone();
+            } else if d.key.eq_ignore_ascii_case("certificatefile")
+                && entry.certificate_file.is_empty()
+            {
+                entry.certificate_file = d.value.clone();
             }
         }
         entry.tags = self.tags();
@@ -742,6 +841,8 @@ impl HostBlock {
         entry.provider = self.provider().map(|(name, _)| name);
         entry.tunnel_count = self.tunnel_count();
         entry.askpass = self.askpass();
+        entry.vault_ssh = self.vault_ssh();
+        entry.vault_addr = self.vault_addr();
         entry.provider_meta = self.meta();
         entry.stale = self.stale();
         entry
@@ -1646,6 +1747,84 @@ impl SshConfigFile {
                 }
             }
         }
+    }
+
+    /// Set vault-ssh role on a host block by alias.
+    pub fn set_host_vault_ssh(&mut self, alias: &str, role: &str) {
+        for element in &mut self.elements {
+            if let ConfigElement::HostBlock(block) = element {
+                if block.host_pattern == alias {
+                    block.set_vault_ssh(role);
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Set or remove the Vault SSH endpoint comment on a host block by alias.
+    /// Empty `url` removes the comment.
+    ///
+    /// Mirrors the safety invariants of `set_host_certificate_file`: wildcard
+    /// aliases are refused to avoid accidentally applying a vault address to
+    /// every host resolved through a pattern, and Match blocks are not
+    /// touched (they live as inert `GlobalLines`). Returns `true` on a
+    /// successful mutation, `false` when the alias is invalid or the block
+    /// is not found.
+    ///
+    /// Callers that run asynchronously (e.g. form submit handlers that
+    /// resolve the alias before writing) MUST check the return value so a
+    /// silent config mutation failure is surfaced instead of pretending the
+    /// vault address was wired up.
+    #[must_use = "check the return value to detect silently-skipped mutations (renamed or deleted hosts)"]
+    pub fn set_host_vault_addr(&mut self, alias: &str, url: &str) -> bool {
+        // Same guard as `set_host_certificate_file`: refuse empty aliases
+        // and any SSH pattern shape. `is_host_pattern` already covers
+        // wildcards, negation and whitespace-separated multi-host forms.
+        if alias.is_empty() || is_host_pattern(alias) {
+            return false;
+        }
+        for element in &mut self.elements {
+            if let ConfigElement::HostBlock(block) = element {
+                if block.host_pattern == alias {
+                    block.set_vault_addr(url);
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Set or remove the CertificateFile directive on a host block by alias.
+    /// Empty path removes the directive.
+    /// Set the `CertificateFile` directive on the host block that matches
+    /// `alias` exactly. Returns `true` if a matching block was found and
+    /// updated, `false` if no top-level `HostBlock` matched (alias was
+    /// renamed, deleted or lives only inside an `Include`d file).
+    ///
+    /// Callers that run asynchronously (e.g. the Vault SSH bulk-sign worker)
+    /// MUST check the return value so a silent config mutation failure is
+    /// surfaced to the user instead of pretending the cert was wired up.
+    #[must_use = "check the return value to detect silently-skipped mutations (renamed or deleted hosts)"]
+    pub fn set_host_certificate_file(&mut self, alias: &str, path: &str) -> bool {
+        // Defense in depth: refuse to mutate a host block when the requested
+        // alias is empty or matches any SSH pattern shape (`*`, `?`, `[`,
+        // leading `!`, or whitespace-separated multi-host form like
+        // `Host web-* db-*`). Writing `CertificateFile` onto a pattern
+        // block is almost never what a user intends and would affect every
+        // host that resolves through that pattern. Reusing `is_host_pattern`
+        // keeps this check in sync with the form-level pattern detection.
+        if alias.is_empty() || is_host_pattern(alias) {
+            return false;
+        }
+        for element in &mut self.elements {
+            if let ConfigElement::HostBlock(block) = element {
+                if block.host_pattern == alias {
+                    Self::upsert_directive(block, "CertificateFile", path);
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Set provider metadata on a host block by alias.
@@ -4830,5 +5009,391 @@ Host complex
         let reparsed = parse_str(&output);
         assert!(reparsed.host_entries().is_empty());
         assert_eq!(reparsed.pattern_entries().len(), 1);
+    }
+
+    #[test]
+    fn vault_ssh_parsed_from_comment() {
+        let config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n  # purple:vault-ssh ssh/sign/engineer\n",
+        );
+        let entries = config.host_entries();
+        assert_eq!(entries[0].vault_ssh.as_deref(), Some("ssh/sign/engineer"));
+    }
+
+    // ---- vault_addr parse + set tests ----
+
+    #[test]
+    fn vault_addr_parsed_from_comment() {
+        let config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n  # purple:vault-addr http://127.0.0.1:8200\n",
+        );
+        let entries = config.host_entries();
+        assert_eq!(
+            entries[0].vault_addr.as_deref(),
+            Some("http://127.0.0.1:8200")
+        );
+    }
+
+    #[test]
+    fn vault_addr_none_when_absent() {
+        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
+        assert!(config.host_entries()[0].vault_addr.is_none());
+    }
+
+    #[test]
+    fn vault_addr_empty_comment_ignored() {
+        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:vault-addr \n");
+        assert!(config.host_entries()[0].vault_addr.is_none());
+    }
+
+    #[test]
+    fn vault_addr_with_whitespace_value_rejected() {
+        let config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n  # purple:vault-addr http://a b:8200\n",
+        );
+        // The parser splits on the single space after `vault-addr`, so a
+        // value that itself contains whitespace gets truncated at the first
+        // space. `is_valid_vault_addr` additionally rejects any remaining
+        // whitespace, so such a value never makes it past parse.
+        assert!(
+            config.host_entries()[0]
+                .vault_addr
+                .as_deref()
+                .is_none_or(|v| !v.contains(' '))
+        );
+    }
+
+    #[test]
+    fn vault_addr_round_trip_preserved() {
+        let input = "Host myserver\n  HostName 10.0.0.1\n  # purple:vault-addr https://vault.example:8200\n";
+        let config = parse_str(input);
+        assert_eq!(config.serialize(), input);
+    }
+
+    #[test]
+    fn set_vault_addr_adds_comment() {
+        let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
+        assert!(config.set_host_vault_addr("myserver", "http://127.0.0.1:8200"));
+        assert_eq!(
+            first_block(&config).vault_addr(),
+            Some("http://127.0.0.1:8200".to_string())
+        );
+    }
+
+    #[test]
+    fn set_vault_addr_replaces_existing() {
+        let mut config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n  # purple:vault-addr http://old:8200\n",
+        );
+        assert!(config.set_host_vault_addr("myserver", "https://new:8200"));
+        assert_eq!(
+            first_block(&config).vault_addr(),
+            Some("https://new:8200".to_string())
+        );
+        assert_eq!(
+            config.serialize().matches("purple:vault-addr").count(),
+            1,
+            "Should have exactly one vault-addr comment after replace"
+        );
+    }
+
+    #[test]
+    fn set_vault_addr_empty_removes() {
+        let mut config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n  # purple:vault-addr http://127.0.0.1:8200\n",
+        );
+        assert!(config.set_host_vault_addr("myserver", ""));
+        assert!(first_block(&config).vault_addr().is_none());
+        assert!(!config.serialize().contains("vault-addr"));
+    }
+
+    #[test]
+    fn set_vault_addr_preserves_other_comments() {
+        let mut config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n  # purple:tags a,b\n  # purple:vault-ssh ssh/sign/engineer\n",
+        );
+        assert!(config.set_host_vault_addr("myserver", "http://127.0.0.1:8200"));
+        let entry = config.host_entries().into_iter().next().unwrap();
+        assert_eq!(entry.vault_ssh.as_deref(), Some("ssh/sign/engineer"));
+        assert_eq!(entry.tags, vec!["a".to_string(), "b".to_string()]);
+        assert_eq!(entry.vault_addr.as_deref(), Some("http://127.0.0.1:8200"));
+    }
+
+    #[test]
+    fn set_vault_addr_preserves_indent() {
+        let mut config = parse_str("Host myserver\n    HostName 10.0.0.1\n");
+        assert!(config.set_host_vault_addr("myserver", "http://127.0.0.1:8200"));
+        let serialized = config.serialize();
+        assert!(
+            serialized.contains("    # purple:vault-addr http://127.0.0.1:8200"),
+            "indent not preserved: {}",
+            serialized
+        );
+    }
+
+    #[test]
+    fn set_vault_addr_twice_replaces_not_appends() {
+        let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
+        assert!(config.set_host_vault_addr("myserver", "http://one:8200"));
+        assert!(config.set_host_vault_addr("myserver", "http://two:8200"));
+        let serialized = config.serialize();
+        assert_eq!(
+            serialized.matches("purple:vault-addr").count(),
+            1,
+            "Should have exactly one vault-addr comment"
+        );
+        assert!(serialized.contains("purple:vault-addr http://two:8200"));
+    }
+
+    #[test]
+    fn set_vault_addr_removes_duplicate_comments() {
+        let mut config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n  # purple:vault-addr http://a:8200\n  # purple:vault-addr http://b:8200\n",
+        );
+        assert!(config.set_host_vault_addr("myserver", "http://c:8200"));
+        assert_eq!(
+            config.serialize().matches("purple:vault-addr").count(),
+            1,
+            "duplicate comments must collapse on rewrite"
+        );
+        assert_eq!(
+            first_block(&config).vault_addr(),
+            Some("http://c:8200".to_string())
+        );
+    }
+
+    #[test]
+    fn set_host_vault_addr_returns_false_when_alias_missing() {
+        let mut config = parse_str("Host alpha\n  HostName 10.0.0.1\n");
+        assert!(!config.set_host_vault_addr("ghost", "http://127.0.0.1:8200"));
+        // Config unchanged
+        assert_eq!(config.serialize(), "Host alpha\n  HostName 10.0.0.1\n");
+    }
+
+    #[test]
+    fn set_host_vault_addr_refuses_wildcard_alias() {
+        let mut config = parse_str("Host *\n  HostName 10.0.0.1\n");
+        assert!(!config.set_host_vault_addr("*", "http://127.0.0.1:8200"));
+        assert!(!config.set_host_vault_addr("", "http://127.0.0.1:8200"));
+        assert!(!config.set_host_vault_addr("a?b", "http://127.0.0.1:8200"));
+        assert!(!config.set_host_vault_addr("a[bc]", "http://127.0.0.1:8200"));
+        assert!(!config.set_host_vault_addr("!a", "http://127.0.0.1:8200"));
+        // Multi-host patterns use whitespace separators. Refuse those too
+        // so a caller cannot accidentally target a multi-host block.
+        assert!(!config.set_host_vault_addr("web-* db-*", "http://127.0.0.1:8200"));
+        assert!(!config.set_host_vault_addr("a b", "http://127.0.0.1:8200"));
+        assert!(!config.set_host_vault_addr("a\tb", "http://127.0.0.1:8200"));
+    }
+
+    // ---- end vault_addr tests ----
+
+    #[test]
+    fn vault_ssh_none_when_absent() {
+        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
+        assert!(config.host_entries()[0].vault_ssh.is_none());
+    }
+
+    #[test]
+    fn vault_ssh_empty_comment_ignored() {
+        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:vault-ssh \n");
+        assert!(config.host_entries()[0].vault_ssh.is_none());
+    }
+
+    #[test]
+    fn vault_ssh_round_trip_preserved() {
+        let input = "Host myserver\n  HostName 10.0.0.1\n  # purple:vault-ssh ssh/sign/engineer\n";
+        let config = parse_str(input);
+        assert_eq!(config.serialize(), input);
+    }
+
+    #[test]
+    fn set_vault_ssh_adds_comment() {
+        let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
+        config.set_host_vault_ssh("myserver", "ssh/sign/engineer");
+        assert_eq!(
+            first_block(&config).vault_ssh(),
+            Some("ssh/sign/engineer".to_string())
+        );
+    }
+
+    #[test]
+    fn set_vault_ssh_replaces_existing() {
+        let mut config =
+            parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:vault-ssh ssh/sign/old\n");
+        config.set_host_vault_ssh("myserver", "ssh/sign/new");
+        assert_eq!(
+            first_block(&config).vault_ssh(),
+            Some("ssh/sign/new".to_string())
+        );
+        assert_eq!(
+            config.serialize().matches("purple:vault-ssh").count(),
+            1,
+            "Should have exactly one vault-ssh comment"
+        );
+    }
+
+    #[test]
+    fn set_vault_ssh_empty_removes() {
+        let mut config =
+            parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:vault-ssh ssh/sign/old\n");
+        config.set_host_vault_ssh("myserver", "");
+        assert!(first_block(&config).vault_ssh().is_none());
+        assert!(!config.serialize().contains("vault-ssh"));
+    }
+
+    #[test]
+    fn set_vault_ssh_preserves_other_comments() {
+        let mut config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n  # purple:tags prod\n",
+        );
+        config.set_host_vault_ssh("myserver", "ssh/sign/engineer");
+        let entry = first_block(&config).to_host_entry();
+        assert_eq!(entry.askpass, Some("keychain".to_string()));
+        assert!(entry.tags.contains(&"prod".to_string()));
+        assert_eq!(entry.vault_ssh.as_deref(), Some("ssh/sign/engineer"));
+    }
+
+    #[test]
+    fn set_vault_ssh_preserves_indent() {
+        let mut config = parse_str("Host myserver\n    HostName 10.0.0.1\n");
+        config.set_host_vault_ssh("myserver", "ssh/sign/engineer");
+        let raw = first_block(&config)
+            .directives
+            .iter()
+            .find(|d| d.raw_line.contains("purple:vault-ssh"))
+            .unwrap();
+        assert!(
+            raw.raw_line.starts_with("    "),
+            "Expected 4-space indent, got: {:?}",
+            raw.raw_line
+        );
+    }
+
+    #[test]
+    fn certificate_file_parsed_from_directive() {
+        let config =
+            parse_str("Host myserver\n  HostName 10.0.0.1\n  CertificateFile ~/.ssh/my-cert.pub\n");
+        let entries = config.host_entries();
+        assert_eq!(entries[0].certificate_file, "~/.ssh/my-cert.pub");
+    }
+
+    #[test]
+    fn certificate_file_empty_when_absent() {
+        let config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
+        let entries = config.host_entries();
+        assert!(entries[0].certificate_file.is_empty());
+    }
+
+    #[test]
+    fn set_host_certificate_file_adds_and_removes() {
+        let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
+        assert!(config.set_host_certificate_file("myserver", "~/.purple/certs/myserver-cert.pub"));
+        assert!(
+            config
+                .serialize()
+                .contains("CertificateFile ~/.purple/certs/myserver-cert.pub")
+        );
+        assert!(config.set_host_certificate_file("myserver", ""));
+        assert!(!config.serialize().contains("CertificateFile"));
+    }
+
+    #[test]
+    fn set_host_certificate_file_removes_when_empty() {
+        let mut config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n  CertificateFile ~/.purple/certs/myserver-cert.pub\n",
+        );
+        assert!(config.set_host_certificate_file("myserver", ""));
+        assert!(!config.serialize().contains("CertificateFile"));
+    }
+
+    #[test]
+    fn set_host_certificate_file_returns_false_when_alias_missing() {
+        let mut config = parse_str("Host alpha\n  HostName 10.0.0.1\n");
+        assert!(!config.set_host_certificate_file("ghost", "/tmp/cert.pub"));
+        // Config unchanged
+        assert_eq!(config.serialize(), "Host alpha\n  HostName 10.0.0.1\n");
+    }
+
+    #[test]
+    fn set_host_certificate_file_ignores_match_blocks() {
+        // Match blocks are stored as GlobalLines; a `CertificateFile` directive
+        // inside a Match block is never the target of set_host_certificate_file,
+        // even if the pattern would "match" the alias.
+        let input = "\
+Host alpha
+  HostName 10.0.0.1
+
+Match host alpha
+  CertificateFile /user/set/match-cert.pub
+";
+        let mut config = parse_str(input);
+        assert!(config.set_host_certificate_file("alpha", "/purple/managed.pub"));
+        let out = config.serialize();
+        // Top-level alpha block got the directive
+        assert!(
+            out.contains("Host alpha\n  HostName 10.0.0.1\n  CertificateFile /purple/managed.pub")
+        );
+        // Match block's own CertificateFile is untouched
+        assert!(out.contains("Match host alpha\n  CertificateFile /user/set/match-cert.pub"));
+    }
+
+    #[test]
+    fn set_vault_ssh_twice_replaces_not_appends() {
+        let mut config = parse_str("Host myserver\n  HostName 10.0.0.1\n");
+        config.set_host_vault_ssh("myserver", "ssh/sign/one");
+        config.set_host_vault_ssh("myserver", "ssh/sign/two");
+        let serialized = config.serialize();
+        assert_eq!(
+            serialized.matches("purple:vault-ssh").count(),
+            1,
+            "expected a single comment after two calls, got: {}",
+            serialized
+        );
+        assert!(serialized.contains("purple:vault-ssh ssh/sign/two"));
+    }
+
+    #[test]
+    fn vault_ssh_indentation_preserved_with_other_purple_comments() {
+        let input = "Host myserver\n    HostName 10.0.0.1\n    # purple:tags prod,web\n";
+        let mut config = parse_str(input);
+        config.set_host_vault_ssh("myserver", "ssh/sign/engineer");
+        let serialized = config.serialize();
+        assert!(
+            serialized.contains("    # purple:vault-ssh ssh/sign/engineer"),
+            "indent preserved: {}",
+            serialized
+        );
+        assert!(serialized.contains("    # purple:tags prod,web"));
+    }
+
+    #[test]
+    fn clear_vault_ssh_removes_comment_line() {
+        let mut config =
+            parse_str("Host myserver\n  HostName 10.0.0.1\n  # purple:vault-ssh ssh/sign/old\n");
+        config.set_host_vault_ssh("myserver", "");
+        let serialized = config.serialize();
+        assert!(
+            !serialized.contains("vault-ssh"),
+            "comment should be gone: {}",
+            serialized
+        );
+        assert!(first_block(&config).vault_ssh().is_none());
+    }
+
+    #[test]
+    fn set_vault_ssh_removes_duplicate_comments() {
+        let mut config = parse_str(
+            "Host myserver\n  HostName 10.0.0.1\n  # purple:vault-ssh ssh/sign/old1\n  # purple:vault-ssh ssh/sign/old2\n",
+        );
+        config.set_host_vault_ssh("myserver", "ssh/sign/new");
+        assert_eq!(
+            config.serialize().matches("purple:vault-ssh").count(),
+            1,
+            "Should have exactly one vault-ssh comment after set"
+        );
+        assert_eq!(
+            first_block(&config).vault_ssh(),
+            Some("ssh/sign/new".to_string())
+        );
     }
 }

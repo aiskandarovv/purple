@@ -8,3 +8,4 @@ pub mod providers;
 pub mod snippet;
 pub mod ssh_config;
 pub mod tunnel;
+pub mod vault_ssh;

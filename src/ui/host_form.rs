@@ -24,6 +24,12 @@ fn placeholder_for(field: FormField, is_pattern: bool) -> String {
         FormField::Port => "22".to_string(),
         FormField::IdentityFile => "Enter to pick a key".to_string(),
         FormField::ProxyJump => "Enter to pick a host".to_string(),
+        // SSH secrets engine role (signs SSH certificates). Distinct from
+        // Vault KV used in Password Source (vault:path/to/secret).
+        FormField::VaultSsh => "e.g. ssh-client-signer/sign/my-role".to_string(),
+        FormField::VaultAddr => {
+            "e.g. http://127.0.0.1:8200 (inherits from provider or env when empty)".to_string()
+        }
         FormField::Tags => "prod, staging, us-east".to_string(),
     }
 }
@@ -32,13 +38,19 @@ fn placeholder_for(field: FormField, is_pattern: bool) -> String {
 const REQUIRED_FIELDS: &[(FormField, bool)] =
     &[(FormField::Alias, true), (FormField::Hostname, true)];
 
-/// All fields in order: required first, then optional.
+/// All fields in order: required first, then optional. `VaultAddr` lives
+/// immediately after `VaultSsh` and is progressively disclosed at render
+/// time by filtering against `HostForm::visible_fields()` — the constant
+/// keeps the full schema so dirty-check, baselines and non-render callers
+/// see a consistent ordering.
 const ALL_FIELDS: &[(FormField, bool)] = &[
     (FormField::Alias, true),
     (FormField::Hostname, true),
     (FormField::User, false),
     (FormField::Port, false),
     (FormField::IdentityFile, false),
+    (FormField::VaultSsh, false),
+    (FormField::VaultAddr, false),
     (FormField::ProxyJump, false),
     (FormField::AskPass, false),
     (FormField::Tags, false),
@@ -47,14 +59,26 @@ const ALL_FIELDS: &[(FormField, bool)] = &[
 pub fn render(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
 
-    // Determine visible fields based on progressive disclosure state
+    // Determine visible fields based on progressive disclosure state.
+    // The Vault SSH Role override field follows the same expand/collapse rule
+    // as every other optional field: hidden in collapsed state, shown in
+    // expanded state. The Vault SSH Address field has an additional gate:
+    // it is only rendered when a Vault SSH Role is set on this form (the
+    // address is meaningless without a role, and hiding it keeps the form
+    // compact for the 99% of hosts that do not use Vault SSH).
     let expanded = app.form.expanded;
-    // Render dividers and content for visible fields (static slices, no per-frame allocation)
-    let visible_fields: &[(FormField, bool)] = if expanded {
+    let role_set = !app.form.vault_ssh.trim().is_empty();
+    let base: &[(FormField, bool)] = if expanded {
         ALL_FIELDS
     } else {
         REQUIRED_FIELDS
     };
+    let filtered: Vec<(FormField, bool)> = base
+        .iter()
+        .copied()
+        .filter(|(f, _)| *f != FormField::VaultAddr || role_set)
+        .collect();
+    let visible_fields: &[(FormField, bool)] = &filtered;
     // Block: top(1) + fields * 2 (divider + content) + bottom(1)
     let block_height = 2 + visible_fields.len() as u16 * 2;
     let total_height = block_height + 1; // + footer
@@ -99,6 +123,49 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let picker_open =
         app.ui.show_key_picker || app.ui.show_proxyjump_picker || app.ui.show_password_picker;
 
+    // Compute provider vault role hint for the VaultSsh field placeholder
+    let vault_provider_hint: Option<(String, String)> =
+        if let Screen::EditHost { alias } = &app.screen {
+            app.hosts
+                .iter()
+                .find(|h| h.alias == *alias)
+                .and_then(|h| h.provider.as_ref())
+                .and_then(|prov| {
+                    app.provider_config.section(prov).and_then(|s| {
+                        if s.vault_role.is_empty() {
+                            None
+                        } else {
+                            Some((s.vault_role.clone(), prov.clone()))
+                        }
+                    })
+                })
+        } else {
+            None
+        };
+
+    // Symmetric hint for the VaultAddr field: show the provider default
+    // address (if any) when the host-level field is empty, so the user
+    // knows a provider default is already in play without having to save
+    // and re-open the detail panel to find out.
+    let vault_addr_provider_hint: Option<(String, String)> =
+        if let Screen::EditHost { alias } = &app.screen {
+            app.hosts
+                .iter()
+                .find(|h| h.alias == *alias)
+                .and_then(|h| h.provider.as_ref())
+                .and_then(|prov| {
+                    app.provider_config.section(prov).and_then(|s| {
+                        if s.vault_addr.is_empty() {
+                            None
+                        } else {
+                            Some((s.vault_addr.clone(), prov.clone()))
+                        }
+                    })
+                })
+        } else {
+            None
+        };
+
     let mut y_offset: u16 = 0;
     for &(field, field_required) in visible_fields.iter() {
         let divider_y = inner.y + y_offset;
@@ -136,7 +203,15 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         );
 
         let content_area = Rect::new(inner.x + 1, content_y, inner.width.saturating_sub(1), 1);
-        render_field_content(frame, content_area, field, &app.form, picker_open);
+        render_field_content(
+            frame,
+            content_area,
+            field,
+            &app.form,
+            picker_open,
+            vault_provider_hint.as_ref(),
+            vault_addr_provider_hint.as_ref(),
+        );
     }
 
     // Footer below the block
@@ -442,12 +517,15 @@ fn render_divider(
 }
 
 /// Render a single field's content (value or placeholder) and set cursor.
+#[allow(clippy::too_many_arguments)]
 fn render_field_content(
     frame: &mut Frame,
     area: Rect,
     field: FormField,
     form: &crate::app::HostForm,
     picker_open: bool,
+    vault_provider_hint: Option<&(String, String)>,
+    vault_addr_provider_hint: Option<&(String, String)>,
 ) {
     let is_focused = form.focused_field == field;
 
@@ -459,6 +537,8 @@ fn render_field_content(
         FormField::IdentityFile => &form.identity_file,
         FormField::ProxyJump => &form.proxy_jump,
         FormField::AskPass => &form.askpass,
+        FormField::VaultSsh => &form.vault_ssh,
+        FormField::VaultAddr => &form.vault_addr,
         FormField::Tags => &form.tags,
     };
 
@@ -507,6 +587,16 @@ fn render_field_content(
                 ])
             }
         }
+    } else if let (true, FormField::VaultSsh, Some((role, prov))) =
+        (value.is_empty(), field, vault_provider_hint)
+    {
+        let hint = format!("inherits {} from {}", role, prov);
+        Line::from(Span::styled(hint, theme::muted()))
+    } else if let (true, FormField::VaultAddr, Some((addr, prov))) =
+        (value.is_empty(), field, vault_addr_provider_hint)
+    {
+        let hint = format!("inherits {} from {}", addr, prov);
+        Line::from(Span::styled(hint, theme::muted()))
     } else if value.is_empty() && is_focused && !is_picker {
         let ph = placeholder_for(field, form.is_pattern);
         Line::from(Span::styled(ph, theme::muted()))

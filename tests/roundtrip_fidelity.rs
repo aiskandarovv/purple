@@ -324,6 +324,57 @@ Host myserver
 }
 
 #[test]
+fn vault_ssh_comment_roundtrip() {
+    let input = "\
+Host myserver
+  HostName 10.0.0.1
+  User admin
+  # purple:vault-ssh ssh-client-signer/sign/engineer
+";
+    let config = parse_str(input);
+    let serialized = config.serialize();
+    assert_eq_visible(input, &serialized);
+    // Re-parse and verify the comment survived a second round.
+    let config2 = parse_str(&serialized);
+    assert_eq_visible(input, &config2.serialize());
+    assert!(serialized.contains("# purple:vault-ssh ssh-client-signer/sign/engineer"));
+}
+
+#[test]
+fn update_host_preserves_vault_ssh_comment() {
+    // Regression: editing an unrelated field (Hostname) on a host that has a
+    // # purple:vault-ssh comment must preserve the comment. This catches the
+    // case where update_host rebuilds the block without re-emitting the vault
+    // role annotation.
+    let input = "\
+Host myserver
+  HostName 10.0.0.1
+  User admin
+  # purple:vault-ssh ssh-client-signer/sign/engineer
+";
+    let mut config = parse_str(input);
+    let mut updated = config
+        .host_entries()
+        .iter()
+        .find(|h| h.alias == "myserver")
+        .cloned()
+        .expect("host exists");
+    updated.hostname = "10.0.0.99".to_string();
+    config.update_host("myserver", &updated);
+    let serialized = config.serialize();
+    assert!(
+        serialized.contains("HostName 10.0.0.99"),
+        "updated hostname missing: {}",
+        serialized
+    );
+    assert!(
+        serialized.contains("# purple:vault-ssh ssh-client-signer/sign/engineer"),
+        "vault-ssh comment lost after update_host: {}",
+        serialized
+    );
+}
+
+#[test]
 fn roundtrip_very_long_directive_value() {
     let long_value = "a".repeat(500);
     let input = format!("Host myserver\n  HostName {}\n", long_value);
@@ -3895,6 +3946,8 @@ fn test_section(provider: &str, prefix: &str) -> ProviderSection {
         regions: String::new(),
         project: String::new(),
         compartment: String::new(),
+        vault_role: String::new(),
+        vault_addr: String::new(),
     }
 }
 
@@ -12375,4 +12428,12 @@ fn update_host_when_value_has_equals_in_it() {
         visible(&output)
     );
     assert!(output.contains("HostName 10.0.0.2"));
+}
+
+#[test]
+fn roundtrip_preserves_all_purple_comments_together() {
+    let content = "Host myserver\n  HostName 10.0.0.1\n  # purple:tags prod,web\n  # purple:provider_tags env:prod\n  # purple:vault-ssh ssh-client-signer/sign/engineer\n";
+    let config = parse_str(content);
+    let output = config.serialize();
+    assert_eq_visible(content, &output);
 }

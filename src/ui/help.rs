@@ -17,7 +17,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let use_two_cols = is_host_list && frame.area().width >= 96;
 
     let (col1, col2) = if is_host_list {
-        host_list_columns()
+        host_list_columns(app)
     } else {
         let lines = match return_screen {
             Screen::FileBrowser { .. } => file_browser_lines(),
@@ -180,7 +180,7 @@ fn blank() -> Line<'static> {
     Line::from("")
 }
 
-fn host_list_columns() -> (Vec<Line<'static>>, Vec<Line<'static>>) {
+fn host_list_columns(_app: &App) -> (Vec<Line<'static>>, Vec<Line<'static>>) {
     // Both columns are aligned: section headers at matching heights.
     // Each section pair has matching blank/header lines to stay in sync.
     let mut col1 = vec![blank()];
@@ -261,6 +261,12 @@ fn host_list_columns() -> (Vec<Line<'static>>, Vec<Line<'static>>) {
     // Row 4: FORMS / continued TOOLS + quit
     col1.extend(section_header("FORMS"));
     col2.push(help_line("S", "providers"));
+
+    // Always show V so the Vault SSH feature is discoverable. When no role is
+    // configured yet, the keybinding still appears with the same label; the
+    // status message produced by the handler explains where to configure it.
+    col1.push(blank());
+    col2.push(help_line("V", "vault sign"));
 
     col1.push(help_line("Tab", "next field"));
     col2.push(help_line("I", "import known_hosts"));
@@ -400,9 +406,19 @@ mod tests {
     use ratatui::layout::Rect;
     use ratatui::style::Modifier;
 
+    fn empty_app() -> App {
+        let config = crate::ssh_config::model::SshConfigFile {
+            elements: Vec::new(),
+            path: std::path::PathBuf::from("/tmp/purple_help_test"),
+            crlf: false,
+            bom: false,
+        };
+        App::new(config)
+    }
+
     #[test]
     fn host_list_produces_two_column_groups() {
-        let (col1, col2) = host_list_columns();
+        let (col1, col2) = host_list_columns(&empty_app());
         assert!(!col1.is_empty(), "column 1 should have content");
         assert!(!col2.is_empty(), "column 2 should have content");
     }
@@ -552,7 +568,7 @@ mod tests {
 
     #[test]
     fn host_list_col2_contains_all_tool_shortcuts() {
-        let (col1, col2) = host_list_columns();
+        let (col1, col2) = host_list_columns(&empty_app());
         let all_text: String = col1
             .iter()
             .chain(col2.iter())
@@ -575,7 +591,7 @@ mod tests {
 
     #[test]
     fn host_list_col1_contains_navigate_view_forms() {
-        let (col1, _) = host_list_columns();
+        let (col1, _) = host_list_columns(&empty_app());
         let text: String = col1.iter().map(|l| l.to_string()).collect();
         for desc in &[
             "up / down",

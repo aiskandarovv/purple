@@ -24,6 +24,7 @@ mod tui;
 mod tunnel;
 mod ui;
 mod update;
+mod vault_ssh;
 
 use std::path::{Path, PathBuf};
 
@@ -146,6 +147,41 @@ enum Commands {
     Theme {
         #[command(subcommand)]
         command: ThemeCommands,
+    },
+    /// HashiCorp Vault SSH secrets engine operations (signed SSH certificates)
+    Vault {
+        #[command(subcommand)]
+        command: VaultCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum VaultCommands {
+    /// Sign an SSH certificate for a host (or --all) via the Vault SSH secrets engine
+    #[command(
+        long_about = "Sign one or more SSH certificates via the HashiCorp Vault SSH secrets engine.\n\n\
+        Prerequisites:\n\
+        - The `vault` CLI is installed and authenticated (run `vault login` or set VAULT_TOKEN)\n\
+        - VAULT_ADDR points at your Vault server\n\
+        - A role is configured on the host (Vault SSH role field in the host form) or\n  \
+          on its provider (provider-level vault_role default)\n\
+        - The SSH secrets engine is enabled on Vault and your token has `update` capability\n  \
+          on the role path\n\n\
+        Signed certificates are cached under ~/.purple/certs/<alias>-cert.pub and\n\
+        `CertificateFile` is wired into the SSH config automatically.\n\n\
+        Distinct from the Vault KV secrets engine used as a password source (`vault:`\n\
+        askpass prefix); see `purple password` for that."
+    )]
+    Sign {
+        /// Host alias to sign (omit for --all)
+        alias: Option<String>,
+        /// Sign all hosts with a Vault SSH role configured
+        #[arg(long)]
+        all: bool,
+        /// Override VAULT_ADDR for this invocation only.
+        /// Highest precedence: flag > per-host comment > provider default > shell env.
+        #[arg(long, value_name = "URL")]
+        vault_addr: Option<String>,
     },
 }
 
@@ -468,6 +504,167 @@ fn main() -> Result<()> {
         Some(Commands::Snippet { command }) => {
             return handle_snippet_command(config, command, &config_path);
         }
+        Some(Commands::Vault {
+            command:
+                VaultCommands::Sign {
+                    alias,
+                    all,
+                    vault_addr: cli_vault_addr,
+                },
+        }) => {
+            if let Some(ref addr) = cli_vault_addr {
+                if !vault_ssh::is_valid_vault_addr(addr) {
+                    anyhow::bail!(
+                        "Invalid --vault-addr value. Must be non-empty, no whitespace or control chars."
+                    );
+                }
+            }
+            let provider_config = providers::config::ProviderConfig::load();
+            let entries = config.host_entries();
+
+            if all {
+                let mut signed = 0u32;
+                let mut failed = 0u32;
+                let mut skipped = 0u32;
+
+                for entry in &entries {
+                    let role = match vault_ssh::resolve_vault_role(
+                        entry.vault_ssh.as_deref(),
+                        entry.provider.as_deref(),
+                        &provider_config,
+                    ) {
+                        Some(r) => r,
+                        None => {
+                            skipped += 1;
+                            continue;
+                        }
+                    };
+
+                    let pubkey = match vault_ssh::resolve_pubkey_path(&entry.identity_file) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            println!("Skipping {}: {}", entry.alias, e);
+                            failed += 1;
+                            continue;
+                        }
+                    };
+                    let cert_path =
+                        vault_ssh::resolve_cert_path(&entry.alias, &entry.certificate_file)?;
+                    let status = vault_ssh::check_cert_validity(&cert_path);
+
+                    if !vault_ssh::needs_renewal(&status) {
+                        skipped += 1;
+                        continue;
+                    }
+
+                    // Flag beats per-host beats provider default.
+                    let resolved_addr = cli_vault_addr.clone().or_else(|| {
+                        vault_ssh::resolve_vault_addr(
+                            entry.vault_addr.as_deref(),
+                            entry.provider.as_deref(),
+                            &provider_config,
+                        )
+                    });
+                    print!("Signing {}... ", entry.alias);
+                    match vault_ssh::sign_certificate(
+                        &role,
+                        &pubkey,
+                        &entry.alias,
+                        resolved_addr.as_deref(),
+                    ) {
+                        Ok(result) => {
+                            println!("\u{2713}");
+                            // Honor the same invariant as the TUI paths: never
+                            // overwrite a user-set CertificateFile.
+                            if should_write_certificate_file(&entry.certificate_file) {
+                                let updated = config.set_host_certificate_file(
+                                    &entry.alias,
+                                    &result.cert_path.to_string_lossy(),
+                                );
+                                if !updated {
+                                    eprintln!(
+                                        "  warning: {} no longer in ssh config; CertificateFile not written (cert saved on disk)",
+                                        entry.alias
+                                    );
+                                }
+                            }
+                            signed += 1;
+                        }
+                        Err(e) => {
+                            println!("failed: {}", e);
+                            failed += 1;
+                        }
+                    }
+                }
+                if signed > 0 {
+                    if let Err(e) = config.write() {
+                        eprintln!("Warning: Failed to update SSH config: {}", e);
+                    }
+                }
+                println!(
+                    "\nSigned: {}, failed: {}, skipped (valid): {}",
+                    signed, failed, skipped
+                );
+                if failed > 0 {
+                    std::process::exit(1);
+                }
+            } else if let Some(alias) = alias {
+                let entry = entries
+                    .iter()
+                    .find(|h| h.alias == alias)
+                    .with_context(|| format!("Host '{}' not found", alias))?;
+
+                let role = vault_ssh::resolve_vault_role(
+                    entry.vault_ssh.as_deref(),
+                    entry.provider.as_deref(),
+                    &provider_config,
+                )
+                .with_context(|| {
+                    format!(
+                        "No Vault SSH role configured for '{}'. Set it in the host form (Vault SSH Role field) or in the provider config (vault_role).",
+                        alias
+                    )
+                })?;
+
+                let pubkey = vault_ssh::resolve_pubkey_path(&entry.identity_file)?;
+                let resolved_addr = cli_vault_addr.clone().or_else(|| {
+                    vault_ssh::resolve_vault_addr(
+                        entry.vault_addr.as_deref(),
+                        entry.provider.as_deref(),
+                        &provider_config,
+                    )
+                });
+                let result =
+                    vault_ssh::sign_certificate(&role, &pubkey, &alias, resolved_addr.as_deref())?;
+                // Honor the same invariant as the TUI paths: never overwrite a
+                // user-set CertificateFile. Only write the directive (and the
+                // SSH config) when the host has none yet.
+                if should_write_certificate_file(&entry.certificate_file) {
+                    let updated = config
+                        .set_host_certificate_file(&alias, &result.cert_path.to_string_lossy());
+                    if !updated {
+                        // Host disappeared between the `entries` snapshot and
+                        // the config mutation. In the single-host CLI path
+                        // both reads happen back-to-back in the same process,
+                        // so this is effectively unreachable — but surface it
+                        // loudly if the invariant ever breaks instead of
+                        // silently writing a cert nobody references.
+                        anyhow::bail!(
+                            "Host '{}' disappeared from ssh config before CertificateFile could be written. Cert saved to {}.",
+                            alias,
+                            result.cert_path.display()
+                        );
+                    }
+                    config
+                        .write()
+                        .with_context(|| "Failed to update SSH config with CertificateFile")?;
+                }
+                println!("Certificate signed: {}", result.cert_path.display());
+            } else {
+                anyhow::bail!("Provide a host alias or use --all");
+            }
+            return Ok(());
+        }
         Some(Commands::Provider { .. })
         | Some(Commands::Update)
         | Some(Commands::Password { .. })
@@ -478,10 +675,18 @@ fn main() -> Result<()> {
 
     // Direct connect mode (--connect)
     if let Some(alias) = cli.connect {
-        let askpass = config
-            .host_entries()
-            .iter()
-            .find(|h| h.alias == alias)
+        let provider_config = providers::config::ProviderConfig::load();
+        let entries = config.host_entries();
+        let host_entry = entries.iter().find(|h| h.alias == alias).cloned();
+        if let Some(ref host) = host_entry {
+            if let Some((msg, _is_error)) =
+                ensure_vault_ssh_if_needed(&alias, host, &provider_config, &mut config)
+            {
+                eprintln!("{}", msg);
+            }
+        }
+        let askpass = host_entry
+            .as_ref()
             .and_then(|h| h.askpass.clone())
             .or_else(preferences::load_askpass_default);
         let bw_session = ensure_bw_session(None, askpass.as_deref());
@@ -526,8 +731,18 @@ fn main() -> Result<()> {
 
     // Positional argument: exact match → connect, otherwise → TUI with filter
     if let Some(ref alias) = cli.alias {
-        let entries = config.host_entries();
-        if let Some(host) = entries.iter().find(|h| h.alias == *alias) {
+        let host_opt = config
+            .host_entries()
+            .iter()
+            .find(|h| h.alias == *alias)
+            .cloned();
+        if let Some(host) = host_opt {
+            let provider_config = providers::config::ProviderConfig::load();
+            if let Some((msg, _is_error)) =
+                ensure_vault_ssh_if_needed(&host.alias, &host, &provider_config, &mut config)
+            {
+                eprintln!("{}", msg);
+            }
             let alias = host.alias.clone();
             let askpass = host
                 .askpass
@@ -613,6 +828,67 @@ fn apply_saved_sort(app: &mut App) {
 /// Build a rolling sync summary from completed providers.
 /// Format a sync diff summary like "(+3 ~1 -2)" from add/update/stale counts.
 /// Returns empty string when all counts are zero.
+/// Build the status-bar summary shown after a bulk Vault SSH signing run
+/// completes. When `failed > 0` and `first_error` is present, the scrubbed
+/// error is appended so the user sees the actual reason (missing role,
+/// permission denied, connection refused, etc.) instead of a bare
+/// "1 failed" count.
+/// Replace the spinner frame prefix in a status text. Returns None if the
+/// text does not start with a known spinner frame.
+fn replace_spinner_frame(text: &str, new_frame: &str) -> Option<String> {
+    let starts_with_spinner = crate::animation::SPINNER_FRAMES
+        .iter()
+        .any(|f| text.starts_with(f));
+    if !starts_with_spinner {
+        return None;
+    }
+    text.split_once(' ')
+        .map(|(_, rest)| format!("{} {}", new_frame, rest))
+}
+
+fn format_vault_sign_summary(
+    signed: u32,
+    failed: u32,
+    skipped: u32,
+    first_error: Option<&str>,
+) -> String {
+    let total = signed + failed + skipped;
+    let cert_word = if total == 1 {
+        "certificate"
+    } else {
+        "certificates"
+    };
+    if failed > 0 {
+        if let Some(err) = first_error {
+            if total == 1 {
+                // Single host: just show the error, no stats prefix
+                return err.to_string();
+            }
+            format!(
+                "Signed {} of {} {}. {} failed: {}",
+                signed, total, cert_word, failed, err
+            )
+        } else {
+            format!(
+                "Signed {} of {} {}. {} failed",
+                signed, total, cert_word, failed
+            )
+        }
+    } else if skipped > 0 && signed == 0 {
+        format!(
+            "All {} {} already valid. Nothing to sign.",
+            total, cert_word
+        )
+    } else if skipped > 0 {
+        format!(
+            "Signed {} of {} {}. {} already valid.",
+            signed, total, cert_word, skipped
+        )
+    } else {
+        format!("Signed {} of {} {}.", signed, total, cert_word)
+    }
+}
+
 fn format_sync_diff(added: usize, updated: usize, stale: usize) -> String {
     let diff_parts: Vec<String> = [(added, "+"), (updated, "~"), (stale, "-")]
         .iter()
@@ -632,9 +908,9 @@ fn set_sync_summary(app: &mut App) {
     let still_syncing = !app.syncing_providers.is_empty();
     let names = app.sync_done.join(", ");
     if still_syncing {
-        app.set_status(format!("Synced: {}...", names), app.sync_had_errors);
+        app.set_background_status(format!("Synced: {}...", names), app.sync_had_errors);
     } else {
-        app.set_status(format!("Synced: {}", names), app.sync_had_errors);
+        app.set_background_status(format!("Synced: {}", names), app.sync_had_errors);
         app.sync_done.clear();
         app.sync_had_errors = false;
         app::SyncRecord::save_all(&app.sync_history);
@@ -747,9 +1023,10 @@ fn run_tui(mut app: App) -> Result<()> {
         // During animation, use a short timeout for smooth frames (~60fps).
         // During ping checking, use 80ms timeout for spinner.
         // Otherwise, block until the next event arrives.
+        let vault_signing = app.vault_signing_cancel.is_some();
         let event = if anim.is_animating(&app) {
             events.next_timeout(std::time::Duration::from_millis(16))?
-        } else if anim.has_checking_hosts(&app) {
+        } else if anim.has_checking_hosts(&app) || vault_signing {
             events.next_timeout(std::time::Duration::from_millis(80))?
         } else {
             Some(events.next()?)
@@ -761,8 +1038,22 @@ fn run_tui(mut app: App) -> Result<()> {
             }
             Some(AppEvent::Tick) | None => {
                 app.tick_status();
-                if anim.has_checking_hosts(&app) {
+                if anim.has_checking_hosts(&app) || vault_signing {
                     anim.tick_spinner();
+                }
+                // Update the spinner character in the signing status text
+                // so the spinner animates between VaultSignProgress events.
+                if vault_signing {
+                    if let Some(ref mut status) = app.status {
+                        if status.sticky && !status.is_error {
+                            let frame = crate::animation::SPINNER_FRAMES[anim.spinner_tick
+                                as usize
+                                % crate::animation::SPINNER_FRAMES.len()];
+                            if let Some(updated) = replace_spinner_frame(&status.text, frame) {
+                                status.text = updated;
+                            }
+                        }
+                    }
                 }
                 // Expire ping results after 60s TTL
                 if let Some(checked_at) = app.ping_checked_at {
@@ -773,7 +1064,7 @@ fn run_tui(mut app: App) -> Result<()> {
                         if app.filter_down_only {
                             app.cancel_search();
                         }
-                        app.set_status("Ping expired. Press P to refresh.", false);
+                        app.set_background_status("Ping expired. Press P to refresh.", false);
                     }
                 }
                 // Throttle config file stat() to every 4 seconds
@@ -784,7 +1075,7 @@ fn run_tui(mut app: App) -> Result<()> {
                 // Poll active tunnels for exit
                 let exited = app.poll_tunnels();
                 for (_alias, msg, is_error) in exited {
-                    app.set_status(msg, is_error);
+                    app.set_background_status(msg, is_error);
                 }
             }
             Some(AppEvent::PingResult {
@@ -827,7 +1118,7 @@ fn run_tui(mut app: App) -> Result<()> {
                 // Late progress events (arriving after SyncComplete) are discarded.
                 if app.syncing_providers.contains_key(&provider) && app.sync_done.is_empty() {
                     let name = providers::provider_display_name(&provider);
-                    app.set_status(format!("{}: {}", name, message), false);
+                    app.set_background_status(format!("{}: {}", name, message), false);
                 }
             }
             Some(AppEvent::SyncComplete { provider, hosts }) => {
@@ -1039,7 +1330,7 @@ fn run_tui(mut app: App) -> Result<()> {
                     false
                 };
                 if matched && success {
-                    app.set_status("Transfer complete.", false);
+                    app.set_background_status("Transfer complete.", false);
                     // Rebuild display list so frecency sort and LAST column reflect the transfer
                     app.apply_sort();
                 }
@@ -1194,7 +1485,10 @@ fn run_tui(mut app: App) -> Result<()> {
                     None
                 };
                 if let Some((refresh_alias, askpass, cached_runtime)) = should_refresh {
-                    app.set_status(format!("Container {} complete.", action.as_str()), false);
+                    app.set_background_status(
+                        format!("Container {} complete.", action.as_str()),
+                        false,
+                    );
                     let has_tunnel = app.active_tunnels.contains_key(&refresh_alias);
                     let config_path = app.reload.config_path.clone();
                     let bw = app.bw_session.clone();
@@ -1216,16 +1510,346 @@ fn run_tui(mut app: App) -> Result<()> {
                 }
                 askpass::cleanup_marker(&alias);
             }
+            Some(AppEvent::VaultSignResult {
+                alias,
+                certificate_file: existing_cert_file,
+                success,
+                message,
+            }) => {
+                if success {
+                    // The CertificateFile snapshot is carried in the event so
+                    // we never re-look up the host (which would be O(n) and
+                    // racy under concurrent renames). `sign_certificate`
+                    // always writes to purple's default path; if the host
+                    // already has its own CertificateFile we leave the SSH
+                    // config alone and cache validity against the configured
+                    // path instead.
+                    let mut host_missing = false;
+                    if should_write_certificate_file(&existing_cert_file) {
+                        if let Ok(cert_path) = vault_ssh::cert_path_for(&alias) {
+                            let updated = app
+                                .config
+                                .set_host_certificate_file(&alias, &cert_path.to_string_lossy());
+                            if !updated {
+                                // Alias disappeared between scheduling the
+                                // sign and processing the result (renamed or
+                                // deleted from another code path). The cert
+                                // is safely on disk; warn the user so they
+                                // know the ssh config was NOT wired up.
+                                host_missing = true;
+                            }
+                        }
+                    }
+                    // Single consolidated cache refresh path. `refresh_cert_cache`
+                    // resolves the cert file (honoring any custom CertificateFile
+                    // we just wrote) and records mtime for external-change
+                    // detection. Replaces the two manual `check_cert_validity`
+                    // inserts that used to live in both branches above.
+                    app.refresh_cert_cache(&alias);
+                    if host_missing {
+                        app.set_status(
+                            format!(
+                                "Vault SSH cert saved for {} but host no longer in config (renamed or deleted). CertificateFile NOT written.",
+                                alias
+                            ),
+                            true,
+                        );
+                    } else {
+                        app.set_status(format!("Signed Vault SSH cert for {}", alias), false);
+                    }
+                } else {
+                    app.set_status(
+                        format!("Vault SSH: failed to sign {}: {}", alias, message),
+                        true,
+                    );
+                }
+            }
+            Some(AppEvent::VaultSignProgress { alias, done, total }) => {
+                // Truncate long aliases so the status line fits even on
+                // narrow terminals; the full alias is recoverable from the
+                // host list.
+                const ALIAS_BUDGET: usize = 40;
+                let display_alias: String = if alias.chars().count() > ALIAS_BUDGET {
+                    let cut: String = alias.chars().take(ALIAS_BUDGET - 1).collect();
+                    format!("{}\u{2026}", cut)
+                } else {
+                    alias.clone()
+                };
+                let spinner = crate::animation::SPINNER_FRAMES
+                    [anim.spinner_tick as usize % crate::animation::SPINNER_FRAMES.len()];
+                app.set_sticky_status(
+                    format!(
+                        "{} Signing {}/{}: {} (V to cancel)",
+                        spinner, done, total, display_alias
+                    ),
+                    false,
+                );
+            }
+            Some(AppEvent::VaultSignAllDone {
+                signed,
+                failed,
+                skipped,
+                cancelled,
+                aborted_message,
+                first_error,
+            }) => {
+                app.vault_signing_cancel = None;
+                // Join the background thread now that it has finished.
+                if let Some(handle) = app.vault_sign_thread.take() {
+                    let _ = handle.join();
+                }
+                if let Some(msg) = aborted_message {
+                    app.set_sticky_status(msg, true);
+                    continue;
+                }
+                if cancelled {
+                    let mut msg = format!(
+                        "Vault SSH signing cancelled ({} signed, {} failed)",
+                        signed, failed
+                    );
+                    if let Some(err) = first_error.as_ref() {
+                        msg.push_str(": ");
+                        msg.push_str(err);
+                    }
+                    if failed > 0 {
+                        app.set_sticky_status(msg, true);
+                    } else {
+                        app.set_status(msg, false);
+                    }
+                    continue;
+                }
+                let summary_msg =
+                    format_vault_sign_summary(signed, failed, skipped, first_error.as_deref());
+                if signed > 0 {
+                    if app.is_form_open() {
+                        // Defer config write to avoid mtime conflict with open forms
+                        app.pending_vault_config_write = true;
+                        if failed > 0 {
+                            app.set_sticky_status(summary_msg, true);
+                        } else {
+                            app.set_status(summary_msg, false);
+                        }
+                    } else if app.external_config_changed() {
+                        // The on-disk ssh config (or an include) was modified
+                        // by an external editor while the bulk-sign worker was
+                        // running. Writing now would overwrite those edits.
+                        // The certs are already safely on disk under
+                        // ~/.purple/certs/, so we reload the fresh config from
+                        // disk and re-apply `CertificateFile` directives only
+                        // for hosts that still exist and still have no custom
+                        // path. This way external edits are preserved AND new
+                        // certs get wired up where safe.
+                        let reapply: Vec<(String, String)> = app
+                            .config
+                            .host_entries()
+                            .into_iter()
+                            .filter_map(|h| {
+                                if h.vault_ssh.is_some()
+                                    && should_write_certificate_file(&h.certificate_file)
+                                {
+                                    vault_ssh::cert_path_for(&h.alias).ok().map(|p| {
+                                        (h.alias.clone(), p.to_string_lossy().into_owned())
+                                    })
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        match ssh_config::model::SshConfigFile::parse(&app.reload.config_path) {
+                            Ok(fresh) => {
+                                app.config = fresh;
+                                let mut reapplied = 0usize;
+                                for (alias, cert_path) in &reapply {
+                                    let entry = app
+                                        .config
+                                        .host_entries()
+                                        .into_iter()
+                                        .find(|h| &h.alias == alias);
+                                    if let Some(entry) = entry {
+                                        if should_write_certificate_file(&entry.certificate_file)
+                                            && app
+                                                .config
+                                                .set_host_certificate_file(alias, cert_path)
+                                        {
+                                            reapplied += 1;
+                                        }
+                                    }
+                                }
+                                if reapplied > 0 {
+                                    if let Err(e) = app.config.write() {
+                                        app.set_sticky_status(
+                                            format!(
+                                                "External edits detected; signed {} certs but failed to re-apply CertificateFile: {}",
+                                                signed, e
+                                            ),
+                                            true,
+                                        );
+                                    } else {
+                                        app.update_last_modified();
+                                        app.reload_hosts();
+                                        app.set_status(
+                                            format!(
+                                                "{} External ssh config edits detected, merged {} CertificateFile directives.",
+                                                summary_msg, reapplied
+                                            ),
+                                            failed > 0,
+                                        );
+                                    }
+                                } else {
+                                    app.reload_hosts();
+                                    app.set_sticky_status(
+                                        format!(
+                                            "{} External ssh config edits detected; certs on disk, no CertificateFile written.",
+                                            summary_msg
+                                        ),
+                                        true,
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                app.set_sticky_status(
+                                    format!(
+                                        "Signed {} certs but cannot re-parse ssh config after external edit: {}. Certs are on disk under ~/.purple/certs/.",
+                                        signed, e
+                                    ),
+                                    true,
+                                );
+                            }
+                        }
+                    } else if let Err(e) = app.config.write() {
+                        app.set_sticky_status(
+                            format!(
+                                "Signed {} certs but failed to update SSH config: {}",
+                                signed, e
+                            ),
+                            true,
+                        );
+                    } else {
+                        app.update_last_modified();
+                        app.reload_hosts();
+                        if failed > 0 {
+                            app.set_sticky_status(summary_msg, true);
+                        } else {
+                            app.set_status(summary_msg, false);
+                        }
+                    }
+                } else if failed > 0 {
+                    app.set_sticky_status(summary_msg, true);
+                } else {
+                    app.set_status(summary_msg, false);
+                }
+            }
+            Some(AppEvent::CertCheckResult { alias, status }) => {
+                app.cert_check_in_flight.remove(&alias);
+                let mtime = current_cert_mtime(&alias, &app);
+                app.cert_status_cache
+                    .insert(alias, (std::time::Instant::now(), status, mtime));
+            }
+            Some(AppEvent::CertCheckError { alias, message }) => {
+                // Cache the error as Invalid so the lazy-check loop doesn't
+                // re-spawn a background thread on every poll tick (which at
+                // ~100ms would spawn ~10 threads/sec against a broken path).
+                // The lazy-check block uses CERT_ERROR_BACKOFF_SECS instead of
+                // the normal TTL for Invalid entries, so transient errors
+                // still recover within 30 seconds instead of the 5-minute
+                // valid-cert TTL.
+                app.cert_check_in_flight.remove(&alias);
+                app.cert_status_cache.insert(
+                    alias.clone(),
+                    (
+                        std::time::Instant::now(),
+                        vault_ssh::CertStatus::Invalid(message.clone()),
+                        None,
+                    ),
+                );
+                app.set_background_status(
+                    format!("Cert check failed for {}: {}", alias, message),
+                    true,
+                );
+            }
             Some(AppEvent::PollError) => {
                 app.running = false;
             }
         }
 
+        // Lazy cert status check: when the selected host has a vault role and
+        // no cached status, spawn a background check.
+        if let Some(selected) = app.selected_host() {
+            if vault_ssh::resolve_vault_role(
+                selected.vault_ssh.as_deref(),
+                selected.provider.as_deref(),
+                &app.provider_config,
+            )
+            .is_some()
+            {
+                // Stat the cert file once per iteration to detect external
+                // writes (CLI sign, another purple instance) within one frame.
+                // Compared against the mtime recorded when the cache entry was
+                // populated; any mismatch forces a re-check, no matter the TTL.
+                let current_mtime =
+                    vault_ssh::resolve_cert_path(&selected.alias, &selected.certificate_file)
+                        .ok()
+                        .and_then(|p| std::fs::metadata(&p).ok())
+                        .and_then(|m| m.modified().ok());
+                let cache_stale = cache_entry_is_stale(
+                    app.cert_status_cache.get(&selected.alias),
+                    current_mtime,
+                    |t| t.elapsed().as_secs(),
+                );
+
+                let sign_in_flight = app
+                    .vault_sign_in_flight
+                    .lock()
+                    .map(|g| g.contains(&selected.alias))
+                    .unwrap_or(false);
+                if cache_stale
+                    && !app.cert_check_in_flight.contains(&selected.alias)
+                    && !sign_in_flight
+                {
+                    let alias = selected.alias.clone();
+                    let cert_file = selected.certificate_file.clone();
+                    app.cert_check_in_flight.insert(alias.clone());
+                    let tx = events_tx.clone();
+                    std::thread::spawn(move || {
+                        let check_path = match vault_ssh::resolve_cert_path(&alias, &cert_file) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                let _ = tx.send(event::AppEvent::CertCheckError {
+                                    alias,
+                                    message: e.to_string(),
+                                });
+                                return;
+                            }
+                        };
+                        let status = vault_ssh::check_cert_validity(&check_path);
+                        let _ = tx.send(event::AppEvent::CertCheckResult { alias, status });
+                    });
+                }
+            }
+        }
+
         // Handle pending SSH connection
         if let Some((alias, host_askpass)) = app.pending_connect.take() {
+            let vault_host = app.hosts.iter().find(|h| h.alias == alias).cloned();
             let askpass = host_askpass.or_else(preferences::load_askpass_default);
             events.pause();
             terminal.exit()?;
+            let vault_msg = if let Some(ref host) = vault_host {
+                let msg =
+                    ensure_vault_ssh_if_needed(&alias, host, &app.provider_config, &mut app.config);
+                // A sign attempt (success or failure) means the on-disk cert
+                // state might have changed. Refresh the cache before the user
+                // returns from the SSH session so the detail panel reflects
+                // the new state. reload_hosts after the session will also
+                // retain this entry.
+                if msg.is_some() {
+                    app.reload_hosts();
+                    app.refresh_cert_cache(&alias);
+                }
+                msg
+            } else {
+                None
+            };
             if let Some(token) = ensure_bw_session(app.bw_session.as_deref(), askpass.as_deref()) {
                 app.bw_session = Some(token);
             }
@@ -1262,6 +1886,8 @@ fn run_tui(mut app: App) -> Result<()> {
                                 true,
                             );
                         }
+                    } else if let Some((ref msg, is_error)) = vault_msg {
+                        app.set_status(msg.clone(), is_error);
                     }
                 }
                 Err(e) => {
@@ -1345,6 +1971,18 @@ fn run_tui(mut app: App) -> Result<()> {
             app.reload_hosts();
             app.update_last_modified();
         }
+    }
+
+    // Final flush of any deferred vault config write before teardown so on-disk
+    // state is not left behind.
+    app.flush_pending_vault_write();
+
+    // Cancel and join the background vault signing thread, if running.
+    if let Some(ref cancel) = app.vault_signing_cancel {
+        cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    if let Some(handle) = app.vault_sign_thread.take() {
+        let _ = handle.join();
     }
 
     // Kill all active tunnels on exit
@@ -1932,6 +2570,8 @@ fn handle_provider_command(command: ProviderCommands) -> Result<()> {
                 regions: resolved_regions,
                 project: resolved_project,
                 compartment: resolved_compartment,
+                vault_role: String::new(),
+                vault_addr: String::new(),
             };
 
             let mut config = providers::config::ProviderConfig::load();
@@ -2126,6 +2766,145 @@ fn prompt_hidden_input(prompt: &str) -> Result<Option<String>> {
     crossterm::terminal::disable_raw_mode()?;
     eprintln!();
     Ok(Some(input))
+}
+
+/// Resolve the current on-disk mtime of a host's Vault SSH certificate.
+///
+/// Used by the `CertCheckResult` handler so every cache entry carries a
+/// mtime alongside its status, enabling mtime-based lazy invalidation when
+/// an external actor (CLI, another purple instance) rewrites the cert.
+pub(crate) fn current_cert_mtime(alias: &str, app: &app::App) -> Option<std::time::SystemTime> {
+    let host = app.hosts.iter().find(|h| h.alias == alias)?;
+    let cert_path = vault_ssh::resolve_cert_path(alias, &host.certificate_file).ok()?;
+    std::fs::metadata(&cert_path)
+        .ok()
+        .and_then(|m| m.modified().ok())
+}
+
+/// Decide whether a `cert_status_cache` entry should be re-checked.
+///
+/// Returns true when:
+/// - there is no cached entry at all, or
+/// - the cert file's current mtime differs from the cached mtime
+///   (an external actor signed or deleted the cert behind our back), or
+/// - the entry's age exceeds its TTL. `CertStatus::Invalid` uses a shorter
+///   backoff so transient errors recover quickly without hammering the
+///   background check thread on every poll tick.
+///
+/// The `elapsed_secs` closure is taken as a parameter so tests can inject
+/// deterministic elapsed times instead of calling the real clock.
+pub(crate) fn cache_entry_is_stale<F>(
+    entry: Option<&(
+        std::time::Instant,
+        vault_ssh::CertStatus,
+        Option<std::time::SystemTime>,
+    )>,
+    current_mtime: Option<std::time::SystemTime>,
+    elapsed_secs: F,
+) -> bool
+where
+    F: FnOnce(std::time::Instant) -> u64,
+{
+    let Some((checked_at, status, cached_mtime)) = entry else {
+        return true;
+    };
+    if current_mtime != *cached_mtime {
+        return true;
+    }
+    let ttl = if matches!(status, vault_ssh::CertStatus::Invalid(_)) {
+        vault_ssh::CERT_ERROR_BACKOFF_SECS
+    } else {
+        vault_ssh::CERT_STATUS_CACHE_TTL_SECS
+    };
+    elapsed_secs(*checked_at) > ttl
+}
+
+/// Check and renew Vault SSH certificate if the host has a vault role configured.
+/// Writes the cert file to ~/.purple/certs/ AND sets CertificateFile on the host
+/// block when it is empty, so `ssh` actually uses the freshly signed cert.
+///
+/// Returns `Some(message)` when a signing action was attempted (success or failure),
+/// `None` when no vault role is configured or the cert is still valid.
+fn ensure_vault_ssh_if_needed(
+    alias: &str,
+    host: &ssh_config::model::HostEntry,
+    provider_config: &providers::config::ProviderConfig,
+    config: &mut ssh_config::model::SshConfigFile,
+) -> Option<(String, bool)> {
+    let role = vault_ssh::resolve_vault_role(
+        host.vault_ssh.as_deref(),
+        host.provider.as_deref(),
+        provider_config,
+    )?;
+
+    let pubkey = match vault_ssh::resolve_pubkey_path(&host.identity_file) {
+        Ok(p) => p,
+        Err(e) => return Some((format!("Vault SSH cert failed: {}", e), true)),
+    };
+
+    // Check if the cert needs renewal before calling ensure_cert, so we can
+    // distinguish "renewed" from "already valid" for status feedback.
+    let check_path = vault_ssh::resolve_cert_path(alias, &host.certificate_file).ok()?;
+    let status = vault_ssh::check_cert_validity(&check_path);
+    if !vault_ssh::needs_renewal(&status) {
+        return None; // Cert valid, no action needed
+    }
+
+    // Resolve the Vault address at signing time (host override > provider
+    // default > None). None lets the `vault` CLI use its own env resolution.
+    let vault_addr = vault_ssh::resolve_vault_addr(
+        host.vault_addr.as_deref(),
+        host.provider.as_deref(),
+        provider_config,
+    );
+    match vault_ssh::ensure_cert(
+        &role,
+        &pubkey,
+        alias,
+        &host.certificate_file,
+        vault_addr.as_deref(),
+    ) {
+        Ok(cert_path) => {
+            // If the host block did not already set CertificateFile, wire the
+            // freshly signed cert into the SSH config so `ssh` actually uses it.
+            // Otherwise the cert on disk is silently ignored.
+            if should_write_certificate_file(&host.certificate_file) {
+                let cert_str = cert_path.to_string_lossy().to_string();
+                let updated = config.set_host_certificate_file(alias, &cert_str);
+                if !updated {
+                    eprintln!(
+                        "Warning: Signed cert for {} but host block is no longer in ssh config; CertificateFile not written (cert saved to {})",
+                        alias,
+                        cert_path.display()
+                    );
+                } else if let Err(e) = config.write() {
+                    eprintln!(
+                        "Warning: Signed cert for {} but failed to update SSH config CertificateFile: {}",
+                        alias, e
+                    );
+                }
+            }
+            Some((format!("Signed SSH certificate for {}.", alias), false))
+        }
+        Err(e) => {
+            eprintln!("Warning: Vault SSH signing failed: {}", e);
+            Some((format!("Vault SSH signing failed: {}", e), true))
+        }
+    }
+}
+
+/// Decide whether `ensure_vault_ssh_if_needed` (and the equivalent
+/// `VaultSignResult` event handler, the `purple vault sign` CLI paths and
+/// every host-form mutator) should write a `CertificateFile` directive after a
+/// successful Vault SSH signing.
+///
+/// The rule is simple but load-bearing: only write when the host has no
+/// existing `CertificateFile`. A user-set custom path must never be silently
+/// overwritten with purple's default cert path. Whitespace-only values count
+/// as empty so that a stray space typed in the form does not lock purple out
+/// of writing the directive.
+pub(crate) fn should_write_certificate_file(existing: &str) -> bool {
+    existing.trim().is_empty()
 }
 
 /// Pre-flight check for Bitwarden vault. If the askpass source uses `bw:` and
@@ -2512,6 +3291,144 @@ mod tests {
         App::new(config)
     }
 
+    // ---- cache_entry_is_stale tests ----
+
+    fn valid_status() -> vault_ssh::CertStatus {
+        vault_ssh::CertStatus::Valid {
+            expires_at: 0,
+            remaining_secs: 3600,
+            total_secs: 3600,
+        }
+    }
+
+    fn fixed_elapsed(secs: u64) -> impl FnOnce(std::time::Instant) -> u64 {
+        move |_| secs
+    }
+
+    #[test]
+    fn cache_stale_when_entry_missing() {
+        assert!(cache_entry_is_stale(None, None, fixed_elapsed(0)));
+        assert!(cache_entry_is_stale(
+            None,
+            Some(std::time::SystemTime::UNIX_EPOCH),
+            fixed_elapsed(0),
+        ));
+    }
+
+    #[test]
+    fn cache_fresh_when_recent_and_mtime_matches() {
+        let mtime = std::time::SystemTime::UNIX_EPOCH;
+        let entry = (std::time::Instant::now(), valid_status(), Some(mtime));
+        assert!(!cache_entry_is_stale(
+            Some(&entry),
+            Some(mtime),
+            fixed_elapsed(1),
+        ));
+    }
+
+    #[test]
+    fn cache_stale_when_current_mtime_differs_from_cached() {
+        let cached = std::time::SystemTime::UNIX_EPOCH;
+        let current = cached + std::time::Duration::from_secs(5);
+        let entry = (std::time::Instant::now(), valid_status(), Some(cached));
+        assert!(cache_entry_is_stale(
+            Some(&entry),
+            Some(current),
+            fixed_elapsed(1),
+        ));
+    }
+
+    #[test]
+    fn cache_stale_detects_external_cert_rewrite_via_mtime() {
+        // Regression guard for the documented feature: when an external
+        // actor (CLI `purple vault sign` from another shell, or another
+        // running purple instance) rewrites the cert file behind the TUI's
+        // back, the lazy-check loop MUST detect the change via mtime and
+        // force a re-read — regardless of the TTL.
+        //
+        // Timeline:
+        //   t=0  purple caches Valid status with mtime M1
+        //   t=1  external sign writes new cert, mtime becomes M2 > M1
+        //   t=2  lazy-check runs: elapsed 2s (far under the 5-min TTL),
+        //        but the mtime mismatch forces cache_stale = true.
+        let cached_mtime = std::time::SystemTime::UNIX_EPOCH;
+        let rewritten_mtime = cached_mtime + std::time::Duration::from_secs(60);
+        let entry = (
+            std::time::Instant::now(),
+            valid_status(),
+            Some(cached_mtime),
+        );
+        assert!(
+            cache_entry_is_stale(Some(&entry), Some(rewritten_mtime), fixed_elapsed(2)),
+            "external rewrite via mtime mismatch must force re-check even within TTL"
+        );
+    }
+
+    #[test]
+    fn cache_stale_when_file_appears_after_missing_cache() {
+        let entry = (std::time::Instant::now(), valid_status(), None);
+        assert!(cache_entry_is_stale(
+            Some(&entry),
+            Some(std::time::SystemTime::UNIX_EPOCH),
+            fixed_elapsed(1),
+        ));
+    }
+
+    #[test]
+    fn cache_stale_when_file_disappears_after_cached_mtime() {
+        let mtime = std::time::SystemTime::UNIX_EPOCH;
+        let entry = (std::time::Instant::now(), valid_status(), Some(mtime));
+        assert!(cache_entry_is_stale(Some(&entry), None, fixed_elapsed(1)));
+    }
+
+    #[test]
+    fn cache_stale_when_ttl_exceeded_even_if_mtime_matches() {
+        let mtime = std::time::SystemTime::UNIX_EPOCH;
+        let entry = (std::time::Instant::now(), valid_status(), Some(mtime));
+        let over = vault_ssh::CERT_STATUS_CACHE_TTL_SECS + 1;
+        assert!(cache_entry_is_stale(
+            Some(&entry),
+            Some(mtime),
+            fixed_elapsed(over),
+        ));
+    }
+
+    #[test]
+    fn cache_invalid_entry_uses_shorter_backoff() {
+        let mtime = std::time::SystemTime::UNIX_EPOCH;
+        let entry = (
+            std::time::Instant::now(),
+            vault_ssh::CertStatus::Invalid("boom".to_string()),
+            Some(mtime),
+        );
+        // Just above error backoff but well below the normal TTL: must be
+        // stale under the shorter Invalid backoff.
+        let secs = vault_ssh::CERT_ERROR_BACKOFF_SECS + 1;
+        assert!(secs < vault_ssh::CERT_STATUS_CACHE_TTL_SECS);
+        assert!(cache_entry_is_stale(
+            Some(&entry),
+            Some(mtime),
+            fixed_elapsed(secs),
+        ));
+    }
+
+    #[test]
+    fn cache_invalid_entry_fresh_within_backoff() {
+        let mtime = std::time::SystemTime::UNIX_EPOCH;
+        let entry = (
+            std::time::Instant::now(),
+            vault_ssh::CertStatus::Invalid("boom".to_string()),
+            Some(mtime),
+        );
+        assert!(!cache_entry_is_stale(
+            Some(&entry),
+            Some(mtime),
+            fixed_elapsed(0),
+        ));
+    }
+
+    // ---- end cache_entry_is_stale tests ----
+
     #[test]
     fn test_sync_summary_still_syncing() {
         let mut app = empty_app();
@@ -2524,6 +3441,64 @@ mod tests {
         assert!(!status.is_error);
         // sync_done should NOT be cleared while still syncing
         assert_eq!(app.sync_done.len(), 1);
+    }
+
+    #[test]
+    fn vault_sign_summary_single_failure_shows_only_error() {
+        let msg = format_vault_sign_summary(0, 1, 0, Some("Vault SSH permission denied."));
+        assert_eq!(msg, "Vault SSH permission denied.");
+    }
+
+    #[test]
+    fn vault_sign_summary_includes_error_on_partial_failure() {
+        let msg = format_vault_sign_summary(2, 1, 0, Some("role not found"));
+        assert_eq!(msg, "Signed 2 of 3 certificates. 1 failed: role not found");
+    }
+
+    #[test]
+    fn vault_sign_summary_failure_without_error_text() {
+        let msg = format_vault_sign_summary(0, 1, 0, None);
+        assert_eq!(msg, "Signed 0 of 1 certificate. 1 failed");
+    }
+
+    #[test]
+    fn vault_sign_summary_all_success() {
+        let msg = format_vault_sign_summary(3, 0, 0, None);
+        assert_eq!(msg, "Signed 3 of 3 certificates.");
+    }
+
+    #[test]
+    fn vault_sign_summary_skipped_with_signed() {
+        let msg = format_vault_sign_summary(1, 0, 2, None);
+        assert_eq!(msg, "Signed 1 of 3 certificates. 2 already valid.");
+    }
+
+    #[test]
+    fn vault_sign_summary_all_skipped() {
+        let msg = format_vault_sign_summary(0, 0, 3, None);
+        assert_eq!(msg, "All 3 certificates already valid. Nothing to sign.");
+    }
+
+    #[test]
+    fn replace_spinner_frame_replaces_known_spinner() {
+        let text = "\u{280B} Signing 1/3: myhost (V to cancel)";
+        let result = replace_spinner_frame(text, "\u{2819}");
+        assert_eq!(
+            result.as_deref(),
+            Some("\u{2819} Signing 1/3: myhost (V to cancel)")
+        );
+    }
+
+    #[test]
+    fn replace_spinner_frame_ignores_non_spinner_text() {
+        let text = "Signing 0/3 (V to cancel)";
+        assert!(replace_spinner_frame(text, "\u{2819}").is_none());
+    }
+
+    #[test]
+    fn replace_spinner_frame_ignores_regular_status() {
+        let text = "Signed 3 of 3 certificates.";
+        assert!(replace_spinner_frame(text, "\u{2819}").is_none());
     }
 
     #[test]
@@ -3384,5 +4359,133 @@ mod tests {
     #[test]
     fn test_format_sync_diff_only_added() {
         assert_eq!(format_sync_diff(5, 0, 0), " (+5)");
+    }
+
+    // CLI refactor regression: `purple vault-sign` was renamed to a nested
+    // `purple vault sign` subcommand group matching `provider`/`theme`. Verify
+    // clap parses both the alias form and --all.
+    #[test]
+    fn cli_vault_sign_alias_parsing() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["purple", "vault", "sign", "myhost"]).unwrap();
+        match cli.command {
+            Some(Commands::Vault {
+                command:
+                    VaultCommands::Sign {
+                        alias,
+                        all,
+                        vault_addr,
+                    },
+            }) => {
+                assert_eq!(alias.as_deref(), Some("myhost"));
+                assert!(!all);
+                assert!(vault_addr.is_none());
+            }
+            _ => panic!("expected Vault::Sign"),
+        }
+    }
+
+    #[test]
+    fn cli_vault_sign_all_flag_parsing() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["purple", "vault", "sign", "--all"]).unwrap();
+        match cli.command {
+            Some(Commands::Vault {
+                command:
+                    VaultCommands::Sign {
+                        alias,
+                        all,
+                        vault_addr,
+                    },
+            }) => {
+                assert_eq!(alias, None);
+                assert!(all);
+                assert!(vault_addr.is_none());
+            }
+            _ => panic!("expected Vault::Sign --all"),
+        }
+    }
+
+    #[test]
+    fn cli_vault_sign_vault_addr_flag_parsing() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from([
+            "purple",
+            "vault",
+            "sign",
+            "--all",
+            "--vault-addr",
+            "http://127.0.0.1:8200",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(Commands::Vault {
+                command:
+                    VaultCommands::Sign {
+                        alias: _,
+                        all,
+                        vault_addr,
+                    },
+            }) => {
+                assert!(all);
+                assert_eq!(vault_addr.as_deref(), Some("http://127.0.0.1:8200"));
+            }
+            _ => panic!("expected Vault::Sign with --vault-addr"),
+        }
+    }
+
+    #[test]
+    fn should_write_certificate_file_only_when_empty() {
+        // Empty string: purple owns the cert path, write it.
+        assert!(should_write_certificate_file(""));
+        // Whitespace-only is treated as empty so a stray space typed in the
+        // form does not lock purple out of writing the directive.
+        assert!(should_write_certificate_file(" "));
+        assert!(should_write_certificate_file("\t"));
+        assert!(should_write_certificate_file("   \t  "));
+        // Any user-set value (default purple path included): never overwrite,
+        // because the user may rely on a custom path and we never want to
+        // silently change it.
+        assert!(!should_write_certificate_file("/custom/path/cert.pub"));
+        assert!(!should_write_certificate_file("~/.ssh/my-cert.pub"));
+        assert!(!should_write_certificate_file("relative/path"));
+        // A path with leading/trailing space is still a real path; trim is
+        // applied to the emptiness check, not the value itself.
+        assert!(!should_write_certificate_file(" /tmp/cert.pub "));
+    }
+
+    #[test]
+    fn ensure_vault_ssh_returns_none_when_no_role_configured() {
+        // Build a host with no vault_ssh and no provider mapping. The function
+        // must short-circuit before touching disk or shelling out.
+        let dir = std::env::temp_dir().join(format!(
+            "purple_test_ensure_vault_norole_{:?}",
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let config_path = dir.join("config");
+        std::fs::write(&config_path, "Host plain\n  HostName 1.2.3.4\n").unwrap();
+        let mut config = SshConfigFile::parse(&config_path).unwrap();
+        let host = config.host_entries().into_iter().next().unwrap();
+        let provider_config = providers::config::ProviderConfig::parse("");
+        let result = ensure_vault_ssh_if_needed(&host.alias, &host, &provider_config, &mut config);
+        assert!(
+            result.is_none(),
+            "no role configured: must short-circuit to None"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cli_legacy_vault_sign_flat_form_rejected() {
+        // The old flat `purple vault-sign` subcommand was removed. Ensure it
+        // does not silently match something else.
+        use clap::Parser;
+        let result = Cli::try_parse_from(["purple", "vault-sign", "myhost"]);
+        assert!(
+            result.is_err(),
+            "legacy `vault-sign` must not parse after refactor"
+        );
     }
 }

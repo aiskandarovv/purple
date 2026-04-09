@@ -192,7 +192,7 @@ fn password_label(source: &str) -> &'static str {
     } else if source.starts_with("pass:") {
         "pass"
     } else if source.starts_with("vault:") {
-        "vault"
+        "vault-kv"
     } else {
         "custom"
     }
@@ -625,6 +625,112 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect, spinner_tick: u64) {
         }
 
         section_close(&mut lines, box_width);
+    }
+
+    // Vault certificate section
+    {
+        let effective_role = crate::vault_ssh::resolve_vault_role(
+            host.vault_ssh.as_deref(),
+            host.provider.as_deref(),
+            &app.provider_config,
+        );
+        if let Some(ref role) = effective_role {
+            section_open(&mut lines, "VAULT SSH", box_width);
+
+            // Show the role name (last path segment). The full mount
+            // path is a config detail visible in the edit form (e).
+            let role_name = role.rsplit('/').next().unwrap_or(role);
+            let role_inherited = host.vault_ssh.is_none();
+            if role_inherited {
+                let provider_name = host.provider.as_deref().unwrap_or("provider");
+                let suffix = format!(" (from {})", provider_name);
+                let role_budget = max_value_width.saturating_sub(suffix.len());
+                let display_role = super::truncate(role_name, role_budget);
+                section_line(
+                    &mut lines,
+                    vec![
+                        Span::styled(
+                            format!("{:<width$}", "Role", width = LABEL_WIDTH),
+                            theme::muted(),
+                        ),
+                        Span::styled(display_role, theme::bold()),
+                        Span::styled(suffix, theme::muted()),
+                    ],
+                    box_width,
+                );
+            } else {
+                section_field(&mut lines, "Role", role_name, max_value_width, box_width);
+            }
+
+            // Vault address is visible in the edit form (e) or provider
+            // form. Showing it here wastes space (the https:// prefix
+            // dominates the narrow column) and adds no actionable info.
+            // Check cert status from cache, fall back to file-existence check.
+            // While a signing check is in flight for this host, show "Checking...".
+            // `needs_action` flags states where the user can press V to fix
+            // things (missing/expired/invalid). It is consumed below to render
+            // a "(press V to sign)" affordance hint next to the status text.
+            let mut needs_action = false;
+            let (status_text, status_style) = if app.cert_check_in_flight.contains(&host.alias) {
+                ("Checking...".to_string(), theme::muted())
+            } else if let Some((checked_at, status, _mtime)) =
+                app.cert_status_cache.get(&host.alias)
+            {
+                let elapsed = checked_at.elapsed().as_secs() as i64;
+                match status {
+                    crate::vault_ssh::CertStatus::Valid { remaining_secs, .. } => {
+                        let adjusted = remaining_secs - elapsed;
+                        if adjusted <= 0 {
+                            needs_action = true;
+                            ("Expired".to_string(), theme::error())
+                        } else {
+                            let text =
+                                format!("Valid ({})", crate::vault_ssh::format_remaining(adjusted));
+                            (text, theme::success())
+                        }
+                    }
+                    crate::vault_ssh::CertStatus::Expired => {
+                        needs_action = true;
+                        ("Expired".to_string(), theme::error())
+                    }
+                    crate::vault_ssh::CertStatus::Missing => {
+                        needs_action = true;
+                        ("Not signed".to_string(), theme::muted())
+                    }
+                    crate::vault_ssh::CertStatus::Invalid(_) => {
+                        needs_action = true;
+                        ("Invalid".to_string(), theme::error())
+                    }
+                }
+            } else {
+                // No cached status -- check file existence as fallback.
+                // Any resolve error collapses to "Not signed" since the cert
+                // path is unreachable in practice (alias validated upstream).
+                match crate::vault_ssh::resolve_cert_path(&host.alias, &host.certificate_file) {
+                    Ok(cert_path) if cert_path.exists() => ("Signed".to_string(), theme::success()),
+                    _ => {
+                        needs_action = true;
+                        ("Not signed".to_string(), theme::muted())
+                    }
+                }
+            };
+
+            // Affordance hint computed during the if/else chain above. When
+            // set, the user can press V to remediate the cert state.
+            let mut status_spans = vec![
+                Span::styled(
+                    format!("{:<width$}", "Status", width = LABEL_WIDTH),
+                    theme::muted(),
+                ),
+                Span::styled(status_text, status_style),
+            ];
+            if needs_action {
+                status_spans.push(Span::styled(" (press V to sign)", theme::muted()));
+            }
+            section_line(&mut lines, status_spans, box_width);
+
+            section_close(&mut lines, box_width);
+        }
     }
 
     // Tunnels section
@@ -1594,7 +1700,7 @@ mod tests {
 
     #[test]
     fn password_label_vault() {
-        assert_eq!(password_label("vault:secret/path"), "vault");
+        assert_eq!(password_label("vault:secret/path"), "vault-kv");
     }
 
     #[test]

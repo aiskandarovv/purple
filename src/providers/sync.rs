@@ -476,6 +476,8 @@ mod tests {
             regions: String::new(),
             project: String::new(),
             compartment: String::new(),
+            vault_role: String::new(),
+            vault_addr: String::new(),
         }
     }
 
@@ -1471,6 +1473,8 @@ Host do-web-1-copy
             regions: String::new(),
             project: String::new(),
             compartment: String::new(),
+            vault_role: String::new(),
+            vault_addr: String::new(),
         };
 
         // Remote has the included host's server_id with a different prefix
@@ -3188,6 +3192,8 @@ Host do-web-1-copy
             regions: String::new(),
             project: String::new(),
             compartment: String::new(),
+            vault_role: String::new(),
+            vault_addr: String::new(),
         };
 
         // Sync DO hosts
@@ -3248,6 +3254,8 @@ Host do-web-1-copy
             regions: String::new(),
             project: String::new(),
             compartment: String::new(),
+            vault_role: String::new(),
+            vault_addr: String::new(),
         };
 
         // Add hosts from both providers

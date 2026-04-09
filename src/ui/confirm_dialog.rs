@@ -190,6 +190,69 @@ pub fn render_confirm_purge_stale(
     frame.render_widget(paragraph, area);
 }
 
+pub fn render_confirm_vault_sign(frame: &mut Frame, _app: &App, signable: &[String]) {
+    let count = signable.len();
+    // Preview first 5 aliases, append "...and N more" when truncated.
+    let preview_limit = 5;
+    let shown: Vec<&str> = signable
+        .iter()
+        .take(preview_limit)
+        .map(String::as_str)
+        .collect();
+    let preview_text = if count > preview_limit {
+        format!("  {} ... +{} more", shown.join(", "), count - preview_limit)
+    } else if count > 0 {
+        format!("  {}", shown.join(", "))
+    } else {
+        String::new()
+    };
+
+    // Height: top + main line + preview line + note line + spacer + footer + bottom = 9
+    let height = 9u16;
+    let area = super::centered_rect_fixed(72, height, frame.area());
+
+    frame.render_widget(Clear, area);
+
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .title(Span::styled(
+            " Sign Vault SSH Certificates ",
+            theme::accent(),
+        ))
+        .border_style(theme::accent());
+
+    let mut footer_spans: Vec<Span<'static>> = Vec::new();
+    for s in super::footer_action("y", " confirm ") {
+        footer_spans.push(s);
+    }
+    footer_spans.push(Span::raw("  "));
+    for s in super::footer_action("Esc", " cancel") {
+        footer_spans.push(s);
+    }
+
+    let text = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            format!(
+                "  Sign {} SSH certificate{} via the Vault SSH secrets engine?",
+                count,
+                if count == 1 { "" } else { "s" },
+            ),
+            theme::bold(),
+        )),
+        Line::from(Span::styled(preview_text, theme::muted())),
+        Line::from(Span::styled(
+            "  Hosts with a still-valid certificate are skipped.".to_string(),
+            theme::muted(),
+        )),
+        Line::from(""),
+        Line::from(footer_spans),
+    ];
+
+    let paragraph = Paragraph::new(text).block(block);
+    frame.render_widget(paragraph, area);
+}
+
 /// Block-art logo for the welcome screen (6 lines, ANSI Shadow style).
 /// Lines are trimmed; render code pads to max display width for alignment.
 const LOGO: [&str; 6] = [

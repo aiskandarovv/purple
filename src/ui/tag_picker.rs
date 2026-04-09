@@ -42,6 +42,33 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             {
                 *counts.entry("stale").or_insert(0) += 1;
             }
+            if crate::vault_ssh::resolve_vault_role(
+                host.vault_ssh.as_deref(),
+                host.provider.as_deref(),
+                &app.provider_config,
+            )
+            .is_some()
+                && !host
+                    .tags
+                    .iter()
+                    .chain(host.provider_tags.iter())
+                    .any(|t| t.eq_ignore_ascii_case("vault-ssh"))
+            {
+                *counts.entry("vault-ssh").or_insert(0) += 1;
+            }
+            if host
+                .askpass
+                .as_deref()
+                .map(|s| s.starts_with("vault:"))
+                .unwrap_or(false)
+                && !host
+                    .tags
+                    .iter()
+                    .chain(host.provider_tags.iter())
+                    .any(|t| t.eq_ignore_ascii_case("vault-kv"))
+            {
+                *counts.entry("vault-kv").or_insert(0) += 1;
+            }
         }
         for pattern in &app.patterns {
             for tag in &pattern.tags {

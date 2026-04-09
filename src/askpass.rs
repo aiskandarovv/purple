@@ -34,8 +34,11 @@ pub const PASSWORD_SOURCES: &[PasswordSourceOption] = &[
         value: "pass:",
         hint: "pass:path/to/entry",
     },
+    // Vault KV secrets engine (key/value store). Distinct from the Vault SSH
+    // secrets engine used for signed SSH certificates, which has its own
+    // "Vault SSH role" field on the host form.
     PasswordSourceOption {
-        label: "HashiCorp Vault",
+        label: "HashiCorp Vault KV",
         value: "vault:",
         hint: "vault:secret/path#field",
     },
@@ -338,7 +341,10 @@ fn retrieve_from_bitwarden(item_id: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-/// Retrieve from HashiCorp Vault CLI. Spec format: `path#field` or just `path` (defaults to `password`).
+/// Retrieve from the HashiCorp Vault KV secrets engine via the `vault` CLI.
+/// Spec format: `path#field` or just `path` (defaults to `password`).
+/// Distinct from the Vault SSH secrets engine (see src/vault_ssh.rs), which
+/// signs SSH certificates rather than storing passwords.
 fn retrieve_from_vault(spec: &str) -> Result<String> {
     let (path, field) = match spec.rsplit_once('#') {
         Some((p, f)) => (p, f),
@@ -408,7 +414,7 @@ pub fn describe_source(source: &str) -> &str {
     } else if source.starts_with("bw:") {
         "Bitwarden"
     } else if source.starts_with("vault:") {
-        "HashiCorp Vault"
+        "HashiCorp Vault KV"
     } else {
         "Custom command"
     }
@@ -499,7 +505,7 @@ mod tests {
     fn describe_source_vault() {
         assert_eq!(
             describe_source("vault:secret/data/myapp#password"),
-            "HashiCorp Vault"
+            "HashiCorp Vault KV"
         );
     }
 
@@ -507,7 +513,7 @@ mod tests {
     fn describe_source_vault_no_field() {
         assert_eq!(
             describe_source("vault:secret/data/myapp"),
-            "HashiCorp Vault"
+            "HashiCorp Vault KV"
         );
     }
 
@@ -589,7 +595,7 @@ mod tests {
     fn retrieve_password_routes_vault() {
         assert_eq!(
             describe_source("vault:secret/ssh/prod#password"),
-            "HashiCorp Vault"
+            "HashiCorp Vault KV"
         );
     }
 
@@ -662,7 +668,7 @@ mod tests {
     fn password_sources_vault_value() {
         let vault = PASSWORD_SOURCES
             .iter()
-            .find(|s| s.label == "HashiCorp Vault")
+            .find(|s| s.label == "HashiCorp Vault KV")
             .unwrap();
         assert_eq!(vault.value, "vault:");
     }
@@ -775,7 +781,7 @@ mod tests {
 
     #[test]
     fn describe_source_vault_minimal() {
-        assert_eq!(describe_source("vault:x"), "HashiCorp Vault");
+        assert_eq!(describe_source("vault:x"), "HashiCorp Vault KV");
     }
 
     #[test]
@@ -793,7 +799,7 @@ mod tests {
     fn describe_source_vault_with_complex_path() {
         assert_eq!(
             describe_source("vault:secret/data/team/prod/ssh#password"),
-            "HashiCorp Vault"
+            "HashiCorp Vault KV"
         );
     }
 
@@ -1291,7 +1297,7 @@ Host beta
         assert_eq!(describe_source("op://"), "1Password"); // just the prefix
         assert_eq!(describe_source("bw:"), "Bitwarden"); // just the prefix
         assert_eq!(describe_source("pass:"), "pass"); // just the prefix
-        assert_eq!(describe_source("vault:"), "HashiCorp Vault"); // just the prefix
+        assert_eq!(describe_source("vault:"), "HashiCorp Vault KV"); // just the prefix
     }
 
     // =========================================================================

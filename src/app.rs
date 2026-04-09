@@ -200,6 +200,15 @@ pub enum Screen {
         aliases: Vec<String>,
         provider: Option<String>,
     },
+    ConfirmVaultSign {
+        /// Precomputed list of (alias, role, certificate_file, pubkey_path) for
+        /// hosts that resolve to a vault SSH role. Computed when the user
+        /// presses `V`. `certificate_file` is the host's existing
+        /// `CertificateFile` directive (empty when unset) and is needed so the
+        /// background worker checks renewal status against the actually
+        /// configured cert path rather than purple's default.
+        signable: Vec<(String, String, String, std::path::PathBuf, Option<String>)>,
+    },
     Welcome {
         has_backup: bool,
         host_count: usize,
@@ -217,26 +226,37 @@ pub enum FormField {
     IdentityFile,
     ProxyJump,
     AskPass,
+    VaultSsh,
+    VaultAddr,
     Tags,
 }
 
 impl FormField {
-    pub const ALL: [FormField; 8] = [
+    pub const ALL: [FormField; 10] = [
         FormField::Alias,
         FormField::Hostname,
         FormField::User,
         FormField::Port,
         FormField::IdentityFile,
+        FormField::VaultSsh,
+        FormField::VaultAddr,
         FormField::ProxyJump,
         FormField::AskPass,
         FormField::Tags,
     ];
 
+    /// Walk the raw `ALL` array forward, ignoring visibility. Used only by
+    /// tests that assert the schema order of the enum. Production code
+    /// navigates via `HostForm::focus_next_visible` which respects the
+    /// progressive-disclosure filter for `VaultAddr`.
+    #[cfg(test)]
     pub fn next(self) -> Self {
         let idx = FormField::ALL.iter().position(|f| *f == self).unwrap_or(0);
         FormField::ALL[(idx + 1) % FormField::ALL.len()]
     }
 
+    /// Walk the raw `ALL` array backward, test-only counterpart of `next()`.
+    #[cfg(test)]
     pub fn prev(self) -> Self {
         let idx = FormField::ALL.iter().position(|f| *f == self).unwrap_or(0);
         FormField::ALL[(idx + FormField::ALL.len() - 1) % FormField::ALL.len()]
@@ -251,6 +271,8 @@ impl FormField {
             FormField::IdentityFile => "Identity File",
             FormField::ProxyJump => "ProxyJump",
             FormField::AskPass => "Password Source",
+            FormField::VaultSsh => "Vault SSH Role",
+            FormField::VaultAddr => "Vault SSH Address",
             FormField::Tags => "Tags",
         }
     }
@@ -266,6 +288,12 @@ pub struct HostForm {
     pub identity_file: String,
     pub proxy_jump: String,
     pub askpass: String,
+    pub vault_ssh: String,
+    /// Optional VAULT_ADDR override. Progressive disclosure: the form field
+    /// only renders and is only navigable when `vault_ssh` is non-empty. The
+    /// stored value is preserved while hidden so re-enabling the role shows
+    /// the previous address again.
+    pub vault_addr: String,
     pub tags: String,
     pub focused_field: FormField,
     pub cursor_pos: usize,
@@ -291,6 +319,8 @@ impl HostForm {
             identity_file: String::new(),
             proxy_jump: String::new(),
             askpass: String::new(),
+            vault_ssh: String::new(),
+            vault_addr: String::new(),
             tags: String::new(),
             focused_field: FormField::Alias,
             cursor_pos: 0,
@@ -325,6 +355,8 @@ impl HostForm {
             identity_file: entry.identity_file.clone(),
             proxy_jump: entry.proxy_jump.clone(),
             askpass: entry.askpass.clone().unwrap_or_default(),
+            vault_ssh: entry.vault_ssh.clone().unwrap_or_default(),
+            vault_addr: entry.vault_addr.clone().unwrap_or_default(),
             tags: entry.tags.join(", "),
             focused_field: FormField::Alias,
             cursor_pos,
@@ -333,6 +365,31 @@ impl HostForm {
             expanded: true,
             inherited,
         }
+    }
+
+    /// Create a HostForm from an existing host for the clone/duplicate flow.
+    /// Clears fields that must not carry over to the copy: `vault_ssh` (the
+    /// per-host Vault SSH override, which belongs to the original alias's
+    /// certificate) and implicitly `certificate_file` (not stored on the form
+    /// since it is derived from the alias). The caller is still responsible
+    /// for setting a unique alias on the returned form.
+    /// Returns the cloned form and a flag indicating whether a per-host
+    /// Vault SSH override was cleared. Callers display a status when the
+    /// flag is true so the user understands why the clone does not inherit
+    /// the source host's Vault SSH role.
+    pub fn from_entry_duplicate(
+        entry: &HostEntry,
+        inherited: crate::ssh_config::model::InheritedHints,
+    ) -> (Self, bool) {
+        let mut form = Self::from_entry(entry, inherited);
+        let had_vault_ssh = !form.vault_ssh.is_empty();
+        form.vault_ssh.clear();
+        // The Vault address is conceptually part of the Vault SSH setup: if
+        // we clear the role for the clone (because it belongs to the original
+        // alias's certificate), the address must be cleared too so the user
+        // explicitly re-enters it when enabling Vault SSH on the copy.
+        form.vault_addr.clear();
+        (form, had_vault_ssh)
     }
 
     pub fn from_pattern_entry(entry: &PatternEntry) -> Self {
@@ -346,6 +403,8 @@ impl HostForm {
             identity_file: entry.identity_file.clone(),
             proxy_jump: entry.proxy_jump.clone(),
             askpass: entry.askpass.clone().unwrap_or_default(),
+            vault_ssh: String::new(),
+            vault_addr: String::new(),
             tags: entry.tags.join(", "),
             focused_field: FormField::Alias,
             cursor_pos,
@@ -365,6 +424,8 @@ impl HostForm {
             FormField::IdentityFile => &self.identity_file,
             FormField::ProxyJump => &self.proxy_jump,
             FormField::AskPass => &self.askpass,
+            FormField::VaultSsh => &self.vault_ssh,
+            FormField::VaultAddr => &self.vault_addr,
             FormField::Tags => &self.tags,
         }
     }
@@ -379,8 +440,58 @@ impl HostForm {
             FormField::IdentityFile => &mut self.identity_file,
             FormField::ProxyJump => &mut self.proxy_jump,
             FormField::AskPass => &mut self.askpass,
+            FormField::VaultSsh => &mut self.vault_ssh,
+            FormField::VaultAddr => &mut self.vault_addr,
             FormField::Tags => &mut self.tags,
         }
+    }
+
+    /// Returns the fields that are currently visible in the rendered form.
+    ///
+    /// `FormField::VaultAddr` is hidden (absent) unless the Vault SSH role
+    /// field has a non-empty value on the same form. Navigation helpers must
+    /// consult this list so Tab/Shift-Tab skip over hidden fields. The stored
+    /// `vault_addr` value survives hiding, so toggling the role back on
+    /// restores the previous input.
+    pub fn visible_fields(&self) -> Vec<FormField> {
+        let role_set = !self.vault_ssh.trim().is_empty();
+        FormField::ALL
+            .iter()
+            .copied()
+            .filter(|f| *f != FormField::VaultAddr || role_set)
+            .collect()
+    }
+
+    /// Advance `focused_field` to the next visible field (wrapping).
+    ///
+    /// When the currently focused field is NOT in the visible set (e.g. the
+    /// user toggled the role off while focused on VaultAddr, which the UI
+    /// does not currently allow but defensive code must handle), fall back
+    /// to the first visible field instead of silently skipping to index 1.
+    pub fn focus_next_visible(&mut self) {
+        let visible = self.visible_fields();
+        if visible.is_empty() {
+            return;
+        }
+        self.focused_field = match visible.iter().position(|f| *f == self.focused_field) {
+            Some(idx) => visible[(idx + 1) % visible.len()],
+            None => visible[0],
+        };
+    }
+
+    /// Advance `focused_field` to the previous visible field (wrapping).
+    ///
+    /// Same fallback policy as `focus_next_visible`: an out-of-set focus
+    /// state snaps to the last visible field, not the second-to-last.
+    pub fn focus_prev_visible(&mut self) {
+        let visible = self.visible_fields();
+        if visible.is_empty() {
+            return;
+        }
+        self.focused_field = match visible.iter().position(|f| *f == self.focused_field) {
+            Some(idx) => visible[(idx + visible.len() - 1) % visible.len()],
+            None => visible[visible.len() - 1],
+        };
     }
 
     pub fn insert_char(&mut self, c: char) {
@@ -505,6 +616,8 @@ impl HostForm {
             (&self.identity_file, "Identity File"),
             (&self.proxy_jump, "ProxyJump"),
             (&self.askpass, "Password Source"),
+            (&self.vault_ssh, "Vault SSH Role"),
+            (&self.vault_addr, "Vault SSH Address"),
             (&self.tags, "Tags"),
         ];
         for (value, name) in &fields {
@@ -531,12 +644,40 @@ impl HostForm {
         if port == 0 {
             return Err("Port 0? Bold choice, but no. Try 1-65535.".to_string());
         }
+        let vault_role = self.vault_ssh.trim();
+        if !vault_role.is_empty() && !crate::vault_ssh::is_valid_role(vault_role) {
+            return Err(
+                "Vault SSH role: only letters, digits, /, _ and - are allowed \
+                 (e.g. ssh-client-signer/sign/my-role)."
+                    .to_string(),
+            );
+        }
+        // vault_addr is only meaningful when a vault role is set. If the
+        // user typed an address but then cleared the role we treat it as
+        // leftover state and do not validate it (the submit path will not
+        // persist it either, since visible_fields filters it out).
+        if !vault_role.is_empty() {
+            let addr = self.vault_addr.trim();
+            if !addr.is_empty() && !crate::vault_ssh::is_valid_vault_addr(addr) {
+                return Err("Vault SSH address: must be a non-empty URL without spaces \
+                     or control characters (e.g. http://127.0.0.1:8200)."
+                    .to_string());
+            }
+        }
         Ok(())
     }
 
     /// Convert to a HostEntry.
     pub fn to_entry(&self) -> HostEntry {
         let askpass_trimmed = self.askpass.trim().to_string();
+        let vault_ssh_trimmed = self.vault_ssh.trim().to_string();
+        // Drop vault_addr when the role is empty: without a role the address
+        // has no effect, and persisting leftover state would be confusing.
+        let vault_addr_trimmed = if vault_ssh_trimmed.is_empty() {
+            String::new()
+        } else {
+            self.vault_addr.trim().to_string()
+        };
         HostEntry {
             alias: self.alias.trim().to_string(),
             hostname: self.hostname.trim().to_string(),
@@ -554,6 +695,16 @@ impl HostForm {
                 None
             } else {
                 Some(askpass_trimmed)
+            },
+            vault_ssh: if vault_ssh_trimmed.is_empty() {
+                None
+            } else {
+                Some(vault_ssh_trimmed)
+            },
+            vault_addr: if vault_addr_trimmed.is_empty() {
+                None
+            } else {
+                Some(vault_addr_trimmed)
             },
             ..Default::default()
         }
@@ -573,6 +724,8 @@ pub enum ProviderFormField {
     User,
     IdentityFile,
     VerifyTls,
+    VaultRole,
+    VaultAddr,
     AutoSync,
 }
 
@@ -582,6 +735,8 @@ impl ProviderFormField {
         ProviderFormField::AliasPrefix,
         ProviderFormField::User,
         ProviderFormField::IdentityFile,
+        ProviderFormField::VaultRole,
+        ProviderFormField::VaultAddr,
         ProviderFormField::AutoSync,
     ];
 
@@ -592,6 +747,8 @@ impl ProviderFormField {
         ProviderFormField::User,
         ProviderFormField::IdentityFile,
         ProviderFormField::VerifyTls,
+        ProviderFormField::VaultRole,
+        ProviderFormField::VaultAddr,
         ProviderFormField::AutoSync,
     ];
 
@@ -602,6 +759,8 @@ impl ProviderFormField {
         ProviderFormField::AliasPrefix,
         ProviderFormField::User,
         ProviderFormField::IdentityFile,
+        ProviderFormField::VaultRole,
+        ProviderFormField::VaultAddr,
         ProviderFormField::AutoSync,
     ];
 
@@ -611,6 +770,8 @@ impl ProviderFormField {
         ProviderFormField::AliasPrefix,
         ProviderFormField::User,
         ProviderFormField::IdentityFile,
+        ProviderFormField::VaultRole,
+        ProviderFormField::VaultAddr,
         ProviderFormField::AutoSync,
     ];
 
@@ -621,6 +782,8 @@ impl ProviderFormField {
         ProviderFormField::AliasPrefix,
         ProviderFormField::User,
         ProviderFormField::IdentityFile,
+        ProviderFormField::VaultRole,
+        ProviderFormField::VaultAddr,
         ProviderFormField::AutoSync,
     ];
 
@@ -630,6 +793,8 @@ impl ProviderFormField {
         ProviderFormField::AliasPrefix,
         ProviderFormField::User,
         ProviderFormField::IdentityFile,
+        ProviderFormField::VaultRole,
+        ProviderFormField::VaultAddr,
         ProviderFormField::AutoSync,
     ];
 
@@ -640,6 +805,8 @@ impl ProviderFormField {
         ProviderFormField::AliasPrefix,
         ProviderFormField::User,
         ProviderFormField::IdentityFile,
+        ProviderFormField::VaultRole,
+        ProviderFormField::VaultAddr,
         ProviderFormField::AutoSync,
     ];
 
@@ -650,6 +817,8 @@ impl ProviderFormField {
         ProviderFormField::AliasPrefix,
         ProviderFormField::User,
         ProviderFormField::IdentityFile,
+        ProviderFormField::VaultRole,
+        ProviderFormField::VaultAddr,
         ProviderFormField::AutoSync,
     ];
 
@@ -760,6 +929,8 @@ impl ProviderFormField {
             ProviderFormField::User => "User",
             ProviderFormField::IdentityFile => "Identity File",
             ProviderFormField::VerifyTls => "Verify TLS",
+            ProviderFormField::VaultRole => "Vault SSH Role",
+            ProviderFormField::VaultAddr => "Vault SSH Address",
             ProviderFormField::AutoSync => "Auto Sync",
         }
     }
@@ -779,6 +950,11 @@ pub struct ProviderFormFields {
     pub identity_file: String,
     pub verify_tls: bool,
     pub auto_sync: bool,
+    pub vault_role: String,
+    /// Optional `VAULT_ADDR` override. Empty = inherit parent env. The
+    /// rendered input is progressively disclosed: the field is only visible
+    /// in the provider form when `vault_role` is non-empty.
+    pub vault_addr: String,
     pub focused_field: ProviderFormField,
     pub cursor_pos: usize,
     /// Progressive disclosure: false = required fields only, true = all fields.
@@ -800,6 +976,8 @@ impl ProviderFormFields {
             identity_file: String::new(),
             verify_tls: true,
             auto_sync: true,
+            vault_role: String::new(),
+            vault_addr: String::new(),
             focused_field: ProviderFormField::Token,
             cursor_pos: 0,
             expanded: false,
@@ -817,6 +995,8 @@ impl ProviderFormFields {
             ProviderFormField::AliasPrefix => &self.alias_prefix,
             ProviderFormField::User => &self.user,
             ProviderFormField::IdentityFile => &self.identity_file,
+            ProviderFormField::VaultRole => &self.vault_role,
+            ProviderFormField::VaultAddr => &self.vault_addr,
             ProviderFormField::VerifyTls | ProviderFormField::AutoSync => "",
         }
     }
@@ -832,8 +1012,22 @@ impl ProviderFormFields {
             ProviderFormField::AliasPrefix => Some(&mut self.alias_prefix),
             ProviderFormField::User => Some(&mut self.user),
             ProviderFormField::IdentityFile => Some(&mut self.identity_file),
+            ProviderFormField::VaultRole => Some(&mut self.vault_role),
+            ProviderFormField::VaultAddr => Some(&mut self.vault_addr),
             ProviderFormField::VerifyTls | ProviderFormField::AutoSync => None,
         }
+    }
+
+    /// Filter `fields_for(provider)` to the fields that should actually be
+    /// rendered and receive focus. Progressive disclosure: `VaultAddr` is
+    /// only visible when `vault_role` is non-empty, mirroring the host form.
+    pub fn visible_fields(&self, provider: &str) -> Vec<ProviderFormField> {
+        let role_set = !self.vault_role.trim().is_empty();
+        ProviderFormField::fields_for(provider)
+            .iter()
+            .copied()
+            .filter(|f| *f != ProviderFormField::VaultAddr || role_set)
+            .collect()
     }
 
     pub fn insert_char(&mut self, c: char) {
@@ -1267,6 +1461,9 @@ pub struct StatusMessage {
     pub text: String,
     pub is_error: bool,
     pub tick_count: u32,
+    /// When true the message never auto-expires and `set_background_status`
+    /// will not overwrite it. Cleared by `set_status` or `set_sticky_status`.
+    pub sticky: bool,
 }
 
 /// An item in the display list (hosts + group headers).
@@ -1641,6 +1838,15 @@ impl Drop for App {
             let _ = tunnel.child.kill();
             let _ = tunnel.child.wait();
         }
+        // Cancel and join any in-flight Vault SSH bulk-sign worker so it
+        // cannot keep writing to ~/.purple/certs/ after teardown (panic
+        // unwind, normal exit, etc.).
+        if let Some(ref cancel) = self.vault_signing_cancel {
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        if let Some(handle) = self.vault_sign_thread.take() {
+            let _ = handle.join();
+        }
     }
 }
 
@@ -1654,6 +1860,8 @@ pub struct FormBaseline {
     pub identity_file: String,
     pub proxy_jump: String,
     pub askpass: String,
+    pub vault_ssh: String,
+    pub vault_addr: String,
     pub tags: String,
 }
 
@@ -1689,6 +1897,8 @@ pub struct ProviderFormBaseline {
     pub identity_file: String,
     pub verify_tls: bool,
     pub auto_sync: bool,
+    pub vault_role: String,
+    pub vault_addr: String,
 }
 
 /// Main application state.
@@ -1754,6 +1964,22 @@ pub struct App {
     /// Timestamp of last ping completion (for TTL display). None if no pings done.
     pub ping_checked_at: Option<std::time::Instant>,
 
+    /// Cached vault certificate status per host alias.
+    /// Tuple: (check timestamp, status, cert file mtime at check time).
+    /// The mtime is used to detect external changes (e.g. another purple
+    /// instance or the CLI signing a cert) so the detail panel refreshes
+    /// within one frame instead of waiting for the TTL.
+    pub cert_status_cache: HashMap<
+        String,
+        (
+            std::time::Instant,
+            crate::vault_ssh::CertStatus,
+            Option<std::time::SystemTime>,
+        ),
+    >,
+    /// Aliases currently being checked for cert status (prevent duplicate checks).
+    pub cert_check_in_flight: HashSet<String>,
+
     // Tunnels
     pub tunnel_list: Vec<TunnelRule>,
     pub tunnel_form: TunnelForm,
@@ -1814,6 +2040,26 @@ pub struct App {
     pub provider_form_baseline: Option<ProviderFormBaseline>,
     /// When true, the Esc key shows a "Discard changes?" dialog instead of closing.
     pub pending_discard_confirm: bool,
+
+    /// Deferred config write from VaultSignAllDone (guarded while forms are open).
+    pub pending_vault_config_write: bool,
+
+    /// Side-channel warning from cert-cache cleanup. Set by mutators that
+    /// cannot themselves call `set_status` because they return a Result the
+    /// caller turns into a status. The handler caller drains this and
+    /// overrides the success message when present.
+    pub cert_cleanup_warning: Option<String>,
+
+    /// Cancel flag for the V-key vault signing background thread.
+    pub vault_signing_cancel: Option<Arc<AtomicBool>>,
+
+    /// JoinHandle for the V-key vault signing background thread (for clean exit).
+    pub vault_sign_thread: Option<std::thread::JoinHandle<()>>,
+
+    /// Aliases currently being signed by the bulk V-key loop. Shared with the
+    /// background thread so the main-thread cert-check spawner can skip any
+    /// host that is mid-signing (TOCTOU guard).
+    pub vault_sign_in_flight: Arc<std::sync::Mutex<HashSet<String>>>,
 }
 
 impl App {
@@ -1915,6 +2161,8 @@ impl App {
             auto_ping: crate::preferences::load_auto_ping(),
             filter_down_only: false,
             ping_checked_at: None,
+            cert_status_cache: HashMap::new(),
+            cert_check_in_flight: HashSet::new(),
             tunnel_list: Vec::new(),
             tunnel_form: TunnelForm::new(),
             active_tunnels: HashMap::new(),
@@ -1947,6 +2195,11 @@ impl App {
             snippet_form_baseline: None,
             provider_form_baseline: None,
             pending_discard_confirm: false,
+            pending_vault_config_write: false,
+            cert_cleanup_warning: None,
+            vault_signing_cancel: None,
+            vault_sign_thread: None,
+            vault_sign_in_flight: Arc::new(std::sync::Mutex::new(HashSet::new())),
         }
     }
 
@@ -2672,6 +2925,21 @@ impl App {
 
     /// Reload hosts from config.
     pub fn reload_hosts(&mut self) {
+        // Synchronously flush any deferred vault config write before reloading,
+        // so on-disk state matches in-memory state (no TOCTOU with auto-reload).
+        // Skip when a form is open (flush handler would bail anyway) and do not
+        // call flush_pending_vault_write() itself to avoid recursion.
+        if self.pending_vault_config_write && !self.is_form_open() {
+            if let Err(e) = self.config.write() {
+                self.set_status(
+                    format!("Failed to update config after vault signing: {}", e),
+                    true,
+                );
+            }
+        }
+        // Always clear the flag: either we flushed, or the form-submit path
+        // has already written the full config.
+        self.pending_vault_config_write = false;
         let had_search = self.search.query.take();
         let selected_alias = self
             .selected_host()
@@ -2681,6 +2949,14 @@ impl App {
         self.tunnel_summaries_cache.clear();
         self.hosts = self.config.host_entries();
         self.patterns = self.config.pattern_entries();
+        // Prune cert status cache and in-flight set: retain only entries whose
+        // host alias still exists after the reload.
+        let valid_for_certs: std::collections::HashSet<&str> =
+            self.hosts.iter().map(|h| h.alias.as_str()).collect();
+        self.cert_status_cache
+            .retain(|alias, _| valid_for_certs.contains(alias.as_str()));
+        self.cert_check_in_flight
+            .retain(|alias| valid_for_certs.contains(alias.as_str()));
         if self.sort_mode == SortMode::Original && matches!(self.group_by, GroupBy::None) {
             self.display_list =
                 Self::build_display_list_from(&self.config, &self.hosts, &self.patterns);
@@ -2737,6 +3013,51 @@ impl App {
         if let Some(alias) = selected_alias {
             self.select_host_by_alias(&alias);
         }
+    }
+
+    /// Synchronously re-check a host's Vault SSH certificate and update
+    /// `cert_status_cache` with fresh status + on-disk mtime.
+    ///
+    /// Every sign path (V-key bulk sign, host form submit, connect-time
+    /// `ensure_vault_ssh_if_needed`, CLI) funnels through this helper so the
+    /// detail panel never lies about cert state after a successful sign.
+    ///
+    /// No-op in demo mode. If the host is missing, has no resolvable vault
+    /// role, or the cert path cannot be resolved, any stale entry for the
+    /// alias is removed to avoid showing ghost status.
+    pub fn refresh_cert_cache(&mut self, alias: &str) {
+        if crate::demo_flag::is_demo() {
+            return;
+        }
+        let Some(host) = self.hosts.iter().find(|h| h.alias == alias) else {
+            self.cert_status_cache.remove(alias);
+            return;
+        };
+        let role_some = crate::vault_ssh::resolve_vault_role(
+            host.vault_ssh.as_deref(),
+            host.provider.as_deref(),
+            &self.provider_config,
+        )
+        .is_some();
+        if !role_some {
+            self.cert_status_cache.remove(alias);
+            return;
+        }
+        let cert_path = match crate::vault_ssh::resolve_cert_path(alias, &host.certificate_file) {
+            Ok(p) => p,
+            Err(_) => {
+                self.cert_status_cache.remove(alias);
+                return;
+            }
+        };
+        let status = crate::vault_ssh::check_cert_validity(&cert_path);
+        let mtime = std::fs::metadata(&cert_path)
+            .ok()
+            .and_then(|m| m.modified().ok());
+        self.cert_status_cache.insert(
+            alias.to_string(),
+            (std::time::Instant::now(), status, mtime),
+        );
     }
 
     // --- Search methods ---
@@ -2837,13 +3158,27 @@ impl App {
         };
 
         if let Some(tag_exact) = query.strip_prefix("tag=") {
-            // Exact tag match (from tag picker), includes provider name and virtual "stale"
+            // Exact tag match (from tag picker), includes provider name and virtual "stale"/"vault"
+            let provider_config = &self.provider_config;
             self.search.filtered_indices = self
                 .hosts
                 .iter()
                 .enumerate()
                 .filter(|(_, host)| {
                     (eq_ci("stale", tag_exact) && host.stale.is_some())
+                        || (eq_ci("vault-ssh", tag_exact)
+                            && crate::vault_ssh::resolve_vault_role(
+                                host.vault_ssh.as_deref(),
+                                host.provider.as_deref(),
+                                provider_config,
+                            )
+                            .is_some())
+                        || (eq_ci("vault-kv", tag_exact)
+                            && host
+                                .askpass
+                                .as_deref()
+                                .map(|s| s.starts_with("vault:"))
+                                .unwrap_or(false))
                         || host
                             .provider_tags
                             .iter()
@@ -2861,13 +3196,27 @@ impl App {
                 .map(|(i, _)| i)
                 .collect();
         } else if let Some(tag_query) = query.strip_prefix("tag:") {
-            // Fuzzy tag match (manual search), includes provider name and virtual "stale"
+            // Fuzzy tag match (manual search), includes provider name and virtual "stale"/"vault"
+            let provider_config = &self.provider_config;
             self.search.filtered_indices = self
                 .hosts
                 .iter()
                 .enumerate()
                 .filter(|(_, host)| {
                     (contains_ci("stale", tag_query) && host.stale.is_some())
+                        || (contains_ci("vault-ssh", tag_query)
+                            && crate::vault_ssh::resolve_vault_role(
+                                host.vault_ssh.as_deref(),
+                                host.provider.as_deref(),
+                                provider_config,
+                            )
+                            .is_some())
+                        || (contains_ci("vault-kv", tag_query)
+                            && host
+                                .askpass
+                                .as_deref()
+                                .map(|s| s.starts_with("vault:"))
+                                .unwrap_or(false))
                         || host
                             .provider_tags
                             .iter()
@@ -2989,21 +3338,64 @@ impl App {
         }
     }
 
+    /// Check whether a form screen is currently open (host or provider forms).
+    pub fn is_form_open(&self) -> bool {
+        matches!(
+            self.screen,
+            Screen::AddHost | Screen::EditHost { .. } | Screen::ProviderForm { .. }
+        )
+    }
+
+    /// Flush a deferred vault config write if one is pending and no form is open.
+    /// Returns true if a write was performed.
+    pub fn flush_pending_vault_write(&mut self) -> bool {
+        if !self.pending_vault_config_write || self.is_form_open() {
+            return false;
+        }
+        // reload_hosts() performs the write and clears the flag.
+        self.reload_hosts();
+        true
+    }
+
     pub fn set_status(&mut self, text: impl Into<String>, is_error: bool) {
         self.status = Some(StatusMessage {
             text: text.into(),
             is_error,
             tick_count: 0,
+            sticky: false,
+        });
+    }
+
+    /// Like `set_status` but skips the write when a sticky message is active.
+    /// Use for background/timer events (ping expiry, sync ticks) that must
+    /// not clobber an in-progress or critical sticky message.
+    pub fn set_background_status(&mut self, text: impl Into<String>, is_error: bool) {
+        if self.status.as_ref().is_some_and(|s| s.sticky) {
+            return;
+        }
+        self.set_status(text, is_error);
+    }
+
+    pub fn set_sticky_status(&mut self, text: impl Into<String>, is_error: bool) {
+        self.status = Some(StatusMessage {
+            text: text.into(),
+            is_error,
+            tick_count: 0,
+            sticky: true,
         });
     }
 
     /// Tick the status message timer. Errors show for 5s, success for 3s.
+    /// Sticky messages never expire automatically.
     pub fn tick_status(&mut self) {
         // Don't expire status while providers are still syncing
         if !self.syncing_providers.is_empty() {
             return;
         }
         if let Some(ref mut status) = self.status {
+            if status.sticky {
+                return;
+            }
             status.tick_count += 1;
             let timeout = if status.is_error { 20 } else { 12 };
             if status.tick_count > timeout {
@@ -3039,6 +3431,7 @@ impl App {
                 | Screen::ConfirmHostKeyReset { .. }
                 | Screen::ConfirmPurgeStale { .. }
                 | Screen::ConfirmImport { .. }
+                | Screen::ConfirmVaultSign { .. }
                 | Screen::TagPicker
                 | Screen::ThemePicker
         ) || self.tag_input.is_some()
@@ -3071,9 +3464,32 @@ impl App {
                 self.reload.include_mtimes = Self::snapshot_include_mtimes(&self.config);
                 self.reload.include_dir_mtimes = Self::snapshot_include_dir_mtimes(&self.config);
                 let count = self.hosts.len();
-                self.set_status(format!("Config reloaded. {} hosts.", count), false);
+                self.set_background_status(format!("Config reloaded. {} hosts.", count), false);
             }
         }
+    }
+
+    /// Non-mutating check: has the on-disk config (or any tracked Include)
+    /// been modified since `self.reload.last_modified` was captured? Used by
+    /// async write paths (e.g. the Vault SSH bulk-sign completion handler)
+    /// to refuse writing when an external editor changed the file underneath
+    /// us — overwriting those edits would silently discard user work. The
+    /// backup-on-write mechanism in `SshConfigFile::write()` would still
+    /// recover them, but detecting the conflict BEFORE writing is strictly
+    /// better than after.
+    pub fn external_config_changed(&self) -> bool {
+        let current_mtime = Self::get_mtime(&self.reload.config_path);
+        current_mtime != self.reload.last_modified
+            || self
+                .reload
+                .include_mtimes
+                .iter()
+                .any(|(path, old_mtime)| Self::get_mtime(path) != *old_mtime)
+            || self
+                .reload
+                .include_dir_mtimes
+                .iter()
+                .any(|(path, old_mtime)| Self::get_mtime(path) != *old_mtime)
     }
 
     /// Update the last_modified timestamp (call after writing config).
@@ -3114,6 +3530,8 @@ impl App {
             identity_file: self.form.identity_file.clone(),
             proxy_jump: self.form.proxy_jump.clone(),
             askpass: self.form.askpass.clone(),
+            vault_ssh: self.form.vault_ssh.clone(),
+            vault_addr: self.form.vault_addr.clone(),
             tags: self.form.tags.clone(),
         });
     }
@@ -3129,6 +3547,8 @@ impl App {
                     || self.form.identity_file != b.identity_file
                     || self.form.proxy_jump != b.proxy_jump
                     || self.form.askpass != b.askpass
+                    || self.form.vault_ssh != b.vault_ssh
+                    || self.form.vault_addr != b.vault_addr
                     || self.form.tags != b.tags
             }
             None => false,
@@ -3195,6 +3615,8 @@ impl App {
             identity_file: self.provider_form.identity_file.clone(),
             verify_tls: self.provider_form.verify_tls,
             auto_sync: self.provider_form.auto_sync,
+            vault_role: self.provider_form.vault_role.clone(),
+            vault_addr: self.provider_form.vault_addr.clone(),
         });
     }
 
@@ -3213,6 +3635,8 @@ impl App {
                     || self.provider_form.identity_file != b.identity_file
                     || self.provider_form.verify_tls != b.verify_tls
                     || self.provider_form.auto_sync != b.auto_sync
+                    || self.provider_form.vault_role != b.vault_role
+                    || self.provider_form.vault_addr != b.vault_addr
             }
             None => false,
         }
@@ -3237,6 +3661,21 @@ impl App {
             }
             None => false,
         }
+    }
+
+    /// Returns true if any host or provider has a vault role configured.
+    pub fn has_any_vault_role(&self) -> bool {
+        for host in &self.hosts {
+            if host.vault_ssh.is_some() {
+                return true;
+            }
+        }
+        for section in &self.provider_config.sections {
+            if !section.vault_role.is_empty() {
+                return true;
+            }
+        }
+        false
     }
 
     /// Check if ~/.purple/providers has changed since the provider form was opened.
@@ -3355,6 +3794,8 @@ impl App {
         let mut seen = std::collections::HashSet::new();
         let mut tags = Vec::new();
         let mut has_stale = false;
+        let mut has_vault_ssh = false;
+        let mut has_vault_kv = false;
         for host in &self.hosts {
             for tag in host.provider_tags.iter().chain(host.tags.iter()) {
                 if seen.insert(tag.clone()) {
@@ -3369,6 +3810,23 @@ impl App {
             if host.stale.is_some() {
                 has_stale = true;
             }
+            if crate::vault_ssh::resolve_vault_role(
+                host.vault_ssh.as_deref(),
+                host.provider.as_deref(),
+                &self.provider_config,
+            )
+            .is_some()
+            {
+                has_vault_ssh = true;
+            }
+            if host
+                .askpass
+                .as_deref()
+                .map(|s| s.starts_with("vault:"))
+                .unwrap_or(false)
+            {
+                has_vault_kv = true;
+            }
         }
         for pattern in &self.patterns {
             for tag in &pattern.tags {
@@ -3379,6 +3837,20 @@ impl App {
         }
         if has_stale && seen.insert("stale".to_string()) {
             tags.push("stale".to_string());
+        }
+        if !has_vault_ssh {
+            for section in &self.provider_config.sections {
+                if !section.vault_role.is_empty() {
+                    has_vault_ssh = true;
+                    break;
+                }
+            }
+        }
+        if has_vault_ssh && seen.insert("vault-ssh".to_string()) {
+            tags.push("vault-ssh".to_string());
+        }
+        if has_vault_kv && seen.insert("vault-kv".to_string()) {
+            tags.push("vault-kv".to_string());
         }
         tags.sort_by_cached_key(|a| a.to_lowercase());
         tags
@@ -3529,13 +4001,50 @@ impl App {
         if let Some(ref source) = entry.askpass {
             self.config.set_host_askpass(&alias, source);
         }
+        if let Some(ref role) = entry.vault_ssh {
+            self.config.set_host_vault_ssh(&alias, role);
+            // Persist the optional Vault address next to the role. `set_host_vault_addr`
+            // is `#[must_use]` but the alias was just upserted above so we only
+            // debug-assert the return value here (matches the CertificateFile pattern).
+            let addr = entry.vault_addr.as_deref().unwrap_or("");
+            let addr_wired = self.config.set_host_vault_addr(&alias, addr);
+            debug_assert!(
+                addr_wired,
+                "add_host_from_form: alias '{}' missing immediately after upsert (set_host_vault_addr)",
+                alias
+            );
+            // For a brand-new host the only existing CertificateFile value can
+            // come from the form itself (a power user pasting one in). Honor
+            // the same invariant as edit_host_from_form: never overwrite a
+            // user-set custom path.
+            if crate::should_write_certificate_file(&entry.certificate_file) {
+                let cert_path = crate::vault_ssh::cert_path_for(&alias)
+                    .map_err(|e| format!("Failed to resolve cert path: {}", e))?;
+                // The host block was just upserted above, so the alias MUST
+                // exist. Assert the invariant to catch regressions early.
+                let wired = self
+                    .config
+                    .set_host_certificate_file(&alias, &cert_path.to_string_lossy());
+                debug_assert!(
+                    wired,
+                    "add_host_from_form: alias '{}' missing immediately after upsert",
+                    alias
+                );
+            }
+        }
         if let Err(e) = self.config.write() {
             self.config.elements.truncate(len_before);
             return Err(format!("Failed to save: {}", e));
         }
+        // Form submit writes the full config including any pending vault mutations
+        self.pending_vault_config_write = false;
         self.update_last_modified();
         self.reload_hosts();
         self.select_host_by_alias(&alias);
+        // Refresh the cert cache so the detail panel reflects reality
+        // immediately. No-op when the new host has no vault role or when
+        // running in demo mode.
+        self.refresh_cert_cache(&alias);
         Ok(format!("Welcome aboard, {}!", alias))
     }
 
@@ -3594,21 +4103,124 @@ impl App {
         self.config.set_host_tags(&entry.alias, &entry.tags);
         self.config
             .set_host_askpass(&entry.alias, entry.askpass.as_deref().unwrap_or(""));
+        self.config
+            .set_host_vault_ssh(&entry.alias, entry.vault_ssh.as_deref().unwrap_or(""));
+        // Persist vault address comment. `set_host_vault_addr` refuses
+        // wildcard aliases (mirroring the CertificateFile invariant), so we
+        // skip it entirely for Host pattern entries — patterns never carry a
+        // vault address. For concrete hosts the alias was just upserted so
+        // the #[must_use] return is asserted in debug builds.
+        if !self.form.is_pattern {
+            let addr_wired = self
+                .config
+                .set_host_vault_addr(&entry.alias, entry.vault_addr.as_deref().unwrap_or(""));
+            debug_assert!(
+                addr_wired,
+                "edit_host_from_form: alias '{}' missing immediately after update_host (set_host_vault_addr)",
+                entry.alias
+            );
+        }
+        // HostForm does not track CertificateFile, so the source of truth for
+        // the host's existing CertificateFile is `old_entry` (loaded from
+        // disk), not `entry` (rebuilt from the form, which always has it
+        // empty). Both branches below honor that distinction so a user-set
+        // custom CertificateFile is preserved across an edit.
+        if entry.vault_ssh.is_some() {
+            if crate::should_write_certificate_file(&old_entry.certificate_file) {
+                let cert_path = crate::vault_ssh::cert_path_for(&entry.alias)
+                    .map_err(|e| format!("Failed to resolve cert path: {}", e))?;
+                // Synchronous mutation: the host block was just updated, so
+                // the alias MUST exist. Assert the invariant.
+                let wired = self
+                    .config
+                    .set_host_certificate_file(&entry.alias, &cert_path.to_string_lossy());
+                debug_assert!(
+                    wired,
+                    "edit_host_from_form: alias '{}' missing immediately after update_host",
+                    entry.alias
+                );
+            }
+        } else {
+            // Vault SSH role removed: clear the CertificateFile only if it
+            // points at purple's managed cert path. A user-set custom path is
+            // left alone. Compare the expanded form on both sides so a
+            // tilde-relative directive (`~/.purple/certs/...`) and the
+            // absolute path produced by `cert_path_for` match.
+            let purple_managed = crate::vault_ssh::cert_path_for(&entry.alias).ok();
+            let existing_resolved = if old_entry.certificate_file.is_empty() {
+                None
+            } else {
+                crate::vault_ssh::resolve_cert_path(&entry.alias, &old_entry.certificate_file).ok()
+            };
+            if purple_managed.is_some() && purple_managed == existing_resolved {
+                let _ = self.config.set_host_certificate_file(&entry.alias, "");
+            }
+        }
         if let Err(e) = self.config.write() {
             self.config.update_host(&entry.alias, &old_entry);
             self.config.set_host_tags(&old_entry.alias, &old_entry.tags);
             self.config
                 .set_host_askpass(&old_entry.alias, old_entry.askpass.as_deref().unwrap_or(""));
+            self.config.set_host_vault_ssh(
+                &old_entry.alias,
+                old_entry.vault_ssh.as_deref().unwrap_or(""),
+            );
+            if !self.form.is_pattern {
+                let _ = self.config.set_host_vault_addr(
+                    &old_entry.alias,
+                    old_entry.vault_addr.as_deref().unwrap_or(""),
+                );
+            }
+            if old_entry.vault_ssh.is_some() {
+                // Rollback restores the old host's actual CertificateFile
+                // value (which may be a user-set custom path), not purple's
+                // default. Falling back to the default would silently rewrite
+                // the directive on a write failure.
+                let _ = self
+                    .config
+                    .set_host_certificate_file(&old_entry.alias, &old_entry.certificate_file);
+            } else {
+                let _ = self.config.set_host_certificate_file(&old_entry.alias, "");
+            }
             return Err(format!("Failed to save: {}", e));
         }
+        // Form submit writes the full config including any pending vault mutations
+        self.pending_vault_config_write = false;
         // Migrate active tunnel handle if alias changed
         if alias != old_alias {
             if let Some(tunnel) = self.active_tunnels.remove(old_alias) {
                 self.active_tunnels.insert(alias.clone(), tunnel);
             }
+            // Clean up old cert file on rename. Best-effort: a missing file is
+            // fine (NotFound is expected when no cert was ever signed) but any
+            // other error is surfaced via the status bar (never via eprintln,
+            // which would corrupt the ratatui screen in raw mode).
+            if !crate::demo_flag::is_demo() {
+                if let Ok(old_cert) = crate::vault_ssh::cert_path_for(old_alias) {
+                    match std::fs::remove_file(&old_cert) {
+                        Ok(()) => {}
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(e) => {
+                            self.cert_cleanup_warning = Some(format!(
+                                "Warning: failed to clean up old Vault SSH cert {}: {}",
+                                old_cert.display(),
+                                e
+                            ));
+                        }
+                    }
+                }
+            }
         }
         self.update_last_modified();
         self.reload_hosts();
+        // Refresh the cert cache so the detail panel reflects reality
+        // immediately after an edit (e.g. a newly set vault role, a custom
+        // CertificateFile path change, or role removal). When the alias
+        // itself changed, also clear the stale entry under the old alias.
+        if alias != old_alias {
+            self.cert_status_cache.remove(old_alias);
+        }
+        self.refresh_cert_cache(&alias);
         Ok(format!("{} got a makeover.", alias))
     }
 
@@ -3985,6 +4597,292 @@ mod tests {
             bom: false,
         };
         App::new(config)
+    }
+
+    fn test_app_with_hosts(hosts: &[&str]) -> App {
+        let mut app = make_app(&hosts.join("\n"));
+        // Isolate from the real ~/.purple/providers so tests don't
+        // pick up the user's vault_role / vault_addr config.
+        app.provider_config = crate::providers::config::ProviderConfig::default();
+        app
+    }
+
+    #[test]
+    fn has_any_vault_role_false_when_none_configured() {
+        let app = test_app_with_hosts(&["Host a\n  HostName 1.2.3.4\n"]);
+        assert!(!app.has_any_vault_role());
+    }
+
+    #[test]
+    fn has_any_vault_role_false_when_host_only_has_vault_addr() {
+        // Contract guard: `has_any_vault_role` gates the `V` key and other
+        // vault-sign affordances. A host with ONLY `vault_addr` set (no
+        // role, no provider default role) must return false — an address
+        // without a role cannot be signed. Locks down the semantic contract
+        // so a future refactor cannot flip it without a test failure.
+        let app = test_app_with_hosts(&[
+            "Host a\n  HostName 1.2.3.4\n  # purple:vault-addr http://127.0.0.1:8200\n",
+        ]);
+        assert_eq!(
+            app.hosts[0].vault_addr.as_deref(),
+            Some("http://127.0.0.1:8200")
+        );
+        assert!(app.hosts[0].vault_ssh.is_none());
+        assert!(
+            !app.has_any_vault_role(),
+            "vault_addr without a role must not count as a vault-sign candidate"
+        );
+    }
+
+    // ---- refresh_cert_cache tests ----
+
+    #[test]
+    fn refresh_cert_cache_noop_when_alias_not_in_hosts() {
+        let mut app = test_app_with_hosts(&["Host a\n  HostName 1.2.3.4\n"]);
+        // Plant a stale entry and verify refresh removes it when the alias
+        // is not in self.hosts (caller typed a bad alias).
+        app.cert_status_cache.insert(
+            "ghost".to_string(),
+            (
+                std::time::Instant::now(),
+                crate::vault_ssh::CertStatus::Missing,
+                None,
+            ),
+        );
+        app.refresh_cert_cache("ghost");
+        assert!(!app.cert_status_cache.contains_key("ghost"));
+    }
+
+    #[test]
+    fn refresh_cert_cache_removes_entry_when_no_vault_role() {
+        let mut app = test_app_with_hosts(&["Host a\n  HostName 1.2.3.4\n"]);
+        // Host exists but has no vault role. Any lingering cache entry
+        // should be removed so the detail panel does not flash a phantom
+        // "Not signed" under a section that should not even render.
+        app.cert_status_cache.insert(
+            "a".to_string(),
+            (
+                std::time::Instant::now(),
+                crate::vault_ssh::CertStatus::Missing,
+                None,
+            ),
+        );
+        app.refresh_cert_cache("a");
+        assert!(!app.cert_status_cache.contains_key("a"));
+    }
+
+    #[test]
+    fn host_form_is_dirty_detects_vault_addr_change() {
+        // Regression guard: FormBaseline + host_form_is_dirty must track
+        // vault_addr so Esc with an unsaved address triggers the discard
+        // confirm dialog.
+        let mut app = make_app("Host a\n  HostName 1.2.3.4\n");
+        app.form.vault_ssh = "ssh-client-signer/sign/engineer".to_string();
+        app.form.vault_addr = String::new();
+        app.capture_form_baseline();
+        assert!(!app.host_form_is_dirty());
+        app.form.vault_addr = "http://127.0.0.1:8200".to_string();
+        assert!(
+            app.host_form_is_dirty(),
+            "typing into vault_addr must mark the form dirty"
+        );
+    }
+
+    #[test]
+    fn edit_host_from_form_does_not_write_vault_addr_for_pattern() {
+        // set_host_vault_addr refuses wildcards. The edit_host_from_form path
+        // must skip the call entirely for pattern forms so the debug_assert
+        // does not fire. Verify: a pattern entry with vault_addr set on the
+        // form does NOT end up with a vault-addr comment in the config.
+        let config_src = "Host web-* db-*\n  User debian\n";
+        let mut app = make_app(config_src);
+        app.patterns = app.config.pattern_entries();
+        let pattern = app.patterns.first().cloned().unwrap();
+        let form = HostForm::from_pattern_entry(&pattern);
+        app.form = form;
+        app.form.vault_addr = "http://should-not-persist:8200".to_string();
+        let result = app.edit_host_from_form("web-* db-*");
+        assert!(result.is_ok(), "edit failed: {:?}", result);
+        let serialized = app.config.serialize();
+        assert!(
+            !serialized.contains("vault-addr"),
+            "pattern entry must never carry a vault-addr comment, got: {}",
+            serialized
+        );
+    }
+
+    #[test]
+    fn add_host_from_form_writes_vault_addr_when_role_set() {
+        // Positive case: a new host with both role and address persists
+        // both comments via set_host_vault_ssh + set_host_vault_addr.
+        let mut app = make_app("");
+        app.form = HostForm::new();
+        app.form.alias = "newhost".to_string();
+        app.form.hostname = "10.0.0.1".to_string();
+        app.form.vault_ssh = "ssh-client-signer/sign/engineer".to_string();
+        app.form.vault_addr = "http://127.0.0.1:8200".to_string();
+        let result = app.add_host_from_form();
+        assert!(result.is_ok(), "add failed: {:?}", result);
+        let serialized = app.config.serialize();
+        assert!(serialized.contains("# purple:vault-ssh ssh-client-signer/sign/engineer"));
+        assert!(serialized.contains("# purple:vault-addr http://127.0.0.1:8200"));
+    }
+
+    #[test]
+    fn refresh_cert_cache_inserts_missing_status_for_nonexistent_cert() {
+        // Host with a vault role but no cert on disk yet: cache should be
+        // populated with Missing so the detail panel shows the correct
+        // "Not signed (press V to sign)" affordance immediately after the
+        // host is added via the form.
+        let mut app = test_app_with_hosts(&[
+            "Host a\n  HostName 1.2.3.4\n  # purple:vault-ssh ssh-client-signer/sign/engineer\n",
+        ]);
+        app.refresh_cert_cache("a");
+        match app.cert_status_cache.get("a") {
+            Some((_, crate::vault_ssh::CertStatus::Missing, mtime)) => {
+                assert!(mtime.is_none(), "mtime must be None when cert file absent");
+            }
+            other => panic!("expected Missing status, got {:?}", other),
+        }
+    }
+
+    // ---- end refresh_cert_cache tests ----
+
+    #[test]
+    fn has_any_vault_role_true_when_host_has_vault_ssh() {
+        let app = test_app_with_hosts(&[
+            "Host a\n  HostName 1.2.3.4\n  # purple:vault-ssh ssh/sign/engineer\n",
+        ]);
+        assert!(app.has_any_vault_role());
+    }
+
+    #[test]
+    fn has_any_vault_role_true_when_provider_has_vault_role() {
+        let mut app = test_app_with_hosts(&["Host a\n  HostName 1.2.3.4\n"]);
+        app.provider_config = crate::providers::config::ProviderConfig::parse(
+            "[aws]\ntoken=abc\nvault_role=ssh/sign/engineer\n",
+        );
+        assert!(app.has_any_vault_role());
+    }
+
+    #[test]
+    fn collect_unique_tags_includes_vault_when_host_has_vault_ssh() {
+        let app = test_app_with_hosts(&[
+            "Host a\n  HostName 1.2.3.4\n  # purple:vault-ssh ssh/sign/engineer\n",
+        ]);
+        let tags = app.collect_unique_tags();
+        assert!(tags.contains(&"vault-ssh".to_string()));
+    }
+
+    #[test]
+    fn collect_unique_tags_includes_vault_when_provider_has_vault_role() {
+        let mut app = test_app_with_hosts(&["Host a\n  HostName 1.2.3.4\n"]);
+        app.provider_config = crate::providers::config::ProviderConfig::parse(
+            "[aws]\ntoken=abc\nvault_role=ssh/sign/engineer\n",
+        );
+        let tags = app.collect_unique_tags();
+        assert!(tags.contains(&"vault-ssh".to_string()));
+    }
+
+    #[test]
+    fn collect_unique_tags_excludes_vault_when_none_configured() {
+        let app = test_app_with_hosts(&["Host a\n  HostName 1.2.3.4\n"]);
+        let tags = app.collect_unique_tags();
+        assert!(!tags.contains(&"vault-ssh".to_string()));
+        assert!(!tags.contains(&"vault-kv".to_string()));
+    }
+
+    /// Regression: vault-kv (askpass) and vault-ssh (signed certs) are two
+    /// distinct integrations and must produce two distinct virtual tags. A
+    /// host configured with one must NOT cross-pollute the other tag.
+    #[test]
+    fn vault_kv_and_vault_ssh_are_distinct_virtual_tags() {
+        // Host A: only Vault KV password source (askpass).
+        // Host B: only Vault SSH signed cert role.
+        // Host C: both at once.
+        let app = test_app_with_hosts(&[
+            "Host kv-only\n  HostName 1.0.0.1\n  # purple:askpass vault:secret/data/ssh/kv-only\n",
+            "Host ssh-only\n  HostName 1.0.0.2\n  # purple:vault-ssh ssh/sign/engineer\n",
+            "Host both\n  HostName 1.0.0.3\n  # purple:askpass vault:secret/data/ssh/both\n  # purple:vault-ssh ssh/sign/engineer\n",
+        ]);
+        let tags = app.collect_unique_tags();
+        assert!(
+            tags.contains(&"vault-kv".to_string()),
+            "vault-kv must be present: {:?}",
+            tags
+        );
+        assert!(
+            tags.contains(&"vault-ssh".to_string()),
+            "vault-ssh must be present: {:?}",
+            tags
+        );
+    }
+
+    #[test]
+    fn vault_kv_only_host_does_not_get_vault_ssh_tag() {
+        // A host with only an askpass `vault:` source must not be reported as
+        // having a Vault SSH role configured.
+        let app = test_app_with_hosts(&[
+            "Host kv-only\n  HostName 1.0.0.1\n  # purple:askpass vault:secret/data/ssh/kv-only\n",
+        ]);
+        assert!(
+            !app.has_any_vault_role(),
+            "vault: askpass must not register as a Vault SSH role"
+        );
+    }
+
+    #[test]
+    fn flush_pending_vault_write_noop_when_flag_false() {
+        let mut app = test_app_with_hosts(&["Host a\n  HostName 1.2.3.4\n"]);
+        app.pending_vault_config_write = false;
+        app.flush_pending_vault_write();
+        assert!(!app.pending_vault_config_write);
+    }
+
+    #[test]
+    fn flush_pending_vault_write_clears_flag_after_flush() {
+        let mut app = test_app_with_hosts(&["Host a\n  HostName 1.2.3.4\n"]);
+        app.pending_vault_config_write = true;
+        let tmpdir = std::env::temp_dir();
+        let path = tmpdir.join("purple_test_flush_pending.ini");
+        app.config.path = path.clone();
+        app.flush_pending_vault_write();
+        assert!(!app.pending_vault_config_write);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn reload_hosts_clears_pending_vault_write_flag() {
+        let mut app = test_app_with_hosts(&["Host a\n  HostName 1.2.3.4\n"]);
+        app.pending_vault_config_write = true;
+        let tmpdir = std::env::temp_dir();
+        let path = tmpdir.join("purple_test_reload_flush.ini");
+        app.config.path = path.clone();
+        app.reload_hosts();
+        assert!(!app.pending_vault_config_write);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn confirm_vault_sign_screen_stores_signable_list() {
+        let mut app = test_app_with_hosts(&["Host a\n  HostName 1.2.3.4\n"]);
+        let signable = vec![(
+            "a".to_string(),
+            "ssh/sign/engineer".to_string(),
+            String::new(),
+            std::path::PathBuf::from("/tmp/id_ed25519.pub"),
+            None,
+        )];
+        app.screen = Screen::ConfirmVaultSign {
+            signable: signable.clone(),
+        };
+        match &app.screen {
+            Screen::ConfirmVaultSign { signable: s } => {
+                assert_eq!(s.len(), 1);
+                assert_eq!(s[0].0, "a");
+            }
+            _ => panic!("wrong screen"),
+        }
     }
 
     #[test]
@@ -4654,6 +5552,126 @@ Host do-alpha
     }
 
     #[test]
+    fn test_validate_vault_ssh_accepts_valid_role() {
+        let mut form = HostForm::new();
+        form.alias = "myhost".to_string();
+        form.hostname = "1.2.3.4".to_string();
+        form.port = "22".to_string();
+        form.vault_ssh = "ssh-client-signer/sign/engineer".to_string();
+        assert!(form.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_vault_ssh_accepts_empty_role() {
+        // Empty vault_ssh means "inherit from provider or none"
+        let mut form = HostForm::new();
+        form.alias = "myhost".to_string();
+        form.hostname = "1.2.3.4".to_string();
+        form.port = "22".to_string();
+        form.vault_ssh = String::new();
+        assert!(form.validate().is_ok());
+    }
+
+    // ---- vault_addr validation ----
+
+    fn minimal_form_with_role() -> HostForm {
+        let mut form = HostForm::new();
+        form.alias = "myhost".to_string();
+        form.hostname = "1.2.3.4".to_string();
+        form.port = "22".to_string();
+        form.vault_ssh = "ssh-client-signer/sign/engineer".to_string();
+        form
+    }
+
+    #[test]
+    fn test_validate_vault_addr_accepts_empty() {
+        let form = minimal_form_with_role();
+        assert!(form.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_vault_addr_accepts_valid_url() {
+        let mut form = minimal_form_with_role();
+        form.vault_addr = "http://127.0.0.1:8200".to_string();
+        assert!(form.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_vault_addr_rejects_whitespace() {
+        let mut form = minimal_form_with_role();
+        form.vault_addr = "http://host :8200".to_string();
+        let err = form.validate().unwrap_err();
+        assert!(err.contains("Vault SSH address"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_validate_vault_addr_rejects_control_char() {
+        let mut form = minimal_form_with_role();
+        form.vault_addr = "http://host\n8200".to_string();
+        assert!(form.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_vault_addr_ignored_when_role_empty() {
+        // No role set: vault_addr is not validated (it will be dropped at
+        // to_entry time regardless), so an otherwise-invalid value does
+        // not cause a submit failure.
+        let mut form = HostForm::new();
+        form.alias = "myhost".to_string();
+        form.hostname = "1.2.3.4".to_string();
+        form.port = "22".to_string();
+        form.vault_addr = "http://host with space".to_string();
+        assert!(form.validate().is_ok());
+    }
+
+    #[test]
+    fn test_to_entry_clears_vault_addr_when_role_empty() {
+        let mut form = HostForm::new();
+        form.alias = "myhost".to_string();
+        form.hostname = "1.2.3.4".to_string();
+        form.port = "22".to_string();
+        form.vault_addr = "http://leftover:8200".to_string();
+        // vault_ssh intentionally empty — vault_addr must not survive to_entry.
+        let entry = form.to_entry();
+        assert!(entry.vault_addr.is_none());
+    }
+
+    #[test]
+    fn test_to_entry_persists_vault_addr_when_role_set() {
+        let mut form = minimal_form_with_role();
+        form.vault_addr = "http://127.0.0.1:8200".to_string();
+        let entry = form.to_entry();
+        assert_eq!(entry.vault_addr.as_deref(), Some("http://127.0.0.1:8200"));
+    }
+
+    // ---- end vault_addr validation ----
+
+    #[test]
+    fn test_validate_vault_ssh_rejects_spaces_in_role() {
+        let mut form = HostForm::new();
+        form.alias = "myhost".to_string();
+        form.hostname = "1.2.3.4".to_string();
+        form.port = "22".to_string();
+        form.vault_ssh = "ssh client signer/sign/role".to_string();
+        let err = form.validate().unwrap_err();
+        assert!(
+            err.contains("Vault SSH role"),
+            "error should mention Vault SSH role, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_validate_vault_ssh_rejects_shell_metacharacters() {
+        let mut form = HostForm::new();
+        form.alias = "myhost".to_string();
+        form.hostname = "1.2.3.4".to_string();
+        form.port = "22".to_string();
+        form.vault_ssh = "ssh-client-signer/sign/role;rm -rf /".to_string();
+        assert!(form.validate().is_err());
+    }
+
+    #[test]
     fn test_to_entry_parses_tags() {
         let mut form = HostForm::new();
         form.alias = "myhost".to_string();
@@ -5177,6 +6195,8 @@ Host do-alpha
                 regions: String::new(),
                 project: String::new(),
                 compartment: String::new(),
+                vault_role: String::new(),
+                vault_addr: String::new(),
             });
         app
     }
@@ -5270,6 +6290,8 @@ Host do-alpha
                 regions: String::new(),
                 project: String::new(),
                 compartment: String::new(),
+                vault_role: String::new(),
+                vault_addr: String::new(),
             });
         let (msg, is_err, total, _, _, _) = app.apply_sync_result("nonexistent", vec![], false);
         assert!(is_err);
@@ -5486,6 +6508,8 @@ Host do-alpha
             regions: String::new(),
             project: String::new(),
             compartment: String::new(),
+            vault_role: String::new(),
+            vault_addr: String::new(),
         }
     }
 
@@ -5804,17 +6828,86 @@ Host do-alpha
 
     #[test]
     fn test_askpass_field_navigation() {
-        // AskPass is between ProxyJump and Tags
+        // Schema order: IdentityFile, VaultSsh, VaultAddr, ProxyJump, AskPass, Tags.
+        // `FormField::next()`/`prev()` walk the raw `ALL` array (schema order)
+        // regardless of visibility; the visibility-aware walk lives in
+        // `HostForm::focus_next_visible`/`focus_prev_visible` and is covered
+        // by its own tests below.
+        assert_eq!(FormField::IdentityFile.next(), FormField::VaultSsh);
+        assert_eq!(FormField::VaultSsh.next(), FormField::VaultAddr);
+        assert_eq!(FormField::VaultAddr.next(), FormField::ProxyJump);
         assert_eq!(FormField::ProxyJump.next(), FormField::AskPass);
         assert_eq!(FormField::AskPass.next(), FormField::Tags);
         assert_eq!(FormField::Tags.prev(), FormField::AskPass);
         assert_eq!(FormField::AskPass.prev(), FormField::ProxyJump);
+        assert_eq!(FormField::ProxyJump.prev(), FormField::VaultAddr);
+        assert_eq!(FormField::VaultAddr.prev(), FormField::VaultSsh);
+        assert_eq!(FormField::VaultSsh.prev(), FormField::IdentityFile);
     }
 
     #[test]
     fn test_form_field_all_includes_askpass() {
         assert!(FormField::ALL.contains(&FormField::AskPass));
-        assert_eq!(FormField::ALL.len(), 8);
+        assert!(FormField::ALL.contains(&FormField::VaultSsh));
+        assert!(FormField::ALL.contains(&FormField::VaultAddr));
+        assert_eq!(FormField::ALL.len(), 10);
+    }
+
+    #[test]
+    fn host_form_visible_fields_hides_vault_addr_when_role_empty() {
+        let form = HostForm::new();
+        assert!(form.vault_ssh.is_empty());
+        let visible = form.visible_fields();
+        assert!(
+            !visible.contains(&FormField::VaultAddr),
+            "VaultAddr must be hidden when role is empty"
+        );
+        // All other fields still present.
+        assert_eq!(visible.len(), FormField::ALL.len() - 1);
+    }
+
+    #[test]
+    fn host_form_visible_fields_shows_vault_addr_when_role_set() {
+        let mut form = HostForm::new();
+        form.vault_ssh = "ssh-client-signer/sign/engineer".to_string();
+        let visible = form.visible_fields();
+        assert!(visible.contains(&FormField::VaultAddr));
+        assert_eq!(visible.len(), FormField::ALL.len());
+    }
+
+    #[test]
+    fn host_form_focus_next_visible_skips_vault_addr_when_role_empty() {
+        let mut form = HostForm::new();
+        form.focused_field = FormField::VaultSsh;
+        form.focus_next_visible();
+        assert_eq!(
+            form.focused_field,
+            FormField::ProxyJump,
+            "Tab from VaultSsh must skip the hidden VaultAddr"
+        );
+    }
+
+    #[test]
+    fn host_form_focus_prev_visible_skips_vault_addr_when_role_empty() {
+        let mut form = HostForm::new();
+        form.focused_field = FormField::ProxyJump;
+        form.focus_prev_visible();
+        assert_eq!(
+            form.focused_field,
+            FormField::VaultSsh,
+            "Shift-Tab from ProxyJump must skip the hidden VaultAddr"
+        );
+    }
+
+    #[test]
+    fn host_form_focus_next_visible_includes_vault_addr_when_role_set() {
+        let mut form = HostForm::new();
+        form.vault_ssh = "ssh/sign/engineer".to_string();
+        form.focused_field = FormField::VaultSsh;
+        form.focus_next_visible();
+        assert_eq!(form.focused_field, FormField::VaultAddr);
+        form.focus_next_visible();
+        assert_eq!(form.focused_field, FormField::ProxyJump);
     }
 
     // --- Password picker state ---
@@ -5857,6 +6950,42 @@ Host do-alpha
         app.select_prev_password_source();
         let last = crate::askpass::PASSWORD_SOURCES.len() - 1;
         assert_eq!(app.ui.password_picker_state.selected(), Some(last));
+    }
+
+    // --- ProviderFormFields vault_addr visibility ---
+
+    #[test]
+    fn provider_form_visible_fields_hides_vault_addr_when_role_empty() {
+        let form = ProviderFormFields::new();
+        let visible = form.visible_fields("digitalocean");
+        assert!(
+            !visible.contains(&ProviderFormField::VaultAddr),
+            "VaultAddr must be hidden when the provider role is empty"
+        );
+        assert!(visible.contains(&ProviderFormField::VaultRole));
+    }
+
+    #[test]
+    fn provider_form_visible_fields_shows_vault_addr_when_role_set() {
+        let mut form = ProviderFormFields::new();
+        form.vault_role = "ssh-client-signer/sign/engineer".to_string();
+        let visible = form.visible_fields("digitalocean");
+        assert!(visible.contains(&ProviderFormField::VaultAddr));
+        assert!(visible.contains(&ProviderFormField::VaultRole));
+    }
+
+    #[test]
+    fn provider_form_visible_fields_vault_addr_follows_role_across_providers() {
+        let mut form = ProviderFormFields::new();
+        form.vault_role = "ssh-client-signer/sign/engineer".to_string();
+        for provider in ["digitalocean", "proxmox", "aws", "gcp", "azure", "oracle"] {
+            let visible = form.visible_fields(provider);
+            assert!(
+                visible.contains(&ProviderFormField::VaultAddr),
+                "VaultAddr must be visible for provider {} when role is set",
+                provider
+            );
+        }
     }
 
     // --- Host entry askpass from config ---
@@ -5988,6 +7117,144 @@ Host do-alpha
         assert!(entry.askpass.is_some());
     }
 
+    // --- vault_ssh round-trip tests ---
+
+    #[test]
+    fn host_form_validate_rejects_invalid_vault_role() {
+        let mut form = HostForm::new();
+        form.alias = "h".to_string();
+        form.hostname = "1.2.3.4".to_string();
+        form.port = "22".to_string();
+        form.vault_ssh = "bad role with spaces".to_string();
+        let err = form.validate().unwrap_err();
+        assert!(
+            err.contains("Vault SSH role"),
+            "expected vault role error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn host_form_validate_accepts_empty_vault_role() {
+        let mut form = HostForm::new();
+        form.alias = "h".to_string();
+        form.hostname = "1.2.3.4".to_string();
+        form.port = "22".to_string();
+        form.vault_ssh = "   ".to_string();
+        assert!(form.validate().is_ok());
+    }
+
+    #[test]
+    fn host_form_validate_accepts_valid_vault_role() {
+        let mut form = HostForm::new();
+        form.alias = "h".to_string();
+        form.hostname = "1.2.3.4".to_string();
+        form.port = "22".to_string();
+        form.vault_ssh = "ssh-client-signer/sign/my-role".to_string();
+        assert!(form.validate().is_ok());
+    }
+
+    #[test]
+    fn to_entry_vault_ssh_some_when_set() {
+        let mut form = HostForm::new();
+        form.alias = "test".to_string();
+        form.hostname = "10.0.0.1".to_string();
+        form.vault_ssh = "ssh/sign/engineer".to_string();
+        let entry = form.to_entry();
+        assert_eq!(entry.vault_ssh.as_deref(), Some("ssh/sign/engineer"));
+    }
+
+    #[test]
+    fn to_entry_vault_ssh_none_when_empty() {
+        let mut form = HostForm::new();
+        form.alias = "test".to_string();
+        form.hostname = "10.0.0.1".to_string();
+        form.vault_ssh = String::new();
+        let entry = form.to_entry();
+        assert!(entry.vault_ssh.is_none());
+    }
+
+    #[test]
+    fn to_entry_vault_ssh_none_when_whitespace() {
+        let mut form = HostForm::new();
+        form.alias = "test".to_string();
+        form.hostname = "10.0.0.1".to_string();
+        form.vault_ssh = "   ".to_string();
+        let entry = form.to_entry();
+        assert!(entry.vault_ssh.is_none());
+    }
+
+    #[test]
+    fn from_entry_duplicate_clears_vault_ssh_and_cert() {
+        let entry = crate::ssh_config::model::HostEntry {
+            alias: "original".to_string(),
+            hostname: "10.0.0.1".to_string(),
+            vault_ssh: Some("ssh/sign/admin".to_string()),
+            certificate_file: "~/.purple/certs/original-cert.pub".to_string(),
+            ..Default::default()
+        };
+        let (form, had_vault) = HostForm::from_entry_duplicate(
+            &entry,
+            crate::ssh_config::model::InheritedHints::default(),
+        );
+        // vault_ssh must be cleared so the copy does not inherit a per-host
+        // override tied to the original alias's cert file.
+        assert!(form.vault_ssh.is_empty());
+        assert!(had_vault, "caller should be told vault_ssh was cleared");
+        // HostForm has no certificate_file field; the cert path is derived
+        // from the alias at save time, so cloning can never carry it over.
+    }
+
+    #[test]
+    fn from_entry_populates_vault_ssh() {
+        let entry = crate::ssh_config::model::HostEntry {
+            alias: "test".to_string(),
+            hostname: "10.0.0.1".to_string(),
+            vault_ssh: Some("ssh/sign/admin".to_string()),
+            ..Default::default()
+        };
+        let form =
+            HostForm::from_entry(&entry, crate::ssh_config::model::InheritedHints::default());
+        assert_eq!(form.vault_ssh, "ssh/sign/admin");
+    }
+
+    // --- add_host_from_form with vault_ssh (bypassing write) ---
+
+    #[test]
+    fn test_add_host_from_form_sets_vault_ssh_and_certificate_file() {
+        let dir = std::env::temp_dir().join("purple_test_add_vault_ssh");
+        let _ = std::fs::create_dir_all(&dir);
+        let config_path = dir.join("config");
+        let _ = std::fs::write(&config_path, "Host existing\n  HostName 1.2.3.4\n");
+        let config = SshConfigFile {
+            elements: SshConfigFile::parse_content("Host existing\n  HostName 1.2.3.4\n"),
+            path: config_path.clone(),
+            crlf: false,
+            bom: false,
+        };
+        let mut app = App::new(config);
+        app.form.alias = "vaulthost".to_string();
+        app.form.hostname = "10.0.0.1".to_string();
+        app.form.vault_ssh = "ssh/sign/engineer".to_string();
+        let result = app.add_host_from_form();
+        assert!(result.is_ok(), "add_host_from_form failed: {:?}", result);
+        let entries = app.config.host_entries();
+        let host = entries.iter().find(|e| e.alias == "vaulthost").unwrap();
+        assert_eq!(host.vault_ssh.as_deref(), Some("ssh/sign/engineer"));
+        let serialized = app.config.serialize();
+        assert!(
+            serialized.contains("CertificateFile"),
+            "should have CertificateFile: {}",
+            serialized
+        );
+        assert!(
+            serialized.contains("purple:vault-ssh ssh/sign/engineer"),
+            "should have vault-ssh comment: {}",
+            serialized
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     // --- update host askpass via config (bypassing write which fails in test) ---
 
     #[test]
@@ -6036,6 +7303,117 @@ Host do-alpha
             .set_host_askpass("myserver", entry.askpass.as_deref().unwrap_or(""));
         let serialized = app.config.serialize();
         assert!(serialized.contains("purple:askpass vault:secret/ssh#pass"));
+    }
+
+    #[test]
+    fn test_edit_host_sets_vault_ssh_and_certificate_file() {
+        let content = "Host myserver\n  HostName 10.0.0.1\n";
+        let dir = std::env::temp_dir().join("purple_test_edit_vault_ssh_set");
+        let _ = std::fs::create_dir_all(&dir);
+        let config_path = dir.join("config");
+        let _ = std::fs::write(&config_path, content);
+        let config = SshConfigFile {
+            elements: SshConfigFile::parse_content(content),
+            path: config_path.clone(),
+            crlf: false,
+            bom: false,
+        };
+        let mut app = App::new(config);
+        let host = app.hosts[0].clone();
+        app.form = HostForm::from_entry(&host, Default::default());
+        app.form.vault_ssh = "ssh/sign/engineer".to_string();
+
+        let result = app.edit_host_from_form("myserver");
+        assert!(result.is_ok(), "edit_host_from_form failed: {:?}", result);
+        let serialized = app.config.serialize();
+        assert!(
+            serialized.contains("purple:vault-ssh ssh/sign/engineer"),
+            "should have vault-ssh: {}",
+            serialized
+        );
+        assert!(
+            serialized.contains("CertificateFile"),
+            "should have CertificateFile: {}",
+            serialized
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Regression: editing a host that already has a user-set custom
+    /// CertificateFile must NOT overwrite that path with purple's default
+    /// when the host has a Vault SSH role. The whole point of the
+    /// `should_write_certificate_file` invariant.
+    #[test]
+    fn test_edit_host_preserves_custom_certificate_file_with_vault_role() {
+        let content = "Host myserver\n  HostName 10.0.0.1\n  CertificateFile /etc/ssh/my-custom-cert.pub\n  # purple:vault-ssh ssh/sign/engineer\n";
+        let dir = std::env::temp_dir().join(format!(
+            "purple_test_preserve_custom_cert_{:?}",
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let config_path = dir.join("config");
+        std::fs::write(&config_path, content).unwrap();
+        let config = SshConfigFile {
+            elements: SshConfigFile::parse_content(content),
+            path: config_path,
+            crlf: false,
+            bom: false,
+        };
+        let mut app = App::new(config);
+        let host = app.hosts[0].clone();
+        app.form = HostForm::from_entry(&host, Default::default());
+        // Change something unrelated so the form actually mutates.
+        app.form.user = "admin".to_string();
+
+        let result = app.edit_host_from_form("myserver");
+        assert!(result.is_ok(), "edit_host_from_form failed: {:?}", result);
+        let serialized = app.config.serialize();
+        assert!(
+            serialized.contains("CertificateFile /etc/ssh/my-custom-cert.pub"),
+            "custom CertificateFile must be preserved across edit: {}",
+            serialized
+        );
+        assert!(
+            !serialized.contains(".purple/certs/"),
+            "purple's default cert path must NOT be written: {}",
+            serialized
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_edit_host_clears_vault_ssh_removes_certificate_file() {
+        let content = "Host myserver\n  HostName 10.0.0.1\n  CertificateFile ~/.purple/certs/myserver-cert.pub\n  # purple:vault-ssh ssh/sign/old\n";
+        let dir = std::env::temp_dir().join("purple_test_edit_vault_ssh_clear");
+        let _ = std::fs::create_dir_all(&dir);
+        let config_path = dir.join("config");
+        let _ = std::fs::write(&config_path, content);
+        let config = SshConfigFile {
+            elements: SshConfigFile::parse_content(content),
+            path: config_path.clone(),
+            crlf: false,
+            bom: false,
+        };
+        let mut app = App::new(config);
+        let host = app.hosts[0].clone();
+        app.form = HostForm::from_entry(&host, Default::default());
+        app.form.vault_ssh = String::new();
+
+        let result = app.edit_host_from_form("myserver");
+        assert!(result.is_ok(), "edit_host_from_form failed: {:?}", result);
+        let serialized = app.config.serialize();
+        assert!(
+            !serialized.contains("vault-ssh"),
+            "vault-ssh should be removed: {}",
+            serialized
+        );
+        assert!(
+            !serialized.contains("CertificateFile"),
+            "CertificateFile should be removed: {}",
+            serialized
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -6203,6 +7581,64 @@ Host do-alpha
     }
 
     #[test]
+    fn test_edit_vault_addr_rollback_restores_old_value() {
+        // Mirrors the askpass rollback pattern: on a simulated write
+        // failure, the old vault_addr comment must be restored so the
+        // on-disk config is not half-mutated when the form submit bails.
+        let mut app = make_app(
+            "Host myserver\n  HostName 10.0.0.1\n  # purple:vault-ssh ssh-client-signer/sign/engineer\n  # purple:vault-addr http://old:8200\n",
+        );
+        let old_entry = app.hosts[0].clone();
+        assert_eq!(old_entry.vault_addr.as_deref(), Some("http://old:8200"));
+
+        // Apply a new vault_addr (successful in-memory mutation).
+        assert!(
+            app.config
+                .set_host_vault_addr("myserver", "http://new:8200")
+        );
+        assert_eq!(
+            app.config.host_entries()[0].vault_addr.as_deref(),
+            Some("http://new:8200")
+        );
+
+        // Simulate rollback (write failed). This is the exact call the
+        // edit_host_from_form rollback block makes.
+        let _ = app.config.set_host_vault_addr(
+            &old_entry.alias,
+            old_entry.vault_addr.as_deref().unwrap_or(""),
+        );
+        assert_eq!(
+            app.config.host_entries()[0].vault_addr.as_deref(),
+            Some("http://old:8200")
+        );
+    }
+
+    #[test]
+    fn test_edit_vault_addr_rollback_restores_none() {
+        // Rollback from a just-added vault_addr back to empty (no comment).
+        let mut app = make_app(
+            "Host myserver\n  HostName 10.0.0.1\n  # purple:vault-ssh ssh-client-signer/sign/engineer\n",
+        );
+        let old_entry = app.hosts[0].clone();
+        assert!(old_entry.vault_addr.is_none());
+
+        assert!(
+            app.config
+                .set_host_vault_addr("myserver", "http://new:8200")
+        );
+        assert_eq!(
+            app.config.host_entries()[0].vault_addr.as_deref(),
+            Some("http://new:8200")
+        );
+
+        let _ = app.config.set_host_vault_addr(
+            &old_entry.alias,
+            old_entry.vault_addr.as_deref().unwrap_or(""),
+        );
+        assert!(app.config.host_entries()[0].vault_addr.is_none());
+    }
+
+    #[test]
     fn test_edit_askpass_rollback_restores_none() {
         let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n");
         let old_entry = app.hosts[0].clone();
@@ -6250,8 +7686,10 @@ Host do-alpha
             .iter()
             .position(|f| matches!(f, FormField::AskPass))
             .unwrap();
-        assert_eq!(askpass_idx, 6, "AskPass should be the 7th field (index 6)");
-        // Verify it's between ProxyJump and Tags
+        // VaultAddr was added after VaultSsh, shifting AskPass from index 7
+        // to index 8. Its neighbours (ProxyJump before, Tags after) are
+        // unchanged.
+        assert_eq!(askpass_idx, 8, "AskPass should be the 9th field (index 8)");
         assert!(matches!(fields[askpass_idx - 1], FormField::ProxyJump));
         assert!(matches!(fields[askpass_idx + 1], FormField::Tags));
     }
@@ -6394,18 +7832,23 @@ Host do-alpha
     // =========================================================================
 
     #[test]
-    fn test_askpass_field_is_seventh_in_form() {
+    fn test_askpass_field_is_ninth_in_form() {
+        // VaultAddr was added at position 6 (right after VaultSsh), pushing
+        // ProxyJump/AskPass/Tags each one slot further.
         let fields = FormField::ALL;
-        assert_eq!(fields.len(), 8);
-        assert!(matches!(fields[6], FormField::AskPass));
+        assert_eq!(fields.len(), 10);
+        assert!(matches!(fields[8], FormField::AskPass));
     }
 
     #[test]
-    fn test_askpass_field_between_proxyjump_and_tags() {
+    fn test_field_order_identity_vault_addr_proxy_askpass_tags() {
         let fields = FormField::ALL;
-        assert!(matches!(fields[5], FormField::ProxyJump));
-        assert!(matches!(fields[6], FormField::AskPass));
-        assert!(matches!(fields[7], FormField::Tags));
+        assert!(matches!(fields[4], FormField::IdentityFile));
+        assert!(matches!(fields[5], FormField::VaultSsh));
+        assert!(matches!(fields[6], FormField::VaultAddr));
+        assert!(matches!(fields[7], FormField::ProxyJump));
+        assert!(matches!(fields[8], FormField::AskPass));
+        assert!(matches!(fields[9], FormField::Tags));
     }
 
     // =========================================================================
@@ -6671,6 +8114,8 @@ Host do-db
                 regions: String::new(),
                 project: String::new(),
                 compartment: String::new(),
+                vault_role: String::new(),
+                vault_addr: String::new(),
             });
 
         // First sync adds both hosts
@@ -9395,5 +10840,182 @@ Host aws1
     fn snippet_param_form_not_dirty_empty_params() {
         let state = SnippetParamFormState::new(&[]);
         assert!(!state.is_dirty());
+    }
+
+    #[test]
+    fn tick_status_sticky_never_expires() {
+        let mut app = make_app("");
+        app.set_sticky_status("vault signing...", false);
+        for _ in 0..50 {
+            app.tick_status();
+        }
+        assert!(app.status.is_some(), "sticky status must not expire");
+    }
+
+    #[test]
+    fn tick_status_non_sticky_error_expires() {
+        let mut app = make_app("");
+        app.set_status("failed", true);
+        for _ in 0..=20 {
+            app.tick_status();
+        }
+        assert!(
+            app.status.is_none(),
+            "non-sticky error must expire after 20 ticks"
+        );
+    }
+
+    #[test]
+    fn tick_status_non_sticky_success_expires() {
+        let mut app = make_app("");
+        app.set_status("done", false);
+        for _ in 0..=12 {
+            app.tick_status();
+        }
+        assert!(
+            app.status.is_none(),
+            "non-sticky success must expire after 12 ticks"
+        );
+    }
+
+    #[test]
+    fn set_status_does_not_overwrite_sticky() {
+        let mut app = make_app("");
+        app.set_sticky_status("signing...", false);
+        app.set_background_status("ping expired", false);
+        assert_eq!(
+            app.status.as_ref().unwrap().text,
+            "signing...",
+            "set_background_status must not overwrite sticky"
+        );
+    }
+
+    #[test]
+    fn set_sticky_status_replaces_sticky() {
+        let mut app = make_app("");
+        app.set_sticky_status("signing...", false);
+        app.set_sticky_status("done signing", true);
+        assert_eq!(
+            app.status.as_ref().unwrap().text,
+            "done signing",
+            "set_sticky_status must replace sticky"
+        );
+    }
+
+    #[test]
+    fn set_status_replaces_sticky() {
+        let mut app = make_app("");
+        app.set_sticky_status("signing...", false);
+        // set_status (user-initiated) CAN replace sticky
+        app.set_status("Signed 3 of 3 certificates.", false);
+        assert_eq!(
+            app.status.as_ref().unwrap().text,
+            "Signed 3 of 3 certificates.",
+            "set_status must be able to replace sticky"
+        );
+        assert!(!app.status.as_ref().unwrap().sticky);
+    }
+
+    // Gap 1: set_status on a fresh app with no prior status at all.
+    #[test]
+    fn set_status_works_when_status_is_none() {
+        let mut app = make_app("");
+        assert!(
+            app.status.is_none(),
+            "precondition: fresh app has no status"
+        );
+        app.set_status("connected", false);
+        assert_eq!(
+            app.status.as_ref().unwrap().text,
+            "connected",
+            "set_status must set the message when no status exists"
+        );
+    }
+
+    // Gap 2: set_status is still blocked after the sticky is replaced by a second set_sticky_status.
+    // Verifies that the blocking invariant holds for the replacement sticky, not just the first one.
+    #[test]
+    fn set_background_status_blocked_after_sticky_replaced_by_sticky() {
+        let mut app = make_app("");
+        app.set_sticky_status("signing...", false);
+        app.set_sticky_status("still signing...", false);
+        app.set_background_status("ping expired", false);
+        assert_eq!(
+            app.status.as_ref().unwrap().text,
+            "still signing...",
+            "set_background_status must not overwrite the replacement sticky"
+        );
+    }
+
+    // Gap 3: tick_status does not alter the content of a sticky message, only its absence/presence.
+    #[test]
+    fn tick_status_sticky_text_unchanged() {
+        let mut app = make_app("");
+        app.set_sticky_status("vault signing...", false);
+        for _ in 0..50 {
+            app.tick_status();
+        }
+        assert_eq!(
+            app.status.as_ref().unwrap().text,
+            "vault signing...",
+            "tick_status must not alter sticky message text"
+        );
+        assert!(
+            app.status.as_ref().unwrap().sticky,
+            "tick_status must not clear the sticky flag"
+        );
+    }
+
+    // Gap 4: documents the user-action contract: while a sticky Vault signing message is active,
+    // any incidental set_status call (e.g. from a navigation handler) is suppressed.
+    // This is intentional: Vault SSH signing feedback is more important than transient nav feedback.
+    #[test]
+    fn set_background_status_suppressed_during_vault_signing() {
+        let mut app = make_app("");
+        app.set_sticky_status("Signing certificate...", false);
+        // Background event (ping, tunnel) must not clobber signing status
+        app.set_background_status("Ping expired.", false);
+        assert_eq!(
+            app.status.as_ref().unwrap().text,
+            "Signing certificate...",
+            "background status must be suppressed while sticky is active"
+        );
+        assert!(app.status.as_ref().unwrap().sticky);
+    }
+
+    #[test]
+    fn set_background_status_works_when_no_sticky() {
+        let mut app = make_app("");
+        app.set_background_status("ping expired", false);
+        assert_eq!(app.status.as_ref().unwrap().text, "ping expired");
+    }
+
+    #[test]
+    fn vault_signing_lifecycle() {
+        let mut app = make_app("");
+        // 1. Signing starts: sticky progress
+        app.set_sticky_status("Signing certificate...", false);
+        assert!(app.status.as_ref().unwrap().sticky);
+
+        // 2. Background event must not clobber
+        app.set_background_status("Ping expired.", false);
+        assert_eq!(app.status.as_ref().unwrap().text, "Signing certificate...");
+
+        // 3. Signing result replaces sticky via set_status
+        app.set_status("Vault SSH: failed to sign host: timeout", true);
+        assert!(!app.status.as_ref().unwrap().sticky);
+        assert!(app.status.as_ref().unwrap().is_error);
+
+        // 4. Final summary replaces with sticky error
+        app.set_sticky_status("Signed 0 of 1 certificate. 1 failed: timeout", true);
+        assert!(app.status.as_ref().unwrap().sticky);
+        assert!(app.status.as_ref().unwrap().is_error);
+
+        // 5. Background event still cannot clobber sticky error
+        app.set_background_status("Config reloaded. 5 hosts.", false);
+        assert_eq!(
+            app.status.as_ref().unwrap().text,
+            "Signed 0 of 1 certificate. 1 failed: timeout"
+        );
     }
 }

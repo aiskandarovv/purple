@@ -199,17 +199,27 @@ pub fn render_provider_form(frame: &mut Frame, app: &mut App, provider_name: &st
     let title = format!(" Providers > {} ", display_name);
 
     let expanded = app.provider_form.expanded;
-    let all_fields = ProviderFormField::fields_for(provider_name);
+    // Progressive disclosure: when `vault_role` is empty, `VaultAddr` is
+    // filtered out by `visible_fields(provider)` and therefore never
+    // rendered or navigable. Re-enabling the role brings the field back
+    // with whatever value the user had previously typed.
+    let filtered_all: Vec<ProviderFormField> = app.provider_form.visible_fields(provider_name);
+    let all_fields: &[ProviderFormField] = &filtered_all;
     let required_count = all_fields
         .iter()
         .filter(|f| ProviderFormField::is_required_field(**f, provider_name))
         .count();
-    let visible_fields: &[ProviderFormField] = if expanded {
+    // VaultRole and VaultAddr are both optional fields and are gated behind
+    // the expanded state, identical to every other non-required field.
+    // Per-host VaultSsh (in host_form.rs) follows the same rule.
+    // TODO: Enter-to-pick from `vault list <mount>/roles`
+    let base_fields: &[ProviderFormField] = if expanded {
         all_fields
     } else {
         // Required fields are always first in fields_for() ordering
         &all_fields[..required_count]
     };
+    let visible_fields: &[ProviderFormField] = base_fields;
     // Block: top(1) + fields * 2 (divider + content) + bottom(1)
     let block_height = 2 + visible_fields.len() as u16 * 2;
     let total_height = block_height + 1; // + footer
@@ -373,6 +383,10 @@ fn placeholder_for(field: ProviderFormField, provider_name: &str) -> &'static st
             _ => "root",
         },
         ProviderFormField::IdentityFile => "Enter to pick a key",
+        ProviderFormField::VaultRole => {
+            "e.g. ssh-client-signer/sign/my-role (inherited by all hosts)"
+        }
+        ProviderFormField::VaultAddr => "e.g. http://127.0.0.1:8200 (inherited by all hosts)",
         ProviderFormField::VerifyTls | ProviderFormField::AutoSync => "",
     }
 }
@@ -427,6 +441,8 @@ fn render_field_content(
         ProviderFormField::AliasPrefix => &form.alias_prefix,
         ProviderFormField::User => &form.user,
         ProviderFormField::IdentityFile => &form.identity_file,
+        ProviderFormField::VaultRole => &form.vault_role,
+        ProviderFormField::VaultAddr => &form.vault_addr,
         ProviderFormField::VerifyTls | ProviderFormField::AutoSync => unreachable!(),
     };
 
