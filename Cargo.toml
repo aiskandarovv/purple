@@ -1,6 +1,6 @@
 [package]
 name = "purple-ssh"
-version = "2.32.0"
+version = "2.32.1"
 edition = "2024"
 description = "A terminal cockpit for your servers. Search, connect, transfer files, manage containers and run commands across hosts. Syncs from 16 cloud providers. Visual file transfer, password management, command snippets and MCP server for AI agents. Edits ~/.ssh/config with round-trip fidelity."
 license = "MIT"

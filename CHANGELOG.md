@@ -1,3 +1,7 @@
+## 2.32.1
+
+- Remove vault sign from host list footer to reduce clutter
+
 ## 2.32.0
 
 - Structured logging to ~/.purple/purple.log
