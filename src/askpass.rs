@@ -3,6 +3,7 @@ use std::process::Command;
 use std::time::SystemTime;
 
 use anyhow::{Context, Result};
+use log::{debug, error, warn};
 
 use crate::ssh_config::model::SshConfigFile;
 
@@ -57,6 +58,10 @@ pub const PASSWORD_SOURCES: &[PasswordSourceOption] = &[
 /// Handle an SSH_ASKPASS invocation. Called when purple is invoked as an askpass program.
 /// Reads the password source from the host's `# purple:askpass` comment and retrieves it.
 pub fn handle() -> Result<()> {
+    // Initialize file-only logging for askpass subprocess
+    // verbose is determined by PURPLE_LOG env var only (no CLI flag in subprocess)
+    crate::logging::init(false, false);
+
     let alias = std::env::var("PURPLE_HOST_ALIAS").unwrap_or_default();
     let config_path = std::env::var("PURPLE_CONFIG_PATH").unwrap_or_default();
 
@@ -80,6 +85,7 @@ pub fn handle() -> Result<()> {
     let marker = marker_path(&alias);
     if let Some(marker_path) = &marker {
         if is_recent_marker(marker_path) {
+            debug!("Askpass retry detected for {alias}");
             // Clean up and bail
             let _ = std::fs::remove_file(marker_path);
             std::process::exit(1);
@@ -100,14 +106,19 @@ pub fn handle() -> Result<()> {
         None => std::process::exit(1),
     };
 
+    debug!("Askpass invoked for alias={alias} source={source}");
+
     // Retrieve password
     let hostname = find_hostname(&config, &alias);
     match retrieve_password(&source, &alias, &hostname) {
         Ok(password) => {
+            debug!("Askpass retrieved password for {alias} via {source}");
             print!("{}", password);
             Ok(())
         }
-        Err(_) => {
+        Err(err) => {
+            warn!("[external] Password retrieval failed via {source}");
+            debug!("[external] Password retrieval detail: {err}");
             // Clean up marker on failure
             if let Some(m) = &marker {
                 let _ = std::fs::remove_file(m);
@@ -305,10 +316,16 @@ pub fn remove_from_keychain(alias: &str) -> Result<()> {
 
 /// Retrieve from 1Password CLI.
 fn retrieve_from_1password(uri: &str) -> Result<String> {
-    let output = Command::new("op")
+    let result = Command::new("op")
         .args(["read", uri, "--no-newline"])
-        .output()
-        .context("Failed to run 1Password CLI (op)")?;
+        .output();
+    let output = match result {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            error!("[config] Password manager binary not found: op");
+            return Err(e).context("Failed to run 1Password CLI (op)");
+        }
+        other => other.context("Failed to run 1Password CLI (op)")?,
+    };
     if !output.status.success() {
         anyhow::bail!("1Password lookup failed");
     }
@@ -317,10 +334,14 @@ fn retrieve_from_1password(uri: &str) -> Result<String> {
 
 /// Retrieve from pass (password-store). Returns the first line.
 fn retrieve_from_pass(entry: &str) -> Result<String> {
-    let output = Command::new("pass")
-        .args(["show", entry])
-        .output()
-        .context("Failed to run pass")?;
+    let result = Command::new("pass").args(["show", entry]).output();
+    let output = match result {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            error!("[config] Password manager binary not found: pass");
+            return Err(e).context("Failed to run pass");
+        }
+        other => other.context("Failed to run pass")?,
+    };
     if !output.status.success() {
         anyhow::bail!("pass lookup failed");
     }
@@ -331,10 +352,16 @@ fn retrieve_from_pass(entry: &str) -> Result<String> {
 /// Retrieve from Bitwarden CLI. The item_id can be an item ID or search term.
 /// Uses `bw get password <item_id>` which requires an unlocked vault (BW_SESSION).
 fn retrieve_from_bitwarden(item_id: &str) -> Result<String> {
-    let output = Command::new("bw")
+    let result = Command::new("bw")
         .args(["get", "password", item_id])
-        .output()
-        .context("Failed to run Bitwarden CLI (bw)")?;
+        .output();
+    let output = match result {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            error!("[config] Password manager binary not found: bw");
+            return Err(e).context("Failed to run Bitwarden CLI (bw)");
+        }
+        other => other.context("Failed to run Bitwarden CLI (bw)")?,
+    };
     if !output.status.success() {
         anyhow::bail!("Bitwarden lookup failed");
     }
@@ -350,10 +377,16 @@ fn retrieve_from_vault(spec: &str) -> Result<String> {
         Some((p, f)) => (p, f),
         None => (spec, "password"),
     };
-    let output = Command::new("vault")
+    let result = Command::new("vault")
         .args(["kv", "get", &format!("-field={}", field), path])
-        .output()
-        .context("Failed to run vault CLI")?;
+        .output();
+    let output = match result {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            error!("[config] Password manager binary not found: vault");
+            return Err(e).context("Failed to run vault CLI");
+        }
+        other => other.context("Failed to run vault CLI")?,
+    };
     if !output.status.success() {
         anyhow::bail!("Vault lookup failed");
     }

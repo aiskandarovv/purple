@@ -3,6 +3,7 @@ use std::path::Path;
 use std::sync::mpsc;
 
 use anyhow::{Context, Result};
+use log::{debug, info, warn};
 
 use crate::event::AppEvent;
 
@@ -168,9 +169,15 @@ pub fn spawn_version_check(tx: mpsc::Sender<AppEvent>) {
     let _ = std::thread::Builder::new()
         .name("version-check".to_string())
         .spawn(move || {
+            debug!("Version check started");
             // Check cache first — skip API call if fresh result exists
             match read_cached_version() {
                 Some(Some(cached)) => {
+                    debug!(
+                        "Version check: current={} latest={}",
+                        current_version(),
+                        cached.version
+                    );
                     let _ = tx.send(AppEvent::UpdateAvailable {
                         version: cached.version,
                         headline: cached.headline,
@@ -188,14 +195,21 @@ pub fn spawn_version_check(tx: mpsc::Sender<AppEvent>) {
                 .build()
                 .new_agent();
 
-            if let Ok(info) = check_latest_release(&agent) {
-                let headline = extract_headline(&info.notes);
-                write_version_cache(&info.version, headline.as_deref());
-                if is_newer(current_version(), &info.version) {
-                    let _ = tx.send(AppEvent::UpdateAvailable {
-                        version: info.version,
-                        headline,
-                    });
+            match check_latest_release(&agent) {
+                Ok(info) => {
+                    let current = current_version();
+                    debug!("Version check: current={current} latest={}", info.version);
+                    let headline = extract_headline(&info.notes);
+                    write_version_cache(&info.version, headline.as_deref());
+                    if is_newer(current, &info.version) {
+                        let _ = tx.send(AppEvent::UpdateAvailable {
+                            version: info.version,
+                            headline,
+                        });
+                    }
+                }
+                Err(err) => {
+                    warn!("[external] Version check failed: {err}");
                 }
             }
         });
@@ -410,6 +424,7 @@ pub fn self_update() -> Result<()> {
     }
 
     println!("v{} available (current: v{}).", latest, current);
+    info!("Update started: {current} -> {latest}");
 
     // Detect target
     let target = match (std::env::consts::ARCH, std::env::consts::OS) {
@@ -541,6 +556,7 @@ pub fn self_update() -> Result<()> {
     }
 
     println!("done.");
+    info!("Update completed: {latest}");
     println!(
         "\n  {} installed at {}.",
         bold_purple(&format!("purple v{}", latest)),

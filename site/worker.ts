@@ -177,9 +177,9 @@ const LANDING_PAGE = `<!DOCTYPE html>
   "url": "https://getpurple.sh",
   "downloadUrl": "https://getpurple.sh",
   "installUrl": "https://github.com/erickochen/purple/releases",
-  "softwareVersion": "2.31.0",
+  "softwareVersion": "2.32.0",
   "datePublished": "2024-10-01",
-  "dateModified": "2026-04-09",
+  "dateModified": "2026-04-10",
   "softwareRequirements": "macOS or Linux",
   "programmingLanguage": "Rust",
   "license": "https://opensource.org/licenses/MIT",
@@ -363,6 +363,14 @@ const LANDING_PAGE = `<!DOCTYPE html>
       "acceptedAnswer": {
         "@type": "Answer",
         "text": "Yes. Run purple mcp to start a Model Context Protocol server over JSON-RPC 2.0. Claude Code, Cursor and other MCP-compatible AI agents can use five tools: list_hosts, get_host, run_command, list_containers and container_action. No API keys needed. Approval behavior depends on your AI client."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How do I troubleshoot connection problems?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Run with --verbose to enable debug logging, then purple logs --tail in another terminal. Logs are written to ~/.purple/purple.log with fault domain prefixes: [external] for remote/tool errors, [config] for local config issues. Set PURPLE_LOG=trace for maximum detail."
       }
     }
   ]
@@ -906,7 +914,7 @@ footer .sep { margin: 0 0.3em; }
           <button class="copy-btn copy-inline" id="copy-btn" onclick="copy(this)" style="display:none">copy</button>
         </div>
         <div class="install-output" id="install-output" style="display:none">
-          <div>Downloading purple v2.31.0 for darwin-arm64...</div>
+          <div>Downloading purple v2.32.0 for darwin-arm64...</div>
           <div>Installing to /usr/local/bin/purple... <span class="success">done.</span></div>
         </div>
         <div class="alt-installs" id="alt-installs" style="display:none">
@@ -1020,7 +1028,11 @@ footer .sep { margin: 0 0.3em; }
         <summary>Can AI assistants use purple?</summary>
         <div class="answer">Yes. Run <code>purple mcp</code> to start the MCP server. Claude Code, Cursor and other agents get five tools: list_hosts, get_host, run_command, list_containers and container_action.</div>
       </details>
-      <div class="man-foot"><span>purple v2.31.0</span><span>2026-04-09</span><span>PURPLE(1)</span></div>
+      <details>
+        <summary>How do I troubleshoot connection problems?</summary>
+        <div class="answer">Run with <code>--verbose</code> to enable debug logging, then <code>purple logs --tail</code> in another terminal. Logs are written to <code>~/.purple/purple.log</code> with fault domain prefixes: <code>[external]</code> for remote/tool errors, <code>[config]</code> for local config issues. Set <code>PURPLE_LOG=trace</code> for maximum detail.</div>
+      </details>
+      <div class="man-foot"><span>purple v2.32.0</span><span>2026-04-10</span><span>PURPLE(1)</span></div>
     </div>
   </div>
 
@@ -1229,6 +1241,10 @@ purple mcp                          # Start MCP server for AI agents (stdio JSON
 purple --theme ocean                # Launch TUI with a specific theme
 purple theme list                   # List available themes (built-in + custom)
 purple theme set <name>             # Set the default theme
+purple --verbose                    # Enable debug-level logging
+purple logs                         # Print log file path
+purple logs --tail                  # Follow log output in real time
+purple logs --clear                 # Delete the log file
 purple --completions zsh            # Generate shell completions
 
 ## Cloud provider sync
@@ -1432,6 +1448,9 @@ A: Yes. purple uses the system ssh binary with your config, so ProxyJump chains 
 Q: How do I speed up the file explorer?
 A: Each directory navigation in the file explorer opens a new SSH connection. To speed this up, add ControlMaster auto, ControlPath ~/.ssh/sockets/%r@%h-%p and ControlPersist 600 to your SSH config. This reuses a single connection for file browser navigation and regular SSH connections on that host. Note: snippet execution explicitly disables ControlMaster to keep each run isolated.
 
+Q: How do I troubleshoot connection problems?
+A: Run with --verbose to enable debug logging, then purple logs --tail in another terminal. Logs are written to ~/.purple/purple.log with fault domain prefixes: [external] for remote/tool errors, [config] for local config issues, [purple] for internal errors. Set PURPLE_LOG=trace for maximum detail. The startup banner in the log captures purple version, SSH version, providers and askpass sources.
+
 Q: Can AI assistants use purple?
 A: Yes. Run purple mcp to start an MCP server over JSON-RPC 2.0. Claude Code, Cursor and other MCP-compatible AI agents can use five tools: list_hosts, get_host, run_command, list_containers and container_action. No API keys needed. Approval behavior depends on your AI client.
 
@@ -1446,15 +1465,19 @@ A: Press m in the host list to open the theme picker with live preview. 11 built
 
 ## Status
 
-- Current version: 2.31.0 (April 2026)
+- Current version: 2.32.0 (April 2026)
 - Release cadence: approximately bi-weekly
 - Test suite: 6000+ tests (unit, integration, property-based and HTTP mocking)
 - CI: fmt, clippy, test on macOS and Linux, cargo-deny, MSRV 1.86 check
 - Dependencies actively maintained
 
+## Logging and troubleshooting
+
+purple writes structured logs to ~/.purple/purple.log. By default only warnings and errors are logged. Pass --verbose or set the PURPLE_LOG environment variable (trace, debug, info, warn, error, off) for more detail. Run \`purple logs --tail\` to follow the log in real time or \`purple logs --clear\` to delete it. The log file is rotated automatically at 5 MB. Each log entry carries a fault domain prefix: [external] for problems in remote hosts or third-party tools, [config] for local configuration issues and [purple] for internal errors. The startup banner records the purple version, SSH version, terminal capabilities, configured providers and askpass sources so support questions can be diagnosed from the log alone.
+
 ## Data storage
 
-purple does not use a proprietary database. All host configuration lives in ~/.ssh/config. Tags, provider tracking and metadata are stored as comments in the same file. Provider credentials are stored in ~/.purple/providers. Snippets are stored in ~/.purple/snippets. Connection history is stored in ~/.purple/history.tsv. Preferences (sort mode, view mode, theme, slow_threshold_ms, auto_ping) are stored in ~/.purple/preferences. Nothing is transmitted to external servers.
+purple does not use a proprietary database. All host configuration lives in ~/.ssh/config. Tags, provider tracking and metadata are stored as comments in the same file. Provider credentials are stored in ~/.purple/providers. Snippets are stored in ~/.purple/snippets. Connection history is stored in ~/.purple/history.tsv. Preferences (sort mode, view mode, theme, slow_threshold_ms, auto_ping) are stored in ~/.purple/preferences. Logs are stored in ~/.purple/purple.log. Nothing is transmitted to external servers.
 
 ## Limitations
 

@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use log::{debug, error, info};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -219,6 +220,11 @@ pub fn sign_certificate(
         );
     }
     let pubkey_arg = format!("public_key=@{}", pubkey_str);
+    debug!(
+        "[external] Vault sign request: addr={} role={}",
+        vault_addr.unwrap_or("<env>"),
+        role
+    );
     let mut cmd = Command::new("vault");
     cmd.args(["write", "-field=signed_key", role, &pubkey_arg]);
     // Override VAULT_ADDR for this subprocess only when a value was resolved
@@ -277,6 +283,10 @@ pub fn sign_certificate(
                     // are dropped without joining here. This is intentional:
                     // kill() closes the child's pipe ends, so read_to_end
                     // returns immediately and the threads self-terminate.
+                    error!(
+                        "[external] Vault unreachable: {}: timed out after 30s",
+                        vault_addr.unwrap_or("<env>")
+                    );
                     anyhow::bail!("Vault SSH timed out. Server unreachable.");
                 }
                 std::thread::sleep(std::time::Duration::from_millis(100));
@@ -300,31 +310,65 @@ pub fn sign_certificate(
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         if stderr.contains("permission denied") || stderr.contains("403") {
+            error!(
+                "[external] Vault auth failed: permission denied (role={} addr={})",
+                role,
+                vault_addr.unwrap_or("<env>")
+            );
             anyhow::bail!("Vault SSH permission denied. Check token and policy.");
         }
         if stderr.contains("missing client token") || stderr.contains("token expired") {
+            error!(
+                "[external] Vault auth failed: token missing or expired (role={} addr={})",
+                role,
+                vault_addr.unwrap_or("<env>")
+            );
             anyhow::bail!("Vault SSH token missing or expired. Run `vault login`.");
         }
         // Check "connection refused" before "dial tcp" because Go's
         // refused-connection error contains both substrings.
         if stderr.contains("connection refused") {
+            error!(
+                "[external] Vault unreachable: {}: connection refused",
+                vault_addr.unwrap_or("<env>")
+            );
             anyhow::bail!("Vault SSH connection refused.");
         }
         if stderr.contains("i/o timeout") || stderr.contains("dial tcp") {
+            error!(
+                "[external] Vault unreachable: {}: connection timed out",
+                vault_addr.unwrap_or("<env>")
+            );
             anyhow::bail!("Vault SSH connection timed out.");
         }
         if stderr.contains("no such host") {
+            error!(
+                "[external] Vault unreachable: {}: no such host",
+                vault_addr.unwrap_or("<env>")
+            );
             anyhow::bail!("Vault SSH host not found.");
         }
         if stderr.contains("server gave HTTP response to HTTPS client") {
+            error!(
+                "[external] Vault unreachable: {}: server returned HTTP on HTTPS connection",
+                vault_addr.unwrap_or("<env>")
+            );
             anyhow::bail!("Vault SSH server uses HTTP, not HTTPS. Set address to http://.");
         }
         if stderr.contains("certificate signed by unknown authority")
             || stderr.contains("tls:")
             || stderr.contains("x509:")
         {
+            error!(
+                "[external] Vault unreachable: {}: TLS error",
+                vault_addr.unwrap_or("<env>")
+            );
             anyhow::bail!("Vault SSH TLS error. Check certificate or use http://.");
         }
+        error!(
+            "[external] Vault SSH signing failed: {}",
+            scrub_vault_stderr(&stderr)
+        );
         anyhow::bail!("Vault SSH failed: {}", scrub_vault_stderr(&stderr));
     }
 
@@ -336,6 +380,7 @@ pub fn sign_certificate(
     crate::fs_util::atomic_write(&cert_dest, signed_key.as_bytes())
         .with_context(|| format!("Failed to write certificate to {}", cert_dest.display()))?;
 
+    info!("Vault SSH certificate signed for {}", alias);
     Ok(SignResult {
         cert_path: cert_dest,
     })
@@ -530,6 +575,7 @@ pub fn ensure_cert(
     let status = check_cert_validity(&check_path);
 
     if !needs_renewal(&status) {
+        info!("Vault SSH certificate cache hit for {}", alias);
         return Ok(check_path);
     }
 

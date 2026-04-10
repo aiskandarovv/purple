@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use log::{error, info};
+
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -255,23 +257,30 @@ pub fn fetch_containers(
     );
     match result {
         Ok(r) if r.status.success() => {
-            parse_container_output(&r.stdout, cached_runtime).map_err(|e| ContainerError {
-                runtime: cached_runtime,
-                message: e,
+            parse_container_output(&r.stdout, cached_runtime).map_err(|e| {
+                error!("[external] Container list parse failed: alias={alias}: {e}");
+                ContainerError {
+                    runtime: cached_runtime,
+                    message: e,
+                }
             })
         }
         Ok(r) => {
             let stderr = r.stderr.trim().to_string();
             let msg = friendly_container_error(&stderr, r.status.code());
+            error!("[external] Container fetch failed: alias={alias}: {msg}");
             Err(ContainerError {
                 runtime: cached_runtime,
                 message: msg,
             })
         }
-        Err(e) => Err(ContainerError {
-            runtime: cached_runtime,
-            message: e.to_string(),
-        }),
+        Err(e) => {
+            error!("[external] Container fetch failed: alias={alias}: {e}");
+            Err(ContainerError {
+                runtime: cached_runtime,
+                message: e.to_string(),
+            })
+        }
     }
 }
 
@@ -325,6 +334,10 @@ pub fn spawn_container_action<F>(
             send(alias, action, Err(e));
             return;
         }
+        info!(
+            "Container action: {} container={container_id} alias={alias}",
+            action.as_str()
+        );
         let command = container_action_command(runtime, action, &container_id);
         let result = crate::snippet::run_snippet(
             &alias,
@@ -338,10 +351,20 @@ pub fn spawn_container_action<F>(
         match result {
             Ok(r) if r.status.success() => send(alias, action, Ok(())),
             Ok(r) => {
-                let msg = friendly_container_error(r.stderr.trim(), r.status.code());
-                send(alias, action, Err(msg));
+                let err = friendly_container_error(r.stderr.trim(), r.status.code());
+                error!(
+                    "[external] Container {} failed: alias={alias} container={container_id}: {err}",
+                    action.as_str()
+                );
+                send(alias, action, Err(err));
             }
-            Err(e) => send(alias, action, Err(e.to_string())),
+            Err(e) => {
+                error!(
+                    "[external] Container {} failed: alias={alias} container={container_id}: {e}",
+                    action.as_str()
+                );
+                send(alias, action, Err(e.to_string()));
+            }
         }
     });
 }

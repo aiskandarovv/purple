@@ -4,6 +4,7 @@ use std::sync::mpsc;
 
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use log::{debug, error, info, warn};
 
 use crate::app::{App, FormField, HostForm, ProviderFormFields, Screen, ViewMode};
 use crate::clipboard;
@@ -3457,6 +3458,15 @@ fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
                     app.bw_session.as_deref(),
                 ) {
                     Ok(child) => {
+                        for rule in &app.tunnel_list {
+                            info!(
+                                "Tunnel started: type={} local={} remote={}:{} alias={alias}",
+                                rule.tunnel_type.label(),
+                                rule.bind_port,
+                                rule.remote_host,
+                                rule.remote_port
+                            );
+                        }
                         app.active_tunnels
                             .insert(alias.clone(), crate::tunnel::ActiveTunnel { child });
                         app.set_status(format!("Tunnel for {} started.", alias), false);
@@ -4355,6 +4365,7 @@ pub fn spawn_provider_sync(
                     return;
                 }
             };
+            info!("Provider sync started: {name}");
             let progress_tx = tx.clone();
             let progress_name = name.clone();
             let progress = move |msg: &str| {
@@ -4365,6 +4376,11 @@ pub fn spawn_provider_sync(
             };
             match provider.fetch_hosts_with_progress(&token, &cancel, &progress) {
                 Ok(hosts) => {
+                    if hosts.is_empty() {
+                        warn!("[config] Provider sync returned 0 hosts: {name} (check API token permissions)");
+                    } else {
+                        info!("Provider sync completed: {name}, {} hosts found", hosts.len());
+                    }
                     let _ = tx.send(AppEvent::SyncComplete {
                         provider: name,
                         hosts,
@@ -4375,6 +4391,7 @@ pub fn spawn_provider_sync(
                     failures,
                     total,
                 }) => {
+                    warn!("[external] Provider sync partial: {name}, {} hosts, {} failures", hosts.len(), failures);
                     let _ = tx.send(AppEvent::SyncPartial {
                         provider: name,
                         hosts,
@@ -4383,6 +4400,7 @@ pub fn spawn_provider_sync(
                     });
                 }
                 Err(e) => {
+                    error!("[external] Provider sync failed: {name}: {e}");
                     let _ = tx.send(AppEvent::SyncError {
                         provider: name,
                         message: e.to_string(),
@@ -4682,10 +4700,21 @@ fn handle_file_browser(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<Ap
                 fb.transferring = Some(label);
 
                 // Run scp in background thread
+                let direction = match req.source_pane {
+                    crate::file_browser::BrowserPane::Local => "upload",
+                    crate::file_browser::BrowserPane::Remote => "download",
+                };
+                info!(
+                    "SCP transfer started: {direction} {} <-> {alias}:{}",
+                    local_path.display(),
+                    remote_path
+                );
                 let config_path = app.reload.config_path.clone();
                 let bw = app.bw_session.clone();
                 let tx = events_tx.clone();
+                let direction_str = direction.to_string();
                 std::thread::spawn(move || {
+                    debug!("SCP command: scp -F {} ...", config_path.display());
                     let result = crate::file_browser::run_scp(
                         &alias,
                         &config_path,
@@ -4695,10 +4724,17 @@ fn handle_file_browser(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<Ap
                         &scp_args,
                     );
                     let (success, message) = match result {
-                        Ok(r) if r.status.success() => (true, String::new()),
+                        Ok(r) if r.status.success() => {
+                            info!("SCP transfer completed: {direction_str} {alias}");
+                            (true, String::new())
+                        }
                         Ok(r) => {
                             let code = r.status.code().unwrap_or(1);
+                            error!("[external] SCP transfer failed: {alias} exit={code}");
                             let err = crate::file_browser::filter_ssh_warnings(&r.stderr_output);
+                            if !err.is_empty() {
+                                debug!("[external] SCP stderr: {}", err.trim());
+                            }
                             if err.is_empty() {
                                 (false, format!("Copy failed (exit code {}).", code))
                             } else {

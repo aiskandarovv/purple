@@ -1,3 +1,12 @@
+## 2.32.0
+
+- Structured logging to ~/.purple/purple.log
+- `--verbose` flag enables debug-level logging. `PURPLE_LOG` env var for finer control (trace/debug/info/warn/error/off)
+- `purple logs` subcommand: `--tail` to follow in real time, `--clear` to delete
+- Log entries carry fault domain prefixes: `[external]` for remote/tool errors, `[config]` for local config issues, `[purple]` for internal errors
+- Startup banner records purple version, SSH version, terminal, providers and askpass sources for diagnostics
+- Automatic log rotation at 5 MB
+
 ## 2.31.0
 
 - HashiCorp Vault SSH certificate signing

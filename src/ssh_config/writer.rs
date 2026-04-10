@@ -2,6 +2,7 @@ use std::fs;
 use std::time::SystemTime;
 
 use anyhow::{Context, Result};
+use log::error;
 
 use super::model::{ConfigElement, SshConfigFile};
 use crate::fs_util;
@@ -33,6 +34,13 @@ impl SshConfigFile {
         let content = self.serialize();
 
         fs_util::atomic_write(&target_path, content.as_bytes())
+            .map_err(|err| {
+                error!(
+                    "[purple] SSH config write failed: {}: {err}",
+                    target_path.display()
+                );
+                err
+            })
             .with_context(|| format!("Failed to write SSH config to {}", target_path.display()))?;
 
         // Lock released on drop

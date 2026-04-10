@@ -4,6 +4,8 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::SystemTime;
 
+use log::{debug, error};
+
 use ratatui::text::Span;
 use ratatui::widgets::ListState;
 
@@ -3942,17 +3944,22 @@ impl App {
                             _ => None,
                         }
                     });
+                    let exit_code = status.code().unwrap_or(-1);
+                    if !status.success() {
+                        error!(
+                            "[external] Tunnel exited unexpectedly: alias={alias} exit={exit_code}"
+                        );
+                        if let Some(ref err) = stderr_msg {
+                            debug!("[external] Tunnel stderr: {}", err.trim());
+                        }
+                    }
                     let (msg, is_error) = if status.success() {
                         (format!("Tunnel for {} closed.", alias), false)
                     } else if let Some(err) = stderr_msg {
                         (format!("Tunnel for {}: {}", alias, err), true)
                     } else {
                         (
-                            format!(
-                                "Tunnel for {} exited with code {}.",
-                                alias,
-                                status.code().unwrap_or(-1)
-                            ),
+                            format!("Tunnel for {} exited with code {}.", alias, exit_code),
                             true,
                         )
                     };

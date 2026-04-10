@@ -2,6 +2,8 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use log::{debug, error};
+
 /// Advisory file lock using a `.lock` file.
 /// The lock is released when the `FileLock` is dropped.
 pub struct FileLock {
@@ -78,6 +80,7 @@ impl Drop for FileLock {
 /// Uses O_EXCL (create_new) to prevent symlink attacks on the temp file path.
 /// Cleans up the temp file on failure.
 pub fn atomic_write(path: &Path, content: &[u8]) -> io::Result<()> {
+    debug!("Atomic write: {}", path.display());
     // Ensure parent directory exists
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -152,8 +155,9 @@ pub fn atomic_write(path: &Path, content: &[u8]) -> io::Result<()> {
     }
 
     let result = fs::rename(&tmp_path, path);
-    if result.is_err() {
+    if let Err(ref err) = result {
         let _ = fs::remove_file(&tmp_path);
+        error!("[purple] Atomic write failed: {}: {err}", path.display());
     }
     result
 }

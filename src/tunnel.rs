@@ -1,6 +1,7 @@
 use std::process::{Child, Command, Stdio};
 
 use anyhow::Result;
+use log::debug;
 
 /// Type of SSH tunnel.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -311,6 +312,11 @@ pub fn start_tunnel(
             Ok(())
         });
     }
+
+    debug!(
+        "Tunnel SSH command: ssh -N -F {} -- {alias}",
+        config_path.display()
+    );
 
     cmd.spawn()
         .map_err(|e| anyhow::anyhow!("Failed to start tunnel: {}", e))

@@ -19,6 +19,7 @@ mod vultr;
 
 use std::sync::atomic::AtomicBool;
 
+use log::{error, warn};
 use thiserror::Error;
 
 /// A host discovered from a cloud provider API.
@@ -370,11 +371,23 @@ pub(crate) fn epoch_to_date(epoch_secs: u64) -> EpochDate {
 fn map_ureq_error(err: ureq::Error) -> ProviderError {
     match err {
         ureq::Error::StatusCode(code) => match code {
-            401 | 403 => ProviderError::AuthFailed,
-            429 => ProviderError::RateLimited,
-            _ => ProviderError::Http(format!("HTTP {}", code)),
+            401 | 403 => {
+                error!("[external] HTTP {code}: authentication failed");
+                ProviderError::AuthFailed
+            }
+            429 => {
+                warn!("[external] HTTP 429: rate limited");
+                ProviderError::RateLimited
+            }
+            _ => {
+                error!("[external] HTTP {code}");
+                ProviderError::Http(format!("HTTP {}", code))
+            }
         },
-        other => ProviderError::Http(other.to_string()),
+        other => {
+            error!("[external] Request failed: {other}");
+            ProviderError::Http(other.to_string())
+        }
     }
 }
 

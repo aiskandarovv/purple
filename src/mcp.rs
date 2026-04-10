@@ -1,6 +1,7 @@
 use std::io::{BufRead, Write};
 use std::path::Path;
 
+use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -433,8 +434,12 @@ fn tool_run_command(args: &Value, config_path: &Path) -> Value {
         return e;
     }
 
+    info!("MCP tool: ssh_exec alias={alias} command={command}");
     match ssh_exec(alias, config_path, command, timeout_secs) {
         Ok((exit_code, stdout, stderr)) => {
+            if exit_code != 0 {
+                error!("[external] MCP ssh_exec failed: alias={alias} exit={exit_code}");
+            }
             let result = serde_json::json!({
                 "exit_code": exit_code,
                 "stdout": stdout,
@@ -601,11 +606,17 @@ pub fn run(config_path: &Path) -> anyhow::Result<()> {
 
         // Notifications (no id) don't get responses
         if request.id.is_none() {
-            eprintln!("[mcp] notification: {}", request.method);
+            debug!("MCP notification: {}", request.method);
             continue;
         }
 
+        debug!("MCP request: method={}", request.method);
         let mut response = dispatch(&request.method, request.params, config_path);
+        debug!(
+            "MCP response: method={} success={}",
+            request.method,
+            response.error.is_none()
+        );
         response.id = request.id;
 
         let json = serde_json::to_string(&response)?;

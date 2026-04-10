@@ -12,6 +12,7 @@ mod fs_util;
 mod handler;
 mod history;
 mod import;
+mod logging;
 mod mcp;
 mod ping;
 mod preferences;
@@ -73,6 +74,10 @@ struct Cli {
     /// Override theme for this session
     #[arg(long)]
     theme: Option<String>,
+
+    /// Enable verbose logging (debug level)
+    #[arg(long)]
+    verbose: bool,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -152,6 +157,16 @@ enum Commands {
     Vault {
         #[command(subcommand)]
         command: VaultCommands,
+    },
+    /// View or manage log file
+    Logs {
+        /// Follow log output in real time
+        #[arg(long)]
+        tail: bool,
+
+        /// Delete the log file
+        #[arg(long)]
+        clear: bool,
     },
 }
 
@@ -390,6 +405,10 @@ fn main() -> Result<()> {
     ui::theme::init();
     let cli = Cli::parse();
 
+    // Determine if this is a CLI subcommand (log to stderr too) or TUI (file only)
+    let is_cli_subcommand = cli.command.is_some() || cli.list || cli.connect.is_some();
+    logging::init(cli.verbose, is_cli_subcommand);
+
     if let Some(ref name) = cli.theme {
         if let Some(theme) = ui::theme::ThemeDef::find_builtin(name).or_else(|| {
             ui::theme::ThemeDef::load_custom()
@@ -427,6 +446,26 @@ fn main() -> Result<()> {
     if let Some(Commands::Mcp) = cli.command {
         let config_path = resolve_config_path(&cli.config)?;
         return mcp::run(&config_path);
+    }
+    if let Some(Commands::Logs { tail, clear }) = cli.command {
+        let path = logging::log_path().context("Could not determine log path")?;
+        if clear {
+            if path.exists() {
+                std::fs::remove_file(&path)?;
+                println!("Log file deleted: {}", path.display());
+            } else {
+                println!("No log file found at {}", path.display());
+            }
+        } else if tail {
+            let status = std::process::Command::new("tail")
+                .args(["-f", &path.to_string_lossy()])
+                .status()
+                .context("Failed to run tail")?;
+            std::process::exit(status.code().unwrap_or(1));
+        } else {
+            println!("{}", path.display());
+        }
+        return Ok(());
     }
     if let Some(Commands::Theme { command }) = cli.command {
         match command {
@@ -478,6 +517,71 @@ fn main() -> Result<()> {
     let mut config = SshConfigFile::parse(&config_path)?;
     let repaired_groups = config.repair_absorbed_group_comments();
     let orphaned_headers = config.remove_all_orphaned_group_headers();
+
+    // Write startup banner to log file
+    {
+        let level_str = logging::level_name(cli.verbose);
+
+        let provider_config = providers::config::ProviderConfig::load();
+
+        let provider_names: Vec<String> = provider_config
+            .sections
+            .iter()
+            .map(|s| s.provider.clone())
+            .collect();
+
+        let askpass_sources: Vec<String> = config
+            .host_entries()
+            .iter()
+            .filter_map(|h| h.askpass.as_ref())
+            .map(|s| s.to_string())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+
+        let vault_ssh_info = {
+            let has_host_level = config.host_entries().iter().any(|h| h.vault_ssh.is_some());
+            let has_provider_level = provider_config
+                .sections
+                .iter()
+                .any(|s| !s.vault_role.is_empty());
+            if has_host_level || has_provider_level {
+                // Resolve addr from all sources: per-host > per-provider > env var
+                let addr = config
+                    .host_entries()
+                    .iter()
+                    .find_map(|h| h.vault_addr.clone())
+                    .or_else(|| {
+                        provider_config
+                            .sections
+                            .iter()
+                            .find(|s| !s.vault_addr.is_empty())
+                            .map(|s| s.vault_addr.clone())
+                    })
+                    .or_else(|| std::env::var("VAULT_ADDR").ok())
+                    .unwrap_or_else(|| "not set".to_string());
+                Some(format!("enabled (addr={addr})"))
+            } else {
+                None
+            }
+        };
+
+        let ssh_version = logging::detect_ssh_version();
+        let term = std::env::var("TERM").unwrap_or_else(|_| "unset".to_string());
+        let colorterm = std::env::var("COLORTERM").unwrap_or_else(|_| "unset".to_string());
+
+        logging::write_banner(&logging::BannerInfo {
+            version: env!("CARGO_PKG_VERSION"),
+            config_path: &config_path.display().to_string(),
+            providers: &provider_names,
+            askpass_sources: &askpass_sources,
+            vault_ssh_info: vault_ssh_info.as_deref(),
+            ssh_version: &ssh_version,
+            term: &term,
+            colorterm: &colorterm,
+            level: &level_str,
+        });
+    }
 
     // Handle subcommands that need SSH config
     match cli.command {
@@ -669,7 +773,8 @@ fn main() -> Result<()> {
         | Some(Commands::Update)
         | Some(Commands::Password { .. })
         | Some(Commands::Mcp)
-        | Some(Commands::Theme { .. }) => unreachable!(),
+        | Some(Commands::Theme { .. })
+        | Some(Commands::Logs { .. }) => unreachable!(),
         None => {}
     }
 

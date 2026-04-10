@@ -2,6 +2,7 @@ use std::path::Path;
 use std::process::Command;
 
 use anyhow::{Context, Result};
+use log::{debug, error, info, warn};
 
 /// Result of an SSH connection attempt.
 pub struct ConnectResult {
@@ -75,6 +76,9 @@ pub fn connect(
     bw_session: Option<&str>,
     has_active_tunnel: bool,
 ) -> Result<ConnectResult> {
+    info!("SSH connection started: {alias}");
+    debug!("SSH command: ssh -F {} -- {alias}", config_path.display());
+
     let mut cmd = Command::new("ssh");
     cmd.arg("-F").arg(config_path);
 
@@ -162,6 +166,25 @@ pub fn connect(
 
     // _signal_guard drops here, restoring the original signal mask.
     // Any pending SIGINT from Ctrl+C during SSH is safely consumed.
+
+    let code = status.code().unwrap_or(-1);
+    if code == 0 {
+        info!("SSH connection ended: {alias} (exit 0)");
+    } else {
+        error!("[external] SSH connection failed: {alias} (exit {code})");
+        if !stderr_output.is_empty() {
+            let stderr = stderr_output.trim();
+            let lower = stderr.to_lowercase();
+            // Match local key permission errors like "Permissions 0644 for '~/.ssh/id_rsa'
+            // are too open" but not remote auth rejections ("Permission denied") or
+            // generic "no permission" errors from the remote host.
+            if lower.contains("are too open") || lower.contains("bad permissions") {
+                warn!("[config] SSH key permission issue: {stderr}");
+            } else {
+                debug!("[external] SSH stderr: {stderr}");
+            }
+        }
+    }
 
     Ok(ConnectResult {
         status,
