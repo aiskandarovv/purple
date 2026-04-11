@@ -10,11 +10,15 @@ static PATH_OVERRIDE: Mutex<Option<PathBuf>> = Mutex::new(None);
 /// Override the preferences file path (used in tests to avoid writing to ~/.purple).
 #[cfg(test)]
 pub fn set_path_override(path: PathBuf) {
-    *PATH_OVERRIDE.lock().unwrap() = Some(path);
+    *PATH_OVERRIDE.lock().unwrap_or_else(|e| e.into_inner()) = Some(path);
 }
 
 fn path() -> Option<PathBuf> {
-    if let Some(p) = PATH_OVERRIDE.lock().unwrap().clone() {
+    if let Some(p) = PATH_OVERRIDE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+    {
         return Some(p);
     }
     dirs::home_dir().map(|h| h.join(".purple/preferences"))
@@ -805,5 +809,31 @@ mod tests {
         let val = parse_value(content, "auto_ping");
         let auto_ping = val.map(|v| v != "false").unwrap_or(true);
         assert!(!auto_ping);
+    }
+
+    // Verifies the poison-recovery pattern used by `path()` and `set_path_override()`.
+    // Uses a local Mutex to avoid poisoning the global PATH_OVERRIDE permanently
+    // (a poisoned Mutex cannot be un-poisoned, which would contaminate other tests).
+    // The production code uses the same `.lock().unwrap_or_else(|e| e.into_inner())`
+    // pattern, so this test proves the pattern survives a poisoned lock.
+    #[test]
+    fn recovered_lock_survives_poison() {
+        let lock: std::sync::Arc<std::sync::Mutex<Option<PathBuf>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(None));
+        let poisoner = lock.clone();
+        let joined = std::thread::spawn(move || {
+            let _guard = poisoner.lock().unwrap();
+            panic!("intentional poison for test");
+        })
+        .join();
+        assert!(joined.is_err(), "poisoning thread must have panicked");
+        assert!(lock.is_poisoned(), "mutex must be poisoned after panic");
+
+        // The exact pattern used by path() and set_path_override().
+        let recovered = lock.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(
+            recovered.is_none(),
+            "recovered lock must expose inner value"
+        );
     }
 }
