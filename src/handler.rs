@@ -2808,10 +2808,13 @@ pub(crate) fn zone_data_for(provider: &str) -> (ZoneList, ZoneGroups) {
             crate::providers::ovh::OVH_ENDPOINTS,
             crate::providers::ovh::OVH_ENDPOINT_GROUPS,
         ),
-        _ => unreachable!(
-            "zone_data_for called for unsupported provider: {}",
-            provider
-        ),
+        _ => {
+            debug_assert!(
+                false,
+                "zone_data_for called for unsupported provider: {provider}"
+            );
+            (&[], &[])
+        }
     }
 }
 
@@ -11175,5 +11178,24 @@ Host do-web2
             &[Some("https://a"), None],
             Some("https://vault.example.com:8200")
         ));
+    }
+
+    #[test]
+    fn zone_data_for_returns_nonempty_for_known_providers() {
+        // zone_data_for falls back to (&[], &[]) + debug_assert for unknown
+        // providers, so release builds cannot panic. We only test the happy
+        // path here; the unknown-provider fallback is validated by the
+        // debug_assert firing in CI if any caller ever passes a typo.
+        for provider in ["scaleway", "aws", "gcp", "oracle", "ovh"] {
+            let (zones, groups) = super::zone_data_for(provider);
+            assert!(
+                !zones.is_empty(),
+                "zones for {provider} should not be empty"
+            );
+            assert!(
+                !groups.is_empty(),
+                "groups for {provider} should not be empty"
+            );
+        }
     }
 }

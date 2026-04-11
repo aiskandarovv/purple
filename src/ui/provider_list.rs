@@ -443,7 +443,13 @@ fn render_field_content(
         ProviderFormField::IdentityFile => &form.identity_file,
         ProviderFormField::VaultRole => &form.vault_role,
         ProviderFormField::VaultAddr => &form.vault_addr,
-        ProviderFormField::VerifyTls | ProviderFormField::AutoSync => unreachable!(),
+        ProviderFormField::VerifyTls | ProviderFormField::AutoSync => {
+            debug_assert!(
+                false,
+                "toggle fields must be handled by the early-return branches above"
+            );
+            return;
+        }
     };
 
     // Mask token except last 4 chars when not focused
@@ -662,6 +668,66 @@ fn render_region_picker_overlay(frame: &mut Frame, app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::super::truncate;
+    use super::render_field_content;
+    use crate::app::{ProviderFormField, ProviderFormFields};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::layout::Rect;
+
+    // Every ProviderFormField variant must render without hitting the
+    // debug_assert fallback. Adding a new variant to the enum without
+    // handling it in render_field_content will cause the match below to
+    // fail to compile, flagging the gap before it reaches production.
+    #[test]
+    fn render_field_content_handles_every_variant() {
+        let form = ProviderFormFields::new();
+        let area = Rect::new(0, 0, 40, 1);
+        let backend = TestBackend::new(40, 3);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let all: &[ProviderFormField] = &[
+            ProviderFormField::Url,
+            ProviderFormField::Token,
+            ProviderFormField::Profile,
+            ProviderFormField::Project,
+            ProviderFormField::Compartment,
+            ProviderFormField::Regions,
+            ProviderFormField::AliasPrefix,
+            ProviderFormField::User,
+            ProviderFormField::IdentityFile,
+            ProviderFormField::VerifyTls,
+            ProviderFormField::VaultRole,
+            ProviderFormField::VaultAddr,
+            ProviderFormField::AutoSync,
+        ];
+
+        // Exhaustiveness guard: the compiler forces this match to cover
+        // every variant. Add new variants to `all` above when adding them
+        // to ProviderFormField.
+        for variant in all {
+            match variant {
+                ProviderFormField::Url
+                | ProviderFormField::Token
+                | ProviderFormField::Profile
+                | ProviderFormField::Project
+                | ProviderFormField::Compartment
+                | ProviderFormField::Regions
+                | ProviderFormField::AliasPrefix
+                | ProviderFormField::User
+                | ProviderFormField::IdentityFile
+                | ProviderFormField::VerifyTls
+                | ProviderFormField::VaultRole
+                | ProviderFormField::VaultAddr
+                | ProviderFormField::AutoSync => {}
+            }
+        }
+
+        for variant in all {
+            terminal
+                .draw(|frame| render_field_content(frame, area, *variant, &form, "aws"))
+                .unwrap();
+        }
+    }
 
     #[test]
     fn truncate_fits() {
