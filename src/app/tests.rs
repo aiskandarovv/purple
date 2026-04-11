@@ -1,3 +1,4 @@
+use super::types::DisplayTag;
 use super::*;
 use crate::ssh_config::model::SshConfigFile;
 use crate::tunnel::TunnelType;

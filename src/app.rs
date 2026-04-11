@@ -54,9 +54,9 @@ pub use forms::{
     SnippetHostOutput, SnippetOutputState, SnippetParamFormState, TunnelForm, TunnelFormField,
 };
 pub use types::{
-    ConflictState, ContainerState, DeletedHost, DisplayTag, FormBaseline, GroupBy, HostListItem,
-    PingStatus, ProviderFormBaseline, ReloadState, Screen, SearchState, SnippetFormBaseline,
-    SortMode, StatusMessage, SyncRecord, TunnelFormBaseline, UiSelection, ViewMode, classify_ping,
+    ConflictState, ContainerState, DeletedHost, FormBaseline, GroupBy, HostListItem, PingStatus,
+    ProviderFormBaseline, ReloadState, Screen, SearchState, SnippetFormBaseline, SortMode,
+    StatusMessage, SyncRecord, TunnelFormBaseline, UiSelection, ViewMode, classify_ping,
     health_summary_spans, health_summary_spans_for, ping_sort_key, propagate_ping_to_dependents,
     select_display_tags, status_glyph,
 };
