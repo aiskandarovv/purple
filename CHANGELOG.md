@@ -1,3 +1,9 @@
+## 2.33.2
+
+- Active tunnels now render green in the detail panel
+- Tunnel rules in the detail panel TUNNELS section use a `→` arrow between the local and remote endpoints, so `LocalForward 8200 10.30.0.3:8200` displays as `L 8200 → 10.30.0.3:8200`. DynamicForward entries keep their single-value form (`D 1080`)
+- Active tunnel lines use the theme success color instead of bold, matching the green convention already used for active hosts in the host list
+
 ## 2.33.1
 
 - Askpass now works from headless ssh sessions on Linux

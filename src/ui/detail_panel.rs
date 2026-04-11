@@ -745,7 +745,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect, spinner_tick: u64) {
 
         let rules = find_tunnel_rules(&app.config.elements, &host.alias);
         let style = if tunnel_active {
-            theme::bold()
+            theme::success()
         } else {
             theme::muted()
         };
@@ -1254,7 +1254,13 @@ fn find_tunnel_rules(elements: &[ConfigElement], alias: &str) -> Vec<String> {
                             "dynamicforward" => "D",
                             _ => return None,
                         };
-                        Some(format!("{} {}", prefix, d.value))
+                        let formatted = match d.value.split_once(char::is_whitespace) {
+                            Some((src, dst)) => {
+                                format!("{} {} \u{2192} {}", prefix, src, dst.trim_start())
+                            }
+                            None => format!("{} {}", prefix, d.value),
+                        };
+                        Some(formatted)
                     })
                     .collect();
             }
@@ -1287,6 +1293,76 @@ mod tests {
     fn sparkline_empty_timestamps() {
         let result = activity_sparkline(&[], 40);
         assert!(result.is_empty());
+    }
+
+    fn directive(key: &str, value: &str) -> crate::ssh_config::model::Directive {
+        crate::ssh_config::model::Directive {
+            key: key.to_string(),
+            value: value.to_string(),
+            raw_line: format!("    {} {}", key, value),
+            is_non_directive: false,
+        }
+    }
+
+    fn host_element(
+        alias: &str,
+        directives: Vec<crate::ssh_config::model::Directive>,
+    ) -> ConfigElement {
+        ConfigElement::HostBlock(crate::ssh_config::model::HostBlock {
+            host_pattern: alias.to_string(),
+            raw_host_line: format!("Host {}", alias),
+            directives,
+        })
+    }
+
+    #[test]
+    fn tunnel_rules_format_local_forward_with_arrow() {
+        let elements = vec![host_element(
+            "db",
+            vec![directive("LocalForward", "8200 10.30.0.3:8200")],
+        )];
+        let rules = find_tunnel_rules(&elements, "db");
+        assert_eq!(rules, vec!["L 8200 \u{2192} 10.30.0.3:8200"]);
+    }
+
+    #[test]
+    fn tunnel_rules_format_remote_forward_with_arrow() {
+        let elements = vec![host_element(
+            "web",
+            vec![directive("RemoteForward", "9090 127.0.0.1:9090")],
+        )];
+        let rules = find_tunnel_rules(&elements, "web");
+        assert_eq!(rules, vec!["R 9090 \u{2192} 127.0.0.1:9090"]);
+    }
+
+    #[test]
+    fn tunnel_rules_dynamic_forward_has_no_arrow() {
+        let elements = vec![host_element(
+            "socks",
+            vec![directive("DynamicForward", "1080")],
+        )];
+        let rules = find_tunnel_rules(&elements, "socks");
+        assert_eq!(rules, vec!["D 1080"]);
+    }
+
+    #[test]
+    fn tunnel_rules_ipv6_bracketed_bind_address() {
+        let elements = vec![host_element(
+            "v6",
+            vec![directive("LocalForward", "[::1]:8200 [::1]:8200")],
+        )];
+        let rules = find_tunnel_rules(&elements, "v6");
+        assert_eq!(rules, vec!["L [::1]:8200 \u{2192} [::1]:8200"]);
+    }
+
+    #[test]
+    fn tunnel_rules_tab_separator_between_src_and_dst() {
+        let elements = vec![host_element(
+            "tabbed",
+            vec![directive("LocalForward", "8200\t10.30.0.3:8200")],
+        )];
+        let rules = find_tunnel_rules(&elements, "tabbed");
+        assert_eq!(rules, vec!["L 8200 \u{2192} 10.30.0.3:8200"]);
     }
 
     #[test]
