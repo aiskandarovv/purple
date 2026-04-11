@@ -1,6 +1,7 @@
 mod animation;
 mod app;
 mod askpass;
+mod askpass_env;
 mod clipboard;
 mod connection;
 mod containers;

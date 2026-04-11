@@ -500,16 +500,7 @@ pub fn run_scp(
         .stderr(Stdio::piped());
 
     if askpass.is_some() {
-        let exe = std::env::current_exe()
-            .ok()
-            .map(|p| p.to_string_lossy().to_string())
-            .or_else(|| std::env::args().next())
-            .unwrap_or_else(|| "purple".to_string());
-        cmd.env("SSH_ASKPASS", &exe)
-            .env("SSH_ASKPASS_REQUIRE", "prefer")
-            .env("PURPLE_ASKPASS_MODE", "1")
-            .env("PURPLE_HOST_ALIAS", alias)
-            .env("PURPLE_CONFIG_PATH", config_path.as_os_str());
+        crate::askpass_env::configure_ssh_command(&mut cmd, alias, config_path);
     }
 
     if let Some(token) = bw_session {

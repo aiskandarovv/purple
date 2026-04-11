@@ -1,3 +1,10 @@
+## 2.33.1
+
+- Askpass now works from headless ssh sessions on Linux
+- Switch `SSH_ASKPASS_REQUIRE` from `prefer` to `force` on every ssh and scp launch (connect, tunnel, file browser, snippet). OpenSSH's `prefer` mode silently no-ops when both `DISPLAY` and `WAYLAND_DISPLAY` are empty and falls back to the TTY prompt, which broke Bitwarden, 1Password, Vault KV, pass and keychain lookups for users running purple inside a remote shell on Arch, Hyprland and other headless Linux setups
+- Extract the SSH_ASKPASS env wiring into `askpass_env::configure_ssh_command` so all four call sites share one regression test that inspects `Command::get_envs()` directly. A future change back to `prefer` now fails CI
+- Resolves #19
+
 ## 2.33.0
 
 - Tmux-aware SSH: new window instead of TUI suspend

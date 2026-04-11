@@ -26,6 +26,13 @@ pub fn is_in_tmux() -> bool {
 /// Returns immediately after the window is created. The SSH session runs
 /// asynchronously in the new window. Returns an error if tmux is not
 /// available or the window cannot be created.
+///
+/// This path deliberately does not wire up SSH_ASKPASS. The caller in `main.rs`
+/// guards this with `askpass.is_none()`, because an askpass-backed host needs an
+/// inherited stdin (so purple's askpass subprocess can print back to the ssh
+/// parent) and that inheritance does not survive the `tmux new-window` fork.
+/// Hosts with a password source therefore keep using the suspend-TUI `connect()`
+/// flow instead.
 pub fn connect_tmux_window(alias: &str, config_path: &Path, has_active_tunnel: bool) -> Result<()> {
     info!("SSH connection via tmux: {alias}");
 
@@ -115,8 +122,8 @@ impl Drop for SignalMaskGuard {
 /// Uses the system `ssh` binary with inherited stdin/stdout. Stderr is piped and
 /// forwarded to real stderr in real time so the output is captured for error detection.
 /// Passes `-F <config_path>` so the alias resolves against the correct config file.
-/// When `askpass` is Some, sets SSH_ASKPASS environment variables so SSH retrieves
-/// the password from the configured source via purple's askpass handler.
+/// When `askpass` is Some, delegates to `askpass_env::configure_ssh_command` to wire up
+/// SSH_ASKPASS, SSH_ASKPASS_REQUIRE=force and the PURPLE_* env vars.
 pub fn connect(
     alias: &str,
     config_path: &Path,
@@ -143,16 +150,7 @@ pub fn connect(
         .stderr(std::process::Stdio::piped());
 
     if askpass.is_some() {
-        let exe = std::env::current_exe()
-            .ok()
-            .map(|p| p.to_string_lossy().to_string())
-            .or_else(|| std::env::args().next())
-            .unwrap_or_else(|| "purple".to_string());
-        cmd.env("SSH_ASKPASS", &exe)
-            .env("SSH_ASKPASS_REQUIRE", "prefer")
-            .env("PURPLE_ASKPASS_MODE", "1")
-            .env("PURPLE_HOST_ALIAS", alias)
-            .env("PURPLE_CONFIG_PATH", config_path.as_os_str());
+        crate::askpass_env::configure_ssh_command(&mut cmd, alias, config_path);
     }
 
     if let Some(token) = bw_session {
@@ -430,6 +428,9 @@ Host key verification failed.
     fn connect_tmux_window_fails_gracefully_outside_tmux_session() {
         // When no tmux server is running (or tmux is absent), should return an error.
         // Skip if we're actually inside a live tmux session (the command would succeed).
+        // Holds TMUX_LOCK so the env-mutating tests below cannot flip TMUX between
+        // the guard read and the call to connect_tmux_window.
+        let _guard = TMUX_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         if std::env::var("TMUX").is_ok() {
             return;
         }
@@ -449,7 +450,9 @@ Host key verification failed.
     #[test]
     fn connect_tmux_window_with_tunnel_does_not_panic() {
         // Verify has_active_tunnel=true doesn't panic and fails gracefully.
-        // Skip if inside a live tmux session.
+        // Skip if inside a live tmux session. TMUX_LOCK prevents the env-mutating
+        // tests from racing this guard read.
+        let _guard = TMUX_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         if std::env::var("TMUX").is_ok() {
             return;
         }

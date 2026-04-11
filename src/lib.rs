@@ -1,4 +1,5 @@
 // Library re-exports for integration tests.
+pub(crate) mod askpass_env;
 pub mod containers;
 pub mod demo_flag;
 pub mod file_browser;
