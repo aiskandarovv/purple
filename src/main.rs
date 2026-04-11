@@ -1937,77 +1937,123 @@ fn run_tui(mut app: App) -> Result<()> {
         if let Some((alias, host_askpass)) = app.pending_connect.take() {
             let vault_host = app.hosts.iter().find(|h| h.alias == alias).cloned();
             let askpass = host_askpass.or_else(preferences::load_askpass_default);
-            events.pause();
-            terminal.exit()?;
-            let vault_msg = if let Some(ref host) = vault_host {
-                let msg =
-                    ensure_vault_ssh_if_needed(&alias, host, &app.provider_config, &mut app.config);
-                // A sign attempt (success or failure) means the on-disk cert
-                // state might have changed. Refresh the cache before the user
-                // returns from the SSH session so the detail panel reflects
-                // the new state. reload_hosts after the session will also
-                // retain this entry.
-                if msg.is_some() {
-                    app.reload_hosts();
-                    app.refresh_cert_cache(&alias);
-                }
-                msg
-            } else {
-                None
-            };
-            if let Some(token) = ensure_bw_session(app.bw_session.as_deref(), askpass.as_deref()) {
-                app.bw_session = Some(token);
-            }
-            ensure_keychain_password(&alias, askpass.as_deref());
-            println!("Beaming you up to {}...\n", alias);
             let has_active_tunnel = app.active_tunnels.contains_key(&alias);
-            let result = connection::connect(
-                &alias,
-                &app.reload.config_path,
-                askpass.as_deref(),
-                app.bw_session.as_deref(),
-                has_active_tunnel,
-            );
-            println!();
-            match &result {
-                Ok(cr) => {
-                    let code = cr.status.code().unwrap_or(1);
-                    if code != 255 {
-                        app.history.record(&alias);
+            let use_tmux = connection::is_in_tmux() && askpass.is_none();
+
+            if use_tmux {
+                // Tmux mode: open SSH in a new tmux window. TUI stays alive.
+                // Vault SSH cert signing runs first (eprintln warnings are
+                // harmless on the alternate screen — ratatui repaints over
+                // them on the next draw cycle).
+                let vault_msg = if let Some(ref host) = vault_host {
+                    let msg = ensure_vault_ssh_if_needed(
+                        &alias,
+                        host,
+                        &app.provider_config,
+                        &mut app.config,
+                    );
+                    if msg.is_some() {
+                        app.reload_hosts();
+                        app.refresh_cert_cache(&alias);
                     }
-                    if code != 0 {
-                        if let Some((hostname, known_hosts_path)) =
-                            connection::parse_host_key_error(&cr.stderr_output)
-                        {
-                            app.screen = app::Screen::ConfirmHostKeyReset {
-                                alias: alias.clone(),
-                                hostname,
-                                known_hosts_path,
-                                askpass,
-                            };
+                    msg
+                } else {
+                    None
+                };
+
+                match connection::connect_tmux_window(
+                    &alias,
+                    &app.reload.config_path,
+                    has_active_tunnel,
+                ) {
+                    Ok(()) => {
+                        if let Some((ref msg, is_error)) = vault_msg {
+                            app.set_status(msg.clone(), is_error);
                         } else {
-                            app.set_status(
-                                format!("SSH to {} exited with code {}.", alias, code),
-                                true,
-                            );
+                            app.set_status(format!("Opened {} in new tmux window.", alias), false);
                         }
-                    } else if let Some((ref msg, is_error)) = vault_msg {
-                        app.set_status(msg.clone(), is_error);
+                    }
+                    Err(e) => {
+                        app.set_status(format!("tmux: {e}"), true);
                     }
                 }
-                Err(e) => {
-                    eprintln!("Connection failed: {}", e);
-                    app.set_status(format!("Connection to {} failed.", alias), true);
+            } else {
+                // Standard mode: suspend TUI, run SSH inline, restore TUI.
+                // Order preserved: pause events, exit TUI, THEN run vault
+                // signing and password setup (which may eprintln or prompt
+                // for input on the real terminal).
+                events.pause();
+                terminal.exit()?;
+                let vault_msg = if let Some(ref host) = vault_host {
+                    let msg = ensure_vault_ssh_if_needed(
+                        &alias,
+                        host,
+                        &app.provider_config,
+                        &mut app.config,
+                    );
+                    if msg.is_some() {
+                        app.reload_hosts();
+                        app.refresh_cert_cache(&alias);
+                    }
+                    msg
+                } else {
+                    None
+                };
+                if let Some(token) =
+                    ensure_bw_session(app.bw_session.as_deref(), askpass.as_deref())
+                {
+                    app.bw_session = Some(token);
                 }
+                ensure_keychain_password(&alias, askpass.as_deref());
+                println!("Beaming you up to {}...\n", alias);
+                let result = connection::connect(
+                    &alias,
+                    &app.reload.config_path,
+                    askpass.as_deref(),
+                    app.bw_session.as_deref(),
+                    has_active_tunnel,
+                );
+                println!();
+                match &result {
+                    Ok(cr) => {
+                        let code = cr.status.code().unwrap_or(1);
+                        if code != 255 {
+                            app.history.record(&alias);
+                        }
+                        if code != 0 {
+                            if let Some((hostname, known_hosts_path)) =
+                                connection::parse_host_key_error(&cr.stderr_output)
+                            {
+                                app.screen = app::Screen::ConfirmHostKeyReset {
+                                    alias: alias.clone(),
+                                    hostname,
+                                    known_hosts_path,
+                                    askpass,
+                                };
+                            } else {
+                                app.set_status(
+                                    format!("SSH to {} exited with code {}.", alias, code),
+                                    true,
+                                );
+                            }
+                        } else if let Some((ref msg, is_error)) = vault_msg {
+                            app.set_status(msg.clone(), is_error);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Connection failed: {}", e);
+                        app.set_status(format!("Connection to {} failed.", alias), true);
+                    }
+                }
+                askpass::cleanup_marker(&alias);
+                terminal.enter()?;
+                events.resume();
+                last_config_check = std::time::Instant::now();
+                // Reload in case config changed externally
+                app.config = SshConfigFile::parse(&app.reload.config_path)?;
+                app.reload_hosts();
+                app.update_last_modified();
             }
-            askpass::cleanup_marker(&alias);
-            terminal.enter()?;
-            events.resume();
-            last_config_check = std::time::Instant::now();
-            // Reload in case config changed externally
-            app.config = SshConfigFile::parse(&app.reload.config_path)?;
-            app.reload_hosts();
-            app.update_last_modified();
         }
 
         // Handle pending snippet execution

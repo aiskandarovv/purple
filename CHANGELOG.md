@@ -1,3 +1,12 @@
+## 2.33.0
+
+- Tmux-aware SSH: new window instead of TUI suspend
+- When purple runs inside a tmux session, pressing Enter on a host opens SSH in a new tmux window named after the alias. The purple TUI stays alive in the original window so you can switch between sessions with `prefix + n/p` and keep navigating other hosts
+- Detection via `$TMUX` env var. No tmux means the current suspend-and-restore behavior is unchanged
+- Hosts with an askpass source (keychain, 1Password, Bitwarden, Vault KV, pass, cmd) keep the suspend-TUI flow because the askpass relay needs inherited stdin
+- Vault SSH cert signing still runs before the tmux window opens, so short-lived certs are refreshed exactly as before. Signing status messages surface via the purple status bar
+- Resolves #18
+
 ## 2.32.1
 
 - Remove vault sign from host list footer to reduce clutter
