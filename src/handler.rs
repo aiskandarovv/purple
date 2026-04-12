@@ -341,6 +341,15 @@ pub(super) fn open_edit_form(app: &mut App, host: HostEntry) -> bool {
     true
 }
 
+/// After a picker selection, try to auto-submit the host form if all
+/// required fields are filled. Lives at the handler level so picker
+/// submodules do not need a reverse dependency on host_form.
+pub(super) fn try_auto_submit_after_picker(app: &mut App) {
+    if !app.form.alias.is_empty() && !app.form.hostname.is_empty() {
+        host_form::submit_form(app);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

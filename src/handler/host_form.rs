@@ -182,14 +182,7 @@ fn maybe_smart_paste(app: &mut App) {
     }
 }
 
-/// After a picker selection, try to auto-submit the host form if all required fields are filled.
-pub(super) fn try_auto_submit_after_picker(app: &mut App) {
-    if !app.form.alias.is_empty() && !app.form.hostname.is_empty() {
-        submit_form(app);
-    }
-}
-
-fn submit_form(app: &mut App) {
+pub(super) fn submit_form(app: &mut App) {
     // Check for external config changes since form was opened
     if app.config_changed_since_form_open() {
         app.set_status(

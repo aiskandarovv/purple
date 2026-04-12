@@ -75,7 +75,7 @@ pub(super) fn handle_password_picker(app: &mut App, key: KeyEvent) {
             }
             app.ui.show_password_picker = false;
             if !needs_more_input {
-                super::host_form::try_auto_submit_after_picker(app);
+                super::try_auto_submit_after_picker(app);
             }
         }
         _ => {}
@@ -109,7 +109,7 @@ pub(super) fn handle_key_picker_shared(app: &mut App, key: KeyEvent, for_provide
             }
             app.ui.show_key_picker = false;
             if !for_provider {
-                super::host_form::try_auto_submit_after_picker(app);
+                super::try_auto_submit_after_picker(app);
             }
         }
         _ => {}
@@ -138,7 +138,7 @@ pub(super) fn handle_proxyjump_picker(app: &mut App, key: KeyEvent) {
                 }
             }
             app.ui.show_proxyjump_picker = false;
-            super::host_form::try_auto_submit_after_picker(app);
+            super::try_auto_submit_after_picker(app);
         }
         _ => {}
     }
