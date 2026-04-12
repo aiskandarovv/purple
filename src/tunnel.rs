@@ -294,8 +294,12 @@ pub fn start_tunnel(
         cmd.env("BW_SESSION", token);
     }
 
-    // Own process group so tunnel doesn't receive purple's signals.
     #[cfg(unix)]
+    // SAFETY: pre_exec runs after fork, before exec in the child process.
+    // setpgid(0, 0) is async-signal-safe (POSIX). It moves the child into
+    // its own process group so SIGINT/SIGTERM sent to purple's group does
+    // not kill the tunnel. The return value is intentionally ignored: if
+    // setpgid fails the tunnel still works, it just shares purple's group.
     unsafe {
         use std::os::unix::process::CommandExt;
         cmd.pre_exec(|| {

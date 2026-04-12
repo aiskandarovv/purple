@@ -1,3 +1,7 @@
+## 2.33.4
+
+- Internal: extract CLI handlers from main.rs, move test modules into dedicated files across the codebase, document unsafe block invariants, replace fragile unwrap patterns with let-else guards, route TUI-context error messages through the log system instead of stderr
+
 ## 2.33.3
 
 - Safer render paths: recover from poisoned mutex, remove unwrap panics from container overlay, replace unreachable! with safe fallbacks in provider and tunnel forms
