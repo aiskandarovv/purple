@@ -26,7 +26,9 @@ pub(super) fn handle_provider_list(
     if app.pending_provider_delete.is_some() && key.code != KeyCode::Char('?') {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
-                let name = app.pending_provider_delete.take().unwrap();
+                let Some(name) = app.pending_provider_delete.take() else {
+                    return;
+                };
                 if let Some(old_section) = app.provider_config.section(name.as_str()).cloned() {
                     app.provider_config.remove_section(name.as_str());
                     if let Err(e) = app.provider_config.save() {

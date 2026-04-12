@@ -13,7 +13,9 @@ pub(super) fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
     if app.pending_tunnel_delete.is_some() && key.code != KeyCode::Char('?') {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
-                let sel = app.pending_tunnel_delete.take().unwrap();
+                let Some(sel) = app.pending_tunnel_delete.take() else {
+                    return;
+                };
                 if let Some(rule) = app.tunnel_list.get(sel) {
                     let key = rule.tunnel_type.directive_key().to_string();
                     let value = rule.to_directive_value();

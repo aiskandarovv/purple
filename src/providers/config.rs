@@ -56,7 +56,7 @@ impl ProviderConfig {
             Ok(c) => c,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Self::default(),
             Err(e) => {
-                eprintln!("! Could not read {}: {}", path.display(), e);
+                log::warn!("[config] Could not read {}: {}", path.display(), e);
                 return Self::default();
             }
         };

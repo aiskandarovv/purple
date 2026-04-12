@@ -1200,7 +1200,7 @@ impl ThemeDef {
                     if let Some(theme) = Self::parse_toml(&content) {
                         themes.push(theme);
                     } else {
-                        eprintln!("warning: invalid theme file: {}", path.display());
+                        log::warn!("[config] Invalid theme file: {}", path.display());
                     }
                 }
             }

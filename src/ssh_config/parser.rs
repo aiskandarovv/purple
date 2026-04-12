@@ -301,8 +301,8 @@ impl SshConfigFile {
                                 });
                             }
                             Err(e) => {
-                                eprintln!(
-                                    "! Could not read Include file {}: {}",
+                                log::warn!(
+                                    "[config] Could not read Include file {}: {}",
                                     path.display(),
                                     e
                                 );

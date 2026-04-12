@@ -38,7 +38,9 @@ pub(super) fn handle_file_browser(
     if fb.confirm_copy.is_some() && key.code != KeyCode::Char('?') {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
-                let req = fb.confirm_copy.take().unwrap();
+                let Some(req) = fb.confirm_copy.take() else {
+                    return;
+                };
                 let alias = fb.alias.clone();
                 let askpass = fb.askpass.clone();
                 let has_active_tunnel = app.active_tunnels.contains_key(&alias);

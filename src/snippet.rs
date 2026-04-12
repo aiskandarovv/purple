@@ -43,7 +43,7 @@ impl SnippetStore {
             Ok(c) => c,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Self::default(),
             Err(e) => {
-                eprintln!("! Could not read {}: {}", path.display(), e);
+                log::warn!("[config] Could not read {}: {}", path.display(), e);
                 return Self::default();
             }
         };
@@ -409,7 +409,11 @@ impl Drop for ChildGuard {
             if let Ok(Some(_)) = child.try_wait() {
                 return;
             }
-            // SIGTERM the process group
+            // SAFETY: self.pgid was set by setpgid(0,0) in pre_exec and is
+            // valid for the lifetime of this SnippetChild. kill() with a
+            // negative PID sends the signal to the entire process group.
+            // ESRCH (process already exited) is the expected race; the
+            // return value is intentionally ignored.
             #[cfg(unix)]
             unsafe {
                 libc::kill(-self.pgid, libc::SIGTERM);
@@ -425,7 +429,7 @@ impl Drop for ChildGuard {
                 }
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
-            // Escalate to SIGKILL on the process group
+            // SAFETY: same invariants as the SIGTERM call above.
             #[cfg(unix)]
             unsafe {
                 libc::kill(-self.pgid, libc::SIGKILL);

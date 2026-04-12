@@ -31,7 +31,9 @@ impl FileLock {
                 .mode(0o600)
                 .open(&lock_path)?;
 
-            // LOCK_EX = exclusive, blocks until acquired
+            // SAFETY: flock() is safe to call on any valid file descriptor.
+            // The fd comes from a File we just opened and own. LOCK_EX
+            // requests an exclusive advisory lock, blocking until acquired.
             let ret =
                 unsafe { libc::flock(std::os::unix::io::AsRawFd::as_raw_fd(&file), libc::LOCK_EX) };
             if ret != 0 {

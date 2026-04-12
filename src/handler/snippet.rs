@@ -49,7 +49,9 @@ pub(super) fn handle_snippet_picker(
     if app.pending_snippet_delete.is_some() && key.code != KeyCode::Char('?') {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
-                let sel = app.pending_snippet_delete.take().unwrap();
+                let Some(sel) = app.pending_snippet_delete.take() else {
+                    return;
+                };
                 if sel < app.snippet_store.snippets.len() {
                     let removed = app.snippet_store.snippets.remove(sel);
                     if let Err(e) = app.snippet_store.save() {
