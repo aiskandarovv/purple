@@ -464,7 +464,12 @@ pub fn save_container_cache(cache: &HashMap<String, ContainerCacheEntry>) {
         }
     }
     let content = lines.join("\n");
-    let _ = crate::fs_util::atomic_write(&path, content.as_bytes());
+    if let Err(e) = crate::fs_util::atomic_write(&path, content.as_bytes()) {
+        log::warn!(
+            "[config] Failed to write container cache {}: {e}",
+            path.display()
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

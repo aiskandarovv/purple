@@ -181,12 +181,33 @@ impl Columns {
     }
 }
 
-/// Compute the display width of the composite host label (hostname:port).
+/// Compute the display width of the composite host label (hostname:port)
+/// without allocating a String. Uses the hostname's Unicode width plus the
+/// port suffix length when the port is non-default.
 fn composite_host_width(host: &crate::ssh_config::model::HostEntry) -> usize {
-    composite_host_label(host).width()
+    let w = host.hostname.width();
+    if host.port == 22 {
+        w
+    } else {
+        // ":NNNNN" — colon (1) + digit count
+        w + 1 + digit_count(host.port)
+    }
+}
+
+fn digit_count(mut n: u16) -> usize {
+    if n == 0 {
+        return 1;
+    }
+    let mut count = 0;
+    while n > 0 {
+        count += 1;
+        n /= 10;
+    }
+    count
 }
 
 /// Build composite host label: hostname:port (only showing non-default parts).
+#[cfg(test)]
 fn composite_host_label(host: &crate::ssh_config::model::HostEntry) -> String {
     let mut s = String::new();
     s.push_str(&host.hostname);
