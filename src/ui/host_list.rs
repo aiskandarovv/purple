@@ -1735,6 +1735,51 @@ mod tests {
         assert_eq!(label, "example.com");
     }
 
+    // composite_host_width tests (allocation-free path)
+
+    #[test]
+    fn composite_host_width_default_port() {
+        let host = crate::ssh_config::model::HostEntry {
+            hostname: "example.com".to_string(),
+            port: 22,
+            ..Default::default()
+        };
+        assert_eq!(super::composite_host_width(&host), "example.com".len());
+    }
+
+    #[test]
+    fn composite_host_width_non_default_port() {
+        let host = crate::ssh_config::model::HostEntry {
+            hostname: "example.com".to_string(),
+            port: 2222,
+            ..Default::default()
+        };
+        // "example.com" (11) + ":" (1) + "2222" (4) = 16
+        assert_eq!(super::composite_host_width(&host), 16);
+    }
+
+    #[test]
+    fn composite_host_width_port_zero() {
+        let host = crate::ssh_config::model::HostEntry {
+            hostname: "host".to_string(),
+            port: 0,
+            ..Default::default()
+        };
+        // "host" (4) + ":" (1) + "0" (1) = 6
+        assert_eq!(super::composite_host_width(&host), 6);
+    }
+
+    #[test]
+    fn composite_host_width_port_max() {
+        let host = crate::ssh_config::model::HostEntry {
+            hostname: "h".to_string(),
+            port: 65535,
+            ..Default::default()
+        };
+        // "h" (1) + ":" (1) + "65535" (5) = 7
+        assert_eq!(super::composite_host_width(&host), 7);
+    }
+
     // =========================================================================
     // Columns detail_mode collapse priority tests
     // =========================================================================

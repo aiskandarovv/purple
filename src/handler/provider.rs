@@ -10,6 +10,9 @@ use crate::providers;
 
 mod region;
 
+// Test-only: region_picker_rows is pub(crate) in region.rs but only re-exported
+// here for handler::tests which validates the OVH endpoint picker row count.
+// Production code calls handle_region_picker directly; it never needs the raw rows.
 #[cfg(test)]
 pub(super) use region::region_picker_rows;
 pub(crate) use region::zone_data_for;
