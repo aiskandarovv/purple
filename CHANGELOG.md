@@ -1,3 +1,13 @@
+## 2.34.0
+
+- Toast notifications for user action feedback
+- Copy, sort, delete and error messages now appear as a bordered overlay box in the bottom-right corner instead of blending into the footer
+- Toast queue buffers rapid actions so no feedback is lost (max 5 queued)
+- Keyboard hints in the footer stay visible at all times. Status messages no longer replace the "? more" help hint
+- Four message classes: Confirmation (toast, 1.5s), Info (footer, 3s), Alert (toast, 5s) and Progress (footer, sticky)
+- Background events like provider sync and ping go to the footer. Direct user actions go to toast
+- Debug logging for all status message routing decisions
+
 ## 2.33.5
 
 - Debug logging for silent error paths across the codebase

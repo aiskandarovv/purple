@@ -157,7 +157,7 @@ pub(super) fn handle_provider_list(
                             app.syncing_providers.insert(name.clone(), cancel.clone());
                             let display_name =
                                 crate::providers::provider_display_name(name.as_str());
-                            app.set_status(format!("Syncing {}...", display_name), false);
+                            app.set_info_status(format!("Syncing {}...", display_name));
                             super::sync::spawn_provider_sync(&section, events_tx.clone(), cancel);
                         }
                     } else {

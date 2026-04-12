@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -58,9 +58,9 @@ pub use forms::{
     SnippetHostOutput, SnippetOutputState, SnippetParamFormState, TunnelForm, TunnelFormField,
 };
 pub use types::{
-    ConflictState, ContainerState, DeletedHost, FormBaseline, GroupBy, HostListItem, PingStatus,
-    ProviderFormBaseline, ReloadState, Screen, SearchState, SnippetFormBaseline, SortMode,
-    StatusMessage, SyncRecord, TunnelFormBaseline, UiSelection, ViewMode, classify_ping,
+    ConflictState, ContainerState, DeletedHost, FormBaseline, GroupBy, HostListItem, MessageClass,
+    PingStatus, ProviderFormBaseline, ReloadState, Screen, SearchState, SnippetFormBaseline,
+    SortMode, StatusMessage, SyncRecord, TunnelFormBaseline, UiSelection, ViewMode, classify_ping,
     health_summary_spans, health_summary_spans_for, ping_sort_key, propagate_ping_to_dependents,
     select_display_tags, status_glyph,
 };
@@ -97,6 +97,8 @@ pub struct App {
     pub display_list: Vec<HostListItem>,
     pub form: HostForm,
     pub status: Option<StatusMessage>,
+    pub toast: Option<StatusMessage>,
+    pub toast_queue: VecDeque<StatusMessage>,
     pub pending_connect: Option<(String, Option<String>)>,
 
     // Sub-structs
@@ -277,6 +279,8 @@ impl App {
             display_list,
             form: HostForm::new(),
             status: None,
+            toast: None,
+            toast_queue: VecDeque::new(),
             pending_connect: None,
             ui: UiSelection {
                 list_state,
@@ -572,9 +576,54 @@ impl App {
     }
 
     pub fn set_status(&mut self, text: impl Into<String>, is_error: bool) {
-        self.status = Some(StatusMessage {
+        let class = if is_error {
+            MessageClass::Alert
+        } else {
+            MessageClass::Confirmation
+        };
+        let msg = StatusMessage {
             text: text.into(),
-            is_error,
+            class,
+            tick_count: 0,
+            sticky: false,
+        };
+        if msg.is_toast() {
+            self.push_toast(msg);
+        } else {
+            log::debug!("footer <- {:?}: {}", msg.class, msg.text);
+            self.status = Some(msg);
+        }
+    }
+
+    /// Push a toast message. Confirmation toasts replace the current toast
+    /// immediately (last-write-wins). Alert toasts are queued (max 5) so
+    /// errors are never lost.
+    fn push_toast(&mut self, msg: StatusMessage) {
+        log::debug!("toast <- {:?}: {}", msg.class, msg.text);
+        if msg.class == MessageClass::Confirmation {
+            // Confirmation replaces any active toast and clears the queue.
+            self.toast = Some(msg);
+            self.toast_queue.clear();
+        } else if self.toast.is_some() {
+            if self.toast_queue.len() >= 5 {
+                if let Some(dropped) = self.toast_queue.front() {
+                    log::debug!("toast queue full, dropping: {}", dropped.text);
+                }
+                self.toast_queue.pop_front();
+            }
+            self.toast_queue.push_back(msg);
+        } else {
+            self.toast = Some(msg);
+        }
+    }
+
+    /// Set an Info-class status message that displays in the footer only.
+    pub fn set_info_status(&mut self, text: impl Into<String>) {
+        let text = text.into();
+        log::debug!("footer <- Info: {}", text);
+        self.status = Some(StatusMessage {
+            text,
+            class: MessageClass::Info,
             tick_count: 0,
             sticky: false,
         });
@@ -583,24 +632,47 @@ impl App {
     /// Like `set_status` but skips the write when a sticky message is active.
     /// Use for background/timer events (ping expiry, sync ticks) that must
     /// not clobber an in-progress or critical sticky message.
+    /// Routes to Info (footer) by default, Alert to toast if is_error.
     pub fn set_background_status(&mut self, text: impl Into<String>, is_error: bool) {
-        if self.status.as_ref().is_some_and(|s| s.sticky) {
+        if is_error {
+            let msg = StatusMessage {
+                text: text.into(),
+                class: MessageClass::Alert,
+                tick_count: 0,
+                sticky: false,
+            };
+            self.push_toast(msg);
             return;
         }
-        self.set_status(text, is_error);
+        if self.status.as_ref().is_some_and(|s| s.sticky) {
+            log::debug!("background status suppressed (sticky active)");
+            return;
+        }
+        self.set_info_status(text);
     }
 
+    /// Sticky messages always go to the footer (`self.status`), even when the
+    /// class is Alert. The `sticky` flag overrides the normal toast routing
+    /// because sticky messages (Vault SSH signing summaries, progress spinners)
+    /// must remain visible in the footer until explicitly replaced.
     pub fn set_sticky_status(&mut self, text: impl Into<String>, is_error: bool) {
+        let text = text.into();
+        let class = if is_error {
+            MessageClass::Alert
+        } else {
+            MessageClass::Progress
+        };
+        log::debug!("footer <- sticky {:?}: {}", class, text);
         self.status = Some(StatusMessage {
-            text: text.into(),
-            is_error,
+            text,
+            class,
             tick_count: 0,
             sticky: true,
         });
     }
 
-    /// Tick the status message timer. Errors show for 5s, success for 3s.
-    /// Sticky messages never expire automatically.
+    /// Tick the footer status message timer. Info shows for 3s.
+    /// Sticky/Progress messages never expire automatically.
     pub fn tick_status(&mut self) {
         // Don't expire status while providers are still syncing
         if !self.syncing_providers.is_empty() {
@@ -611,9 +683,23 @@ impl App {
                 return;
             }
             status.tick_count += 1;
-            let timeout = if status.is_error { 20 } else { 12 };
-            if status.tick_count > timeout {
+            if status.tick_count > status.timeout() {
+                log::debug!("footer status expired: {}", status.text);
                 self.status = None;
+            }
+        }
+    }
+
+    /// Tick the toast message timer. Expires current toast and pops queue.
+    pub fn tick_toast(&mut self) {
+        if let Some(ref mut toast) = self.toast {
+            if toast.sticky {
+                return;
+            }
+            toast.tick_count += 1;
+            if toast.tick_count > toast.timeout() {
+                log::debug!("toast expired: {}", toast.text);
+                self.toast = self.toast_queue.pop_front();
             }
         }
     }

@@ -187,6 +187,9 @@ pub fn render(frame: &mut Frame, app: &mut App, anim: &mut crate::animation::Ani
             });
         }
     }
+
+    // Toast overlay renders on top of everything
+    render_toast(frame, app);
 }
 
 /// Render an overlay with dimmed background and scale-clip animation.
@@ -361,16 +364,18 @@ pub fn footer_primary(key: &str, label: &str) -> [Span<'static>; 2] {
     ]
 }
 
-/// Render footer with shortcuts on the left and "? more" pinned to the right edge.
-/// When a status message is active, falls back to `render_footer_with_status` behavior.
+/// Render footer with shortcuts on the left and "? more" or Info/Progress status on the right.
+/// Keyboard hints are always visible. Toast-class messages are NOT shown here.
 pub fn render_footer_with_help(
     frame: &mut Frame,
     area: Rect,
     footer_spans: Vec<Span<'_>>,
     app: &App,
 ) {
-    if app.status.is_some() {
-        render_footer_with_status(frame, area, footer_spans, app);
+    // Only show footer-class status (Info or Progress), not toast-class
+    let footer_status = app.status.as_ref().filter(|s| !s.is_toast());
+    if let Some(status) = footer_status {
+        render_footer_status_right(frame, area, footer_spans, status);
         return;
     }
     let right_spans = vec![
@@ -386,41 +391,112 @@ pub fn render_footer_with_help(
 }
 
 /// Render footer with shortcuts always visible and optional status right-aligned.
+/// Used by overlay screens. Shows any active footer status (Info, Progress, or
+/// sticky messages set via set_sticky_status).
 pub fn render_footer_with_status(
     frame: &mut Frame,
     area: Rect,
-    mut footer_spans: Vec<Span<'_>>,
+    footer_spans: Vec<Span<'_>>,
     app: &App,
 ) {
     if let Some(ref status) = app.status {
-        use unicode_width::UnicodeWidthStr;
-        let shortcuts_width: usize = footer_spans.iter().map(|s| s.width()).sum();
-        let total_width = area.width as usize;
-        let (icon, icon_style, text) = if status.is_error {
-            ("\u{26A0}", theme::error(), format!(" {} ", status.text))
-        } else if status.sticky {
-            // Sticky non-error = in-progress action. The spinner character
-            // is embedded in the status text by the caller, so no extra
-            // glyph prefix is needed here.
-            ("", Style::default(), format!(" {} ", status.text))
-        } else {
-            ("\u{2713} ", theme::success(), format!("{} ", status.text))
-        };
-        let available = total_width.saturating_sub(shortcuts_width + icon.width() + 2);
-        let display_text = if text.width() > available && available > 3 {
-            format!(" {} ", truncate(&status.text, available - 1))
-        } else {
-            text
-        };
-        let status_width = icon.width() + display_text.width();
-        let gap = total_width.saturating_sub(shortcuts_width + status_width);
-        if gap > 0 {
-            footer_spans.push(Span::raw(" ".repeat(gap)));
+        render_footer_status_right(frame, area, footer_spans, status);
+    } else {
+        frame.render_widget(Paragraph::new(Line::from(footer_spans)), area);
+    }
+}
+
+/// Render footer with shortcuts left and a status message right-aligned.
+/// Used for Info and Progress messages only (non-toast).
+fn render_footer_status_right(
+    frame: &mut Frame,
+    area: Rect,
+    mut footer_spans: Vec<Span<'_>>,
+    status: &crate::app::StatusMessage,
+) {
+    let shortcuts_width: usize = footer_spans.iter().map(|s| s.width()).sum();
+    let total_width = area.width as usize;
+
+    let (icon, icon_style, text) = if status.sticky {
+        // Sticky non-error = in-progress action. The spinner character
+        // is embedded in the status text by the caller, so no extra
+        // glyph prefix is needed here.
+        ("", Style::default(), format!(" {} ", status.text))
+    } else if status.is_error() {
+        ("\u{26A0}", theme::error(), format!(" {} ", status.text))
+    } else {
+        ("", theme::muted(), format!(" {} ", status.text))
+    };
+
+    let available = total_width.saturating_sub(shortcuts_width + icon.width() + 2);
+    let display_text = if text.width() > available && available > 3 {
+        format!(" {} ", truncate(&status.text, available - 1))
+    } else {
+        text
+    };
+    let status_width = icon.width() + display_text.width();
+    let gap = total_width.saturating_sub(shortcuts_width + status_width);
+    if gap > 0 {
+        footer_spans.push(Span::raw(" ".repeat(gap)));
+        if !icon.is_empty() {
             footer_spans.push(Span::styled(icon, icon_style));
-            footer_spans.push(Span::raw(display_text));
         }
+        footer_spans.push(Span::styled(display_text, icon_style));
     }
     frame.render_widget(Paragraph::new(Line::from(footer_spans)), area);
+}
+
+/// Render a toast notification overlay in the bottom-right corner.
+/// Toast is a small bordered box (max 40 cols wide, 3 rows tall).
+fn render_toast(frame: &mut Frame, app: &App) {
+    let toast = match app.toast.as_ref() {
+        Some(t) => t,
+        None => return,
+    };
+
+    let area = frame.area();
+    if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
+        return;
+    }
+
+    let (icon, border_style) = match toast.class {
+        crate::app::MessageClass::Alert => ("\u{26A0} ", theme::toast_border_error()),
+        crate::app::MessageClass::Confirmation
+        | crate::app::MessageClass::Info
+        | crate::app::MessageClass::Progress => ("\u{2713} ", theme::toast_border_success()),
+    };
+
+    let content = format!("{}{}", icon, toast.text);
+    let content_width = content.width();
+    // +4 for border (2) + padding (2). Cap at 60% of terminal width.
+    let max_width = (area.width as usize * 60 / 100).max(30);
+    let box_width =
+        (content_width.saturating_add(4).min(max_width) as u16).min(area.width.saturating_sub(4));
+    let box_height = 3u16;
+    let x = area.width.saturating_sub(box_width + 2);
+    // Position above the footer row (which is the last row)
+    let y = area.height.saturating_sub(box_height + 2);
+
+    let rect = Rect::new(x, y, box_width, box_height);
+
+    // Clear the area behind the toast so it doesn't blend with content
+    frame.render_widget(ratatui::widgets::Clear, rect);
+
+    let block = ratatui::widgets::Block::default()
+        .borders(ratatui::widgets::Borders::ALL)
+        .border_type(ratatui::widgets::BorderType::Rounded)
+        .border_style(border_style);
+
+    // Truncate content to fit inside box (box_width - 2 for borders - 2 for padding)
+    let inner_width = box_width.saturating_sub(4) as usize;
+    let display = if content_width > inner_width {
+        format!(" {} ", truncate(&content, inner_width))
+    } else {
+        format!(" {} ", content)
+    };
+
+    let paragraph = Paragraph::new(display).block(block);
+    frame.render_widget(paragraph, rect);
 }
 
 /// Create a centered rect of given percentage within the parent rect.
@@ -593,7 +669,7 @@ mod tests {
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = make_app();
-        app.set_status("test", false);
+        app.set_info_status("test");
         let mut anim = crate::animation::AnimationState::new();
         terminal
             .draw(|frame| {
@@ -616,7 +692,7 @@ mod tests {
         let backend = TestBackend::new(80, 3);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = make_app();
-        app.set_status("sync failed", true);
+        app.set_info_status("sync failed");
         let mut anim = crate::animation::AnimationState::new();
         terminal
             .draw(|frame| {
@@ -645,7 +721,7 @@ mod tests {
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = make_app();
-        app.set_status("sync failed", true);
+        app.set_info_status("sync failed");
         // Simulate an overlay being active.
         app.screen = crate::app::Screen::Help {
             return_screen: Box::new(crate::app::Screen::HostList),
@@ -843,6 +919,134 @@ mod tests {
                 assert_ne!(buf[(cx, cy)].symbol(), "B");
             })
             .unwrap();
+    }
+
+    #[test]
+    fn render_toast_shows_confirmation_in_buffer() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = make_app();
+        app.set_status("Copied web01", false); // Goes to toast (Confirmation)
+        terminal
+            .draw(|frame| {
+                render_toast(frame, &app);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let mut found = false;
+        for y in 0..24 {
+            let mut line = String::new();
+            for x in 0..80 {
+                line.push_str(buf[(x, y)].symbol());
+            }
+            if line.contains("Copied web01") {
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "toast text should appear in buffer");
+    }
+
+    #[test]
+    fn render_toast_not_shown_when_no_toast() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let app = make_app();
+        assert!(app.toast.is_none());
+        terminal
+            .draw(|frame| {
+                render_toast(frame, &app);
+            })
+            .unwrap();
+        // Should not panic, just no-op
+    }
+
+    #[test]
+    fn render_toast_shows_alert_with_warning_icon() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = make_app();
+        app.set_status("Connection failed", true); // Goes to toast (Alert)
+        terminal
+            .draw(|frame| {
+                render_toast(frame, &app);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let mut found_text = false;
+        let mut found_icon = false;
+        for y in 0..24 {
+            let mut line = String::new();
+            for x in 0..80 {
+                line.push_str(buf[(x, y)].symbol());
+            }
+            if line.contains("Connection failed") {
+                found_text = true;
+            }
+            if line.contains("\u{26A0}") {
+                found_icon = true;
+            }
+        }
+        assert!(found_text, "alert text should appear in buffer");
+        assert!(found_icon, "alert should show warning icon");
+    }
+
+    #[test]
+    fn footer_shows_hints_when_toast_active() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = make_app();
+        app.set_status("Copied", false); // Goes to toast, NOT footer
+        assert!(app.toast.is_some());
+        assert!(app.status.is_none()); // Footer should be clear
+        let footer_spans = vec![
+            Span::styled(" ? ", theme::footer_key()),
+            Span::styled(" more", theme::muted()),
+        ];
+        terminal
+            .draw(|frame| {
+                let area = Rect::new(0, 23, 80, 1);
+                render_footer_with_help(frame, area, footer_spans, &app);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let mut line = String::new();
+        for x in 0..80 {
+            line.push_str(buf[(x, 23)].symbol());
+        }
+        assert!(
+            line.contains("more"),
+            "footer should show hints when only toast is active"
+        );
+    }
+
+    #[test]
+    fn footer_shows_info_status_instead_of_help_hint() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = make_app();
+        app.set_info_status("Syncing AWS...");
+        assert!(app.status.is_some());
+        assert!(app.toast.is_none());
+        let footer_spans = vec![
+            Span::styled(" ? ", theme::footer_key()),
+            Span::styled(" more", theme::muted()),
+        ];
+        terminal
+            .draw(|frame| {
+                let area = Rect::new(0, 23, 80, 1);
+                render_footer_with_help(frame, area, footer_spans, &app);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let mut line = String::new();
+        for x in 0..80 {
+            line.push_str(buf[(x, 23)].symbol());
+        }
+        assert!(
+            line.contains("Syncing AWS"),
+            "footer should show info status, got: {line:?}"
+        );
     }
 
     #[test]

@@ -6250,28 +6250,30 @@ fn tick_status_sticky_never_expires() {
 }
 
 #[test]
-fn tick_status_non_sticky_error_expires() {
+fn tick_toast_non_sticky_error_expires() {
     let mut app = make_app("");
     app.set_status("failed", true);
+    assert!(app.toast.is_some(), "error should route to toast");
     for _ in 0..=20 {
-        app.tick_status();
+        app.tick_toast();
     }
     assert!(
-        app.status.is_none(),
-        "non-sticky error must expire after 20 ticks"
+        app.toast.is_none(),
+        "non-sticky error toast must expire after 20 ticks"
     );
 }
 
 #[test]
-fn tick_status_non_sticky_success_expires() {
+fn tick_toast_non_sticky_success_expires() {
     let mut app = make_app("");
     app.set_status("done", false);
-    for _ in 0..=12 {
-        app.tick_status();
+    assert!(app.toast.is_some(), "confirmation should route to toast");
+    for _ in 0..=6 {
+        app.tick_toast();
     }
     assert!(
-        app.status.is_none(),
-        "non-sticky success must expire after 12 ticks"
+        app.toast.is_none(),
+        "non-sticky confirmation toast must expire after 6 ticks"
     );
 }
 
@@ -6300,32 +6302,30 @@ fn set_sticky_status_replaces_sticky() {
 }
 
 #[test]
-fn set_status_replaces_sticky() {
+fn set_status_routes_confirmation_to_toast() {
     let mut app = make_app("");
     app.set_sticky_status("signing...", false);
-    // set_status (user-initiated) CAN replace sticky
+    // set_status (Confirmation) routes to toast, sticky footer stays
     app.set_status("Signed 3 of 3 certificates.", false);
     assert_eq!(
-        app.status.as_ref().unwrap().text,
+        app.toast.as_ref().unwrap().text,
         "Signed 3 of 3 certificates.",
-        "set_status must be able to replace sticky"
+        "set_status(false) must route to toast"
     );
-    assert!(!app.status.as_ref().unwrap().sticky);
+    // Sticky footer is still there
+    assert!(app.status.as_ref().unwrap().sticky);
 }
 
 // Gap 1: set_status on a fresh app with no prior status at all.
 #[test]
-fn set_status_works_when_status_is_none() {
+fn set_status_routes_to_toast_when_none() {
     let mut app = make_app("");
-    assert!(
-        app.status.is_none(),
-        "precondition: fresh app has no status"
-    );
+    assert!(app.toast.is_none(), "precondition: fresh app has no toast");
     app.set_status("connected", false);
     assert_eq!(
-        app.status.as_ref().unwrap().text,
+        app.toast.as_ref().unwrap().text,
         "connected",
-        "set_status must set the message when no status exists"
+        "set_status(false) must route to toast"
     );
 }
 
@@ -6388,30 +6388,256 @@ fn set_background_status_works_when_no_sticky() {
 }
 
 #[test]
+fn set_background_error_goes_to_toast_even_with_sticky_and_existing_toast() {
+    let mut app = make_app("");
+    // Sticky progress in footer
+    app.set_sticky_status("Signing...", false);
+    // First toast already active
+    app.set_status("Copied host", false);
+    assert!(app.toast.is_some());
+    // Background error should queue to toast, not touch footer
+    app.set_background_status("Sync failed", true);
+    assert_eq!(app.status.as_ref().unwrap().text, "Signing...");
+    assert!(app.status.as_ref().unwrap().sticky);
+    assert_eq!(app.toast.as_ref().unwrap().text, "Copied host");
+    assert_eq!(app.toast_queue.len(), 1);
+    assert_eq!(app.toast_queue.front().unwrap().text, "Sync failed");
+    assert!(app.toast_queue.front().unwrap().is_error());
+}
+
+#[test]
 fn vault_signing_lifecycle() {
     let mut app = make_app("");
-    // 1. Signing starts: sticky progress
+    // 1. Signing starts: sticky progress in footer
     app.set_sticky_status("Signing certificate...", false);
     assert!(app.status.as_ref().unwrap().sticky);
 
-    // 2. Background event must not clobber
+    // 2. Background event must not clobber sticky footer
     app.set_background_status("Ping expired.", false);
     assert_eq!(app.status.as_ref().unwrap().text, "Signing certificate...");
 
-    // 3. Signing result replaces sticky via set_status
+    // 3. Signing error routes to toast, sticky footer stays
     app.set_status("Vault SSH: failed to sign host: timeout", true);
-    assert!(!app.status.as_ref().unwrap().sticky);
-    assert!(app.status.as_ref().unwrap().is_error);
+    assert!(app.toast.as_ref().unwrap().is_error());
+    assert_eq!(
+        app.toast.as_ref().unwrap().text,
+        "Vault SSH: failed to sign host: timeout"
+    );
+    // Sticky footer is still there
+    assert!(app.status.as_ref().unwrap().sticky);
 
-    // 4. Final summary replaces with sticky error
+    // 4. Final summary replaces sticky footer with sticky error
     app.set_sticky_status("Signed 0 of 1 certificate. 1 failed: timeout", true);
     assert!(app.status.as_ref().unwrap().sticky);
-    assert!(app.status.as_ref().unwrap().is_error);
+    assert!(app.status.as_ref().unwrap().is_error());
 
-    // 5. Background event still cannot clobber sticky error
+    // 5. Background non-error cannot clobber sticky footer
     app.set_background_status("Config reloaded. 5 hosts.", false);
     assert_eq!(
         app.status.as_ref().unwrap().text,
         "Signed 0 of 1 certificate. 1 failed: timeout"
     );
+}
+
+#[test]
+fn confirmation_replaces_previous_toast() {
+    let mut app = make_app("");
+    app.set_status("first", false);
+    app.set_status("second", false);
+    app.set_status("third", false);
+    // Confirmations replace immediately, no queue
+    assert_eq!(app.toast.as_ref().unwrap().text, "third");
+    assert!(app.toast_queue.is_empty());
+}
+
+#[test]
+fn confirmation_clears_alert_queue() {
+    let mut app = make_app("");
+    app.set_status("err1", true);
+    app.set_status("err2", true);
+    assert_eq!(app.toast_queue.len(), 1);
+    // Confirmation replaces active toast and clears queue
+    app.set_status("copied", false);
+    assert_eq!(app.toast.as_ref().unwrap().text, "copied");
+    assert!(app.toast_queue.is_empty());
+}
+
+#[test]
+fn alert_queue_sequential_display() {
+    let mut app = make_app("");
+    app.set_status("err1", true);
+    app.set_status("err2", true);
+    app.set_status("err3", true);
+    assert_eq!(app.toast.as_ref().unwrap().text, "err1");
+    assert_eq!(app.toast_queue.len(), 2);
+    for _ in 0..=20 {
+        app.tick_toast();
+    }
+    assert_eq!(app.toast.as_ref().unwrap().text, "err2");
+    assert_eq!(app.toast_queue.len(), 1);
+    for _ in 0..=20 {
+        app.tick_toast();
+    }
+    assert_eq!(app.toast.as_ref().unwrap().text, "err3");
+    assert!(app.toast_queue.is_empty());
+}
+
+#[test]
+fn alert_queue_max_five() {
+    let mut app = make_app("");
+    for i in 0..8 {
+        app.set_status(format!("err{i}"), true);
+    }
+    assert_eq!(app.toast.as_ref().unwrap().text, "err0");
+    assert_eq!(app.toast_queue.len(), 5);
+    assert_eq!(app.toast_queue.front().unwrap().text, "err3");
+    assert_eq!(app.toast_queue.back().unwrap().text, "err7");
+}
+
+#[test]
+fn alert_queue_drains_fully() {
+    let mut app = make_app("");
+    app.set_status("a", true);
+    app.set_status("b", true);
+    for _ in 0..=20 {
+        app.tick_toast();
+    }
+    for _ in 0..=20 {
+        app.tick_toast();
+    }
+    assert!(app.toast.is_none());
+    assert!(app.toast_queue.is_empty());
+}
+
+#[test]
+fn set_info_status_goes_to_footer() {
+    let mut app = make_app("");
+    app.set_info_status("Syncing...");
+    assert!(app.toast.is_none());
+    assert_eq!(app.status.as_ref().unwrap().text, "Syncing...");
+    assert_eq!(app.status.as_ref().unwrap().class, MessageClass::Info);
+}
+
+#[test]
+fn tick_status_info_expires() {
+    let mut app = make_app("");
+    app.set_info_status("done");
+    for _ in 0..=12 {
+        app.tick_status();
+    }
+    assert!(app.status.is_none());
+}
+
+#[test]
+fn tick_status_does_not_expire_while_syncing() {
+    let mut app = make_app("");
+    app.set_info_status("syncing...");
+    app.syncing_providers
+        .insert("aws".to_string(), Arc::new(AtomicBool::new(true)));
+    for _ in 0..30 {
+        app.tick_status();
+    }
+    assert!(
+        app.status.is_some(),
+        "status must not expire while providers are syncing"
+    );
+    app.syncing_providers.clear();
+    for _ in 0..=12 {
+        app.tick_status();
+    }
+    assert!(
+        app.status.is_none(),
+        "status must expire after syncing completes"
+    );
+}
+
+#[test]
+fn tick_toast_alert_expires() {
+    let mut app = make_app("");
+    app.set_status("failed", true);
+    assert!(app.toast.is_some());
+    assert!(app.status.is_none());
+    for _ in 0..=20 {
+        app.tick_toast();
+    }
+    assert!(app.toast.is_none());
+}
+
+#[test]
+fn tick_toast_confirmation_expires() {
+    let mut app = make_app("");
+    app.set_status("done", false);
+    assert!(app.toast.is_some());
+    for _ in 0..=6 {
+        app.tick_toast();
+    }
+    assert!(app.toast.is_none());
+}
+
+#[test]
+fn message_class_is_toast_routing() {
+    assert!(
+        StatusMessage {
+            text: String::new(),
+            class: MessageClass::Confirmation,
+            tick_count: 0,
+            sticky: false,
+        }
+        .is_toast()
+    );
+    assert!(
+        !StatusMessage {
+            text: String::new(),
+            class: MessageClass::Info,
+            tick_count: 0,
+            sticky: false,
+        }
+        .is_toast()
+    );
+    assert!(
+        StatusMessage {
+            text: String::new(),
+            class: MessageClass::Alert,
+            tick_count: 0,
+            sticky: false,
+        }
+        .is_toast()
+    );
+    assert!(
+        !StatusMessage {
+            text: String::new(),
+            class: MessageClass::Progress,
+            tick_count: 0,
+            sticky: false,
+        }
+        .is_toast()
+    );
+}
+
+#[test]
+fn message_class_timeout_values() {
+    let mk = |class| StatusMessage {
+        text: String::new(),
+        class,
+        tick_count: 0,
+        sticky: false,
+    };
+    assert_eq!(mk(MessageClass::Confirmation).timeout(), 6);
+    assert_eq!(mk(MessageClass::Info).timeout(), 12);
+    assert_eq!(mk(MessageClass::Alert).timeout(), 20);
+    assert_eq!(mk(MessageClass::Progress).timeout(), u32::MAX);
+}
+
+#[test]
+fn message_class_is_error() {
+    let mk = |class| StatusMessage {
+        text: String::new(),
+        class,
+        tick_count: 0,
+        sticky: false,
+    };
+    assert!(!mk(MessageClass::Confirmation).is_error());
+    assert!(!mk(MessageClass::Info).is_error());
+    assert!(mk(MessageClass::Alert).is_error());
+    assert!(!mk(MessageClass::Progress).is_error());
 }

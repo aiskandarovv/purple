@@ -1486,6 +1486,28 @@ pub fn warning() -> Style {
     active_theme().warning.to_style(mode())
 }
 
+/// Toast border for success/confirmation messages.
+pub fn toast_border_success() -> Style {
+    let m = mode();
+    let t = active_theme();
+    let mut style = t.success.to_style(m);
+    if m == 0 {
+        style = Style::default().add_modifier(Modifier::BOLD);
+    }
+    style
+}
+
+/// Toast border for error/alert messages.
+pub fn toast_border_error() -> Style {
+    let m = mode();
+    let t = active_theme();
+    let mut style = t.error.to_style(m);
+    if m == 0 {
+        style = Style::default().add_modifier(Modifier::BOLD);
+    }
+    style
+}
+
 /// Danger action key (delete confirmation). Red when color is available.
 pub fn danger() -> Style {
     active_theme().error.to_style(mode())

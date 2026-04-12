@@ -158,7 +158,7 @@ fn test_sync_summary_still_syncing() {
     set_sync_summary(&mut app);
     let status = app.status.as_ref().unwrap();
     assert_eq!(status.text, "Synced: DigitalOcean...");
-    assert!(!status.is_error);
+    assert!(!status.is_error());
     // sync_done should NOT be cleared while still syncing
     assert_eq!(app.sync_done.len(), 1);
 }
@@ -229,7 +229,7 @@ fn test_sync_summary_all_done() {
     set_sync_summary(&mut app);
     let status = app.status.as_ref().unwrap();
     assert_eq!(status.text, "Synced: AWS, Hetzner");
-    assert!(!status.is_error);
+    assert!(!status.is_error());
     // sync_done should be cleared when all done
     assert!(app.sync_done.is_empty());
     assert!(!app.sync_had_errors);
@@ -241,9 +241,9 @@ fn test_sync_summary_with_errors() {
     app.sync_done.push("AWS".to_string());
     app.sync_had_errors = true;
     set_sync_summary(&mut app);
-    let status = app.status.as_ref().unwrap();
-    assert_eq!(status.text, "Synced: AWS");
-    assert!(status.is_error);
+    let toast = app.toast.as_ref().unwrap();
+    assert_eq!(toast.text, "Synced: AWS");
+    assert!(toast.is_error());
     // Error flag should be reset when batch completes
     assert!(!app.sync_had_errors);
 }
@@ -256,8 +256,8 @@ fn test_sync_summary_errors_persist_while_syncing() {
     app.sync_done.push("AWS".to_string());
     app.sync_had_errors = true;
     set_sync_summary(&mut app);
-    let status = app.status.as_ref().unwrap();
-    assert!(status.is_error);
+    let toast = app.toast.as_ref().unwrap();
+    assert!(toast.is_error());
     // Error flag should persist while still syncing
     assert!(app.sync_had_errors);
 }
@@ -664,9 +664,9 @@ fn host_list_i_key_sets_error_when_no_hosts_available() {
     // If we got ConfirmImport, known_hosts had entries (can't control that)
     // If we stayed on HostList, verify error status was set
     if matches!(app.screen, app::Screen::HostList) {
-        let status = app.status.as_ref().expect("status should be set");
-        assert!(status.is_error);
-        assert_eq!(status.text, "No importable hosts in known_hosts.");
+        let toast = app.toast.as_ref().expect("toast should be set");
+        assert!(toast.is_error());
+        assert_eq!(toast.text, "No importable hosts in known_hosts.");
     }
 }
 
@@ -754,8 +754,8 @@ fn confirm_import_y_transitions_to_host_list() {
     let _ = crate::handler::handle_key_event(&mut app, key, &tx);
     // Should transition to HostList regardless of import result
     assert!(matches!(app.screen, app::Screen::HostList));
-    // Status should be set (either success or error)
-    assert!(app.status.is_some());
+    // Status or toast should be set (either success or error)
+    assert!(app.status.is_some() || app.toast.is_some());
 }
 
 // =========================================================================
@@ -973,8 +973,8 @@ fn welcome_i_with_known_hosts_transitions_to_host_list() {
     let (tx, _rx) = std::sync::mpsc::channel();
     let _ = crate::handler::handle_key_event(&mut app, key, &tx);
     assert!(matches!(app.screen, app::Screen::HostList));
-    // Status should be set (import attempted)
-    assert!(app.status.is_some());
+    // Status or toast should be set (import attempted)
+    assert!(app.status.is_some() || app.toast.is_some());
 }
 
 // =========================================================================

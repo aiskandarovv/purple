@@ -1159,6 +1159,7 @@ fn run_tui(mut app: App) -> Result<()> {
             }
             Some(AppEvent::Tick) | None => {
                 app.tick_status();
+                app.tick_toast();
                 if anim.has_checking_hosts(&app) || vault_signing {
                     anim.tick_spinner();
                 }
@@ -1166,7 +1167,7 @@ fn run_tui(mut app: App) -> Result<()> {
                 // so the spinner animates between VaultSignProgress events.
                 if vault_signing {
                     if let Some(ref mut status) = app.status {
-                        if status.sticky && !status.is_error {
+                        if status.sticky && !status.is_error() {
                             let frame = crate::animation::SPINNER_FRAMES[anim.spinner_tick
                                 as usize
                                 % crate::animation::SPINNER_FRAMES.len()];

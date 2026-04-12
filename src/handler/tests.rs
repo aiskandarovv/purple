@@ -205,28 +205,35 @@ fn submit_form(app: &mut App) {
 /// to ~/.purple/providers between mtime capture and submit, the conflict
 /// check fires before validation and the test is inconclusive (not a bug).
 fn assert_status_contains(app: &App, expected: &str) {
-    let msg = &app.status.as_ref().expect("status should be set").text;
+    // Check both footer status and toast (messages route to different destinations)
+    let status_text = app.status.as_ref().map(|s| s.text.as_str());
+    let toast_text = app.toast.as_ref().map(|t| t.text.as_str());
+    let msg = status_text
+        .or(toast_text)
+        .expect("status or toast should be set");
     if msg.contains("changed externally") {
         return; // inconclusive due to race
     }
     assert!(
         msg.contains(expected),
-        "Expected status to contain '{}', got: '{}'",
+        "Expected status/toast to contain '{}', got: '{}'",
         expected,
         msg
     );
 }
 
 fn assert_status_not_contains(app: &App, not_expected: &str) {
-    let msg = app.status.as_ref().map(|s| s.text.as_str()).unwrap_or("");
-    if msg.contains("changed externally") {
+    let status_msg = app.status.as_ref().map(|s| s.text.as_str()).unwrap_or("");
+    let toast_msg = app.toast.as_ref().map(|t| t.text.as_str()).unwrap_or("");
+    if status_msg.contains("changed externally") || toast_msg.contains("changed externally") {
         return; // inconclusive due to race
     }
     assert!(
-        !msg.contains(not_expected),
-        "Status should NOT contain '{}', got: '{}'",
+        !status_msg.contains(not_expected) && !toast_msg.contains(not_expected),
+        "Status/toast should NOT contain '{}', got status: '{}', toast: '{}'",
         not_expected,
-        msg
+        status_msg,
+        toast_msg
     );
 }
 
@@ -1121,7 +1128,7 @@ fn test_provider_list_sync_unconfigured_shows_status() {
     app.ui.provider_list_state.select(Some(idx));
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Char('s')), &tx);
-    assert!(app.status.as_ref().unwrap().text.contains("Configure"));
+    assert!(app.toast.as_ref().unwrap().text.contains("Configure"));
 }
 
 #[test]
@@ -1138,7 +1145,7 @@ fn test_provider_list_delete_removes_config() {
     let _ = handle_key_event(&mut app, key(KeyCode::Char('y')), &tx);
     assert!(app.pending_provider_delete.is_none());
     // Save may fail in tests (no ~/.purple), triggering rollback. Just verify handler ran.
-    assert!(app.status.is_some());
+    assert!(app.status.is_some() || app.toast.is_some());
 }
 
 #[test]
@@ -1151,8 +1158,16 @@ fn test_provider_list_delete_unconfigured_is_noop() {
     app.ui.provider_list_state.select(Some(idx));
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Char('d')), &tx);
-    // No status message because no section existed to delete
-    assert!(app.status.is_none() || !app.status.as_ref().unwrap().text.contains("Removed"));
+    // No status/toast message because no section existed to delete
+    let has_removed = app
+        .toast
+        .as_ref()
+        .is_some_and(|t| t.text.contains("Removed"))
+        || app
+            .status
+            .as_ref()
+            .is_some_and(|s| s.text.contains("Removed"));
+    assert!(!has_removed);
 }
 
 #[test]
@@ -1282,7 +1297,7 @@ fn test_submit_provider_form_rejects_space_in_alias_prefix() {
     app.provider_form.alias_prefix = "my cloud".to_string();
     submit_form(&mut app);
     assert!(matches!(app.screen, Screen::ProviderForm { .. }));
-    let msg = &app.status.as_ref().unwrap().text;
+    let msg = &app.status.as_ref().or(app.toast.as_ref()).unwrap().text;
     if !msg.contains("changed externally") {
         assert!(msg.contains("pattern") || msg.contains("spaces"));
     }
@@ -1656,7 +1671,7 @@ fn test_search_ctrl_e_blocks_included_host() {
     let _ = handle_key_event(&mut app, ctrl_key('e'), &tx);
     // Should remain in search mode (not open edit form)
     assert!(matches!(app.screen, Screen::HostList));
-    assert!(app.status.is_some());
+    assert!(app.status.is_some() || app.toast.is_some());
 }
 
 // =========================================================================
@@ -1841,7 +1856,7 @@ fn test_picker_keychain_sets_status_message() {
     app.ui.password_picker_state.select(Some(0));
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
-    assert!(app.status.as_ref().unwrap().text.contains("OS Keychain"));
+    assert!(app.toast.as_ref().unwrap().text.contains("OS Keychain"));
 }
 
 #[test]
@@ -1852,19 +1867,19 @@ fn test_picker_none_sets_cleared_status() {
     app.ui.password_picker_state.select(Some(6)); // None
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
-    assert!(app.status.as_ref().unwrap().text.contains("cleared"));
+    assert!(app.toast.as_ref().unwrap().text.contains("cleared"));
 }
 
 #[test]
 fn test_picker_prefix_source_shows_guidance() {
     // Prefix sources (op://, bw:, etc.) show a guidance message
     let mut app = make_form_app();
-    app.status = None;
+    app.toast = None;
     app.ui.show_password_picker = true;
     app.ui.password_picker_state.select(Some(1)); // 1Password (op://)
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
-    assert!(app.status.as_ref().unwrap().text.contains("Complete"));
+    assert!(app.toast.as_ref().unwrap().text.contains("Complete"));
     assert_eq!(app.form.focused_field, FormField::AskPass);
 }
 
@@ -2432,11 +2447,11 @@ fn test_password_picker_keychain_sets_status_message() {
     app.ui.password_picker_state.select(Some(0)); // Keychain
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
-    let status = app.status.as_ref().unwrap();
+    let toast = app.toast.as_ref().unwrap();
     assert!(
-        status.text.contains("OS Keychain"),
-        "Status should mention OS Keychain, got: {}",
-        status.text
+        toast.text.contains("OS Keychain"),
+        "Toast should mention OS Keychain, got: {}",
+        toast.text
     );
 }
 
@@ -2448,11 +2463,11 @@ fn test_password_picker_none_sets_cleared_status() {
     app.ui.password_picker_state.select(Some(6)); // None
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
-    let status = app.status.as_ref().unwrap();
+    let toast = app.toast.as_ref().unwrap();
     assert!(
-        status.text.contains("cleared"),
-        "Status should say cleared, got: {}",
-        status.text
+        toast.text.contains("cleared"),
+        "Toast should say cleared, got: {}",
+        toast.text
     );
 }
 
@@ -2661,7 +2676,7 @@ fn test_password_picker_ctrl_d_none_sets_status() {
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, ctrl_key('d'), &tx);
     // Shows "cleared" on success or "Failed to save" if ~/.purple doesn't exist
-    assert!(app.status.is_some());
+    assert!(app.status.is_some() || app.toast.is_some());
     assert!(!app.ui.show_password_picker);
 }
 
@@ -2908,7 +2923,7 @@ fn test_snippet_picker_d_rollback_on_save_failure() {
     // Rollback: snippet should still be there
     assert_eq!(app.snippet_store.snippets.len(), 2);
     assert_eq!(app.snippet_store.snippets[0].name, "check-disk");
-    assert!(app.status.as_ref().unwrap().is_error);
+    assert!(app.toast.as_ref().unwrap().is_error());
 }
 
 // =========================================================================
@@ -3048,7 +3063,7 @@ fn test_snippet_form_submit_rejects_empty_name() {
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
     // Should stay on the form with an error
     assert!(matches!(app.screen, Screen::SnippetForm { .. }));
-    assert!(app.status.as_ref().unwrap().is_error);
+    assert!(app.toast.as_ref().unwrap().is_error());
 }
 
 #[test]
@@ -3067,7 +3082,7 @@ fn test_snippet_form_submit_rejects_duplicate_name() {
 
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
     assert!(matches!(app.screen, Screen::SnippetForm { .. }));
-    assert!(app.status.as_ref().unwrap().is_error);
+    assert!(app.toast.as_ref().unwrap().is_error());
 }
 
 #[test]
@@ -3089,7 +3104,7 @@ fn test_snippet_form_submit_rollback_on_save_failure() {
     // Rollback: new snippet should not be in the store
     assert_eq!(app.snippet_store.snippets.len(), 2);
     assert!(app.snippet_store.get("new-cmd").is_none());
-    assert!(app.status.as_ref().unwrap().is_error);
+    assert!(app.toast.as_ref().unwrap().is_error());
 }
 
 #[test]
@@ -3465,7 +3480,7 @@ fn test_host_detail_e_on_included_host_stays() {
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Char('e')), &tx);
     assert!(matches!(app.screen, Screen::HostDetail { .. }));
-    assert!(app.status.as_ref().unwrap().is_error);
+    assert!(app.toast.as_ref().unwrap().is_error());
 }
 
 // --- Provider form: Left/Right on toggle fields does NOT toggle ---
@@ -3812,11 +3827,11 @@ fn test_x_key_no_stale_shows_status() {
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Char('X')), &tx);
     assert!(matches!(app.screen, Screen::HostList));
-    let status = app.status.as_ref().expect("status should be set");
+    let toast = app.toast.as_ref().expect("toast should be set");
     assert!(
-        status.text.contains("No stale hosts"),
-        "expected 'No stale hosts' in status, got: {}",
-        status.text
+        toast.text.contains("No stale hosts"),
+        "expected 'No stale hosts' in toast, got: {}",
+        toast.text
     );
 }
 
@@ -3864,10 +3879,10 @@ fn test_e_key_warns_on_stale_host() {
     let _ = handle_key_event(&mut app, key(KeyCode::Char('e')), &tx);
     // Edit form should open (warning, not block)
     assert!(matches!(app.screen, Screen::EditHost { .. }));
-    let status = app.status.as_ref().expect("status should be set");
-    assert!(status.text.contains("Stale host"));
-    assert!(status.text.contains("DigitalOcean"));
-    assert!(status.is_error);
+    let toast = app.toast.as_ref().expect("toast should be set");
+    assert!(toast.text.contains("Stale host"));
+    assert!(toast.text.contains("DigitalOcean"));
+    assert!(toast.is_error());
 }
 
 #[test]
@@ -3879,9 +3894,9 @@ fn test_d_key_warns_on_stale_host() {
     let _ = handle_key_event(&mut app, key(KeyCode::Char('d')), &tx);
     // Delete confirm should open (warning, not block)
     assert!(matches!(app.screen, Screen::ConfirmDelete { .. }));
-    let status = app.status.as_ref().expect("status should be set");
-    assert!(status.text.contains("Stale host"));
-    assert!(status.is_error);
+    let toast = app.toast.as_ref().expect("toast should be set");
+    assert!(toast.text.contains("Stale host"));
+    assert!(toast.is_error());
 }
 
 #[test]
@@ -3893,14 +3908,14 @@ fn test_enter_on_stale_host_shows_warning() {
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
     // Connection should still be pending
     assert!(app.pending_connect.is_some());
-    // But status should show stale warning
-    let status = app.status.as_ref().expect("status should be set");
+    // But toast should show stale warning
+    let toast = app.toast.as_ref().expect("toast should be set");
     assert!(
-        status.text.contains("Stale host"),
+        toast.text.contains("Stale host"),
         "expected stale warning, got: {}",
-        status.text
+        toast.text
     );
-    assert!(status.text.contains("DigitalOcean"));
+    assert!(toast.text.contains("DigitalOcean"));
 }
 
 #[test]
@@ -3910,7 +3925,7 @@ fn test_enter_on_normal_host_no_stale_warning() {
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
     assert!(app.pending_connect.is_some());
     // No stale warning
-    assert!(app.status.is_none() || !app.status.as_ref().unwrap().text.contains("Stale"),);
+    assert!(app.toast.is_none() || !app.toast.as_ref().unwrap().text.contains("Stale"),);
 }
 
 #[test]
@@ -3924,11 +3939,11 @@ fn test_search_enter_on_stale_host_shows_warning() {
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
     assert!(app.pending_connect.is_some());
-    let status = app.status.as_ref().expect("status should be set");
+    let toast = app.toast.as_ref().expect("toast should be set");
     assert!(
-        status.text.contains("Stale host"),
+        toast.text.contains("Stale host"),
         "expected stale warning in search mode, got: {}",
-        status.text
+        toast.text
     );
 }
 
@@ -3940,13 +3955,13 @@ fn test_c_key_warns_on_stale_host() {
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Char('c')), &tx);
     assert!(matches!(app.screen, Screen::AddHost));
-    let status = app.status.as_ref().expect("status should be set");
+    let toast = app.toast.as_ref().expect("toast should be set");
     assert!(
-        status.text.contains("Stale host"),
+        toast.text.contains("Stale host"),
         "expected stale warning, got: {}",
-        status.text
+        toast.text
     );
-    assert!(status.is_error);
+    assert!(toast.is_error());
 }
 
 #[test]
@@ -3961,13 +3976,13 @@ fn test_t_key_warns_on_stale_host() {
         "expected TunnelList screen, got: {:?}",
         app.screen
     );
-    let status = app.status.as_ref().expect("status should be set");
+    let toast = app.toast.as_ref().expect("toast should be set");
     assert!(
-        status.text.contains("Stale host"),
+        toast.text.contains("Stale host"),
         "expected stale warning, got: {}",
-        status.text
+        toast.text
     );
-    assert!(status.is_error);
+    assert!(toast.is_error());
 }
 
 #[test]
@@ -5458,7 +5473,7 @@ fn test_bang_key_without_pings_shows_error() {
     let (tx, _rx) = std::sync::mpsc::channel();
     handle_key_event(&mut app, key(KeyCode::Char('!')), &tx).unwrap();
     assert!(!app.filter_down_only);
-    assert!(app.status.as_ref().unwrap().is_error);
+    assert!(app.toast.as_ref().unwrap().is_error());
 }
 
 #[test]

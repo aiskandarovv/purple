@@ -183,15 +183,50 @@ pub enum Screen {
     },
 }
 
-/// Status message displayed at the bottom.
+/// Classification of status messages for routing to toast overlay vs footer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MessageClass {
+    /// User action succeeded (copy, sort, delete). Toast, 6 ticks.
+    Confirmation,
+    /// Background event (sync complete, config reload). Footer, 12 ticks.
+    Info,
+    /// Error or warning requiring attention. Toast, 20 ticks.
+    Alert,
+    /// Long-running operation with spinner. Footer, sticky.
+    Progress,
+}
+
+/// Status message displayed as toast overlay or in the footer.
 #[derive(Debug, Clone)]
 pub struct StatusMessage {
     pub text: String,
-    pub is_error: bool,
+    pub class: MessageClass,
     pub tick_count: u32,
     /// When true the message never auto-expires and `set_background_status`
     /// will not overwrite it. Cleared by `set_status` or `set_sticky_status`.
     pub sticky: bool,
+}
+
+impl StatusMessage {
+    /// Backward compat: is this an error-class message?
+    pub fn is_error(&self) -> bool {
+        matches!(self.class, MessageClass::Alert)
+    }
+
+    /// Timeout in ticks for this message class.
+    pub fn timeout(&self) -> u32 {
+        match self.class {
+            MessageClass::Confirmation => 6,
+            MessageClass::Info => 12,
+            MessageClass::Alert => 20,
+            MessageClass::Progress => u32::MAX,
+        }
+    }
+
+    /// Should this message render as a toast overlay?
+    pub fn is_toast(&self) -> bool {
+        matches!(self.class, MessageClass::Confirmation | MessageClass::Alert)
+    }
 }
 
 /// An item in the display list (hosts + group headers).

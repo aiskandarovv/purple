@@ -263,7 +263,7 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
                         app.ping_status
                             .insert(alias.clone(), crate::app::PingStatus::Checking);
                     }
-                    app.set_status("Pinging all the things...", false);
+                    app.set_info_status("Pinging all the things...");
                     crate::ping::ping_all(&hosts_to_ping, events_tx.clone(), app.ping_generation);
                 }
             }
