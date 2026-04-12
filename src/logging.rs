@@ -212,6 +212,7 @@ pub fn detect_ssh_version() -> String {
         .spawn();
 
     let Ok(child) = child else {
+        eprintln!("[purple] Failed to detect SSH version. Is ssh installed?");
         return "unknown".to_string();
     };
 

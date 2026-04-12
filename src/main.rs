@@ -34,6 +34,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::{Shell, generate};
+use log::warn;
 
 use app::App;
 use event::{AppEvent, EventHandler};
@@ -1030,22 +1031,35 @@ fn first_launch_init(purple_dir: &Path, config_path: &Path) -> Option<bool> {
     if purple_dir.exists() {
         return None;
     }
-    let _ = std::fs::create_dir_all(purple_dir);
+    if let Err(e) = std::fs::create_dir_all(purple_dir) {
+        warn!("[config] Failed to create ~/.purple directory: {e}");
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(purple_dir, std::fs::Permissions::from_mode(0o700));
+        if let Err(e) = std::fs::set_permissions(purple_dir, std::fs::Permissions::from_mode(0o700))
+        {
+            warn!("[config] Failed to set ~/.purple directory permissions: {e}");
+        }
     }
     // One-time backup of the original SSH config before purple touches it.
     // Stored as config.original and never overwritten or pruned.
     let original_backup = purple_dir.join("config.original");
     if config_path.exists() {
-        let _ = std::fs::copy(config_path, &original_backup);
+        if let Err(e) = std::fs::copy(config_path, &original_backup) {
+            warn!(
+                "[config] Failed to backup SSH config to {}: {e}",
+                original_backup.display()
+            );
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ =
-                std::fs::set_permissions(&original_backup, std::fs::Permissions::from_mode(0o600));
+            if let Err(e) =
+                std::fs::set_permissions(&original_backup, std::fs::Permissions::from_mode(0o600))
+            {
+                warn!("[config] Failed to set backup permissions: {e}");
+            }
         }
     }
     Some(original_backup.exists())

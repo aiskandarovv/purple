@@ -3,6 +3,8 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use log::warn;
+
 use crate::fs_util;
 
 /// Timestamps older than this are pruned on load and after each record().
@@ -41,7 +43,18 @@ impl ConnectionHistory {
                 path,
             };
         }
-        let content = fs::read_to_string(&path).unwrap_or_default();
+        let content = match fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    warn!("[config] Failed to read connection history: {e}");
+                }
+                return Self {
+                    entries: HashMap::new(),
+                    path,
+                };
+            }
+        };
         let mut entries = HashMap::new();
         for line in content.lines() {
             let parts: Vec<&str> = line.splitn(4, '\t').collect();
@@ -114,7 +127,9 @@ impl ConnectionHistory {
             let excess = entry.timestamps.len() - MAX_TIMESTAMPS;
             entry.timestamps.drain(..excess);
         }
-        let _ = self.save();
+        if let Err(e) = self.save() {
+            warn!("[config] Failed to save connection history: {e}");
+        }
     }
 
     /// Last connected timestamp for a host (0 if never connected).

@@ -1,5 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent};
-use log::info;
+use log::{debug, info};
 
 use crate::app::{App, Screen};
 
@@ -121,7 +121,9 @@ pub(super) fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
             if app.active_tunnels.contains_key(&alias) {
                 // Stop
                 if let Some(mut tunnel) = app.active_tunnels.remove(&alias) {
-                    let _ = tunnel.child.kill();
+                    if let Err(e) = tunnel.child.kill() {
+                        debug!("[external] Failed to kill tunnel process for {alias}: {e}");
+                    }
                     let _ = tunnel.child.wait();
                     app.set_status(format!("Tunnel for {} stopped.", alias), false);
                 }

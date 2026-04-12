@@ -8,6 +8,8 @@ use crossterm::{
 };
 use ratatui::{Terminal, prelude::CrosstermBackend};
 
+use log::debug;
+
 use crate::app::App;
 use crate::ui;
 
@@ -79,7 +81,9 @@ impl Tui {
     /// Force a full redraw on the next draw() call.
     /// Use after external processes may have written to the terminal.
     pub fn force_redraw(&mut self) {
-        self.terminal.clear().ok();
+        if let Err(e) = self.terminal.clear() {
+            debug!("[purple] Failed to clear terminal: {e}");
+        }
     }
 }
 

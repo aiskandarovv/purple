@@ -1,7 +1,7 @@
 use std::io::{BufRead, Write};
 use std::path::Path;
 
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -125,7 +125,9 @@ fn ssh_exec(
                     .take()
                     .map(|mut s| {
                         let mut buf = String::new();
-                        std::io::Read::read_to_string(&mut s, &mut buf).ok();
+                        if let Err(e) = std::io::Read::read_to_string(&mut s, &mut buf) {
+                            warn!("[external] Failed to read SSH stdout pipe: {e}");
+                        }
                         buf
                     })
                     .unwrap_or_default();
@@ -134,7 +136,9 @@ fn ssh_exec(
                     .take()
                     .map(|mut s| {
                         let mut buf = String::new();
-                        std::io::Read::read_to_string(&mut s, &mut buf).ok();
+                        if let Err(e) = std::io::Read::read_to_string(&mut s, &mut buf) {
+                            warn!("[external] Failed to read SSH stderr pipe: {e}");
+                        }
                         buf
                     })
                     .unwrap_or_default();
@@ -142,8 +146,11 @@ fn ssh_exec(
             }
             Ok(None) => {
                 if start.elapsed() > timeout {
-                    let _ = child.kill();
+                    if let Err(e) = child.kill() {
+                        warn!("[external] Failed to kill timed-out SSH process: {e}");
+                    }
                     let _ = child.wait();
+                    warn!("[external] MCP SSH command timed out after {timeout_secs}s");
                     return Err(mcp_tool_error(&format!(
                         "SSH command timed out after {timeout_secs} seconds"
                     )));

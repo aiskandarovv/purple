@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use log::debug;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -215,8 +216,20 @@ fn fetch_guest_os_info(
         "{}/api2/json/nodes/{}/qemu/{}/agent/get-osinfo",
         base, node, vmid
     );
-    let mut resp = agent.get(&url).header("Authorization", auth).call().ok()?;
-    let info: PveResponse<GuestOsInfoData> = resp.body_mut().read_json().ok()?;
+    let mut resp = match agent.get(&url).header("Authorization", auth).call() {
+        Ok(r) => r,
+        Err(e) => {
+            debug!("[external] Proxmox guest OS info fetch failed for {url}: {e}");
+            return None;
+        }
+    };
+    let info: PveResponse<GuestOsInfoData> = match resp.body_mut().read_json() {
+        Ok(i) => i,
+        Err(e) => {
+            debug!("[external] Proxmox guest OS info parse failed: {e}");
+            return None;
+        }
+    };
     let name = info.data.result.pretty_name;
     if name.is_empty() { None } else { Some(name) }
 }
@@ -726,13 +739,19 @@ impl Proxmox {
             "{}/api2/json/nodes/{}/{}/{}/config",
             base, resource.node, api_type, resource.vmid
         );
-        let config: VmConfig = agent
-            .get(&config_url)
-            .header("Authorization", auth)
-            .call()
-            .ok()
-            .and_then(|mut resp| resp.body_mut().read_json::<PveResponse<VmConfig>>().ok())
-            .map(|r| r.data)?;
+        let config: VmConfig = match agent.get(&config_url).header("Authorization", auth).call() {
+            Ok(mut resp) => match resp.body_mut().read_json::<PveResponse<VmConfig>>() {
+                Ok(r) => r.data,
+                Err(e) => {
+                    debug!("[external] Proxmox VM config parse failed for {config_url}: {e}");
+                    return None;
+                }
+            },
+            Err(e) => {
+                debug!("[external] Proxmox VM config fetch failed for {config_url}: {e}");
+                return None;
+            }
+        };
 
         // For running QEMU VMs with guest agent, try get-osinfo first
         if resource.resource_type == "qemu"

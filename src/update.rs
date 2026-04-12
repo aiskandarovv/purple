@@ -150,16 +150,21 @@ fn write_version_cache(version: &str, headline: Option<&str>) {
     let Some(dir) = dirs::home_dir().map(|h| h.join(".purple")) else {
         return;
     };
-    let _ = std::fs::create_dir_all(&dir);
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        debug!("[config] Failed to create version cache directory: {e}");
+        return;
+    }
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
     let hl = headline.unwrap_or("");
-    let _ = std::fs::write(
+    if let Err(e) = std::fs::write(
         dir.join("last_version_check"),
         format!("{}\n{}\n{}\n", now, version, hl),
-    );
+    ) {
+        debug!("[config] Failed to write version cache: {e}");
+    }
 }
 
 /// Spawn a background thread to check for updates. Sends an event if a newer version exists.

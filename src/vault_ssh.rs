@@ -256,14 +256,18 @@ pub fn sign_certificate(
     let stdout_thread = std::thread::spawn(move || -> Vec<u8> {
         let mut buf = Vec::new();
         if let Some(mut h) = stdout_handle {
-            let _ = std::io::Read::read_to_end(&mut h, &mut buf);
+            if let Err(e) = std::io::Read::read_to_end(&mut h, &mut buf) {
+                log::warn!("[external] Failed to read vault stdout pipe: {e}");
+            }
         }
         buf
     });
     let stderr_thread = std::thread::spawn(move || -> Vec<u8> {
         let mut buf = Vec::new();
         if let Some(mut h) = stderr_handle {
-            let _ = std::io::Read::read_to_end(&mut h, &mut buf);
+            if let Err(e) = std::io::Read::read_to_end(&mut h, &mut buf) {
+                log::warn!("[external] Failed to read vault stderr pipe: {e}");
+            }
         }
         buf
     });

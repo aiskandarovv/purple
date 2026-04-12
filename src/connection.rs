@@ -208,7 +208,10 @@ pub fn connect(
     let status = child
         .wait()
         .with_context(|| format!("Failed to wait for ssh for '{}'", alias))?;
-    let stderr_output = stderr_thread.join().unwrap_or_default();
+    let stderr_output = stderr_thread.join().unwrap_or_else(|_| {
+        warn!("[purple] Stderr capture thread panicked for {alias}");
+        String::new()
+    });
 
     // _signal_guard drops here, restoring the original signal mask.
     // Any pending SIGINT from Ctrl+C during SSH is safely consumed.

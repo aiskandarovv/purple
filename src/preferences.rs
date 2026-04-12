@@ -2,6 +2,8 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+use log::debug;
+
 use crate::app::{SortMode, ViewMode};
 use crate::fs_util;
 
@@ -27,7 +29,15 @@ fn path() -> Option<PathBuf> {
 /// Load a value for a given key from ~/.purple/preferences.
 fn load_value(key: &str) -> Option<String> {
     let path = path()?;
-    let content = std::fs::read_to_string(path).ok()?;
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) => {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                debug!("[config] Failed to read preferences file: {e}");
+            }
+            return None;
+        }
+    };
     for line in content.lines() {
         let line = line.trim();
         if line.starts_with('#') || line.is_empty() {

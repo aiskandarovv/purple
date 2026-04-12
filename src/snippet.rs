@@ -602,8 +602,14 @@ fn execute_host(
             });
 
             // Join readers BEFORE wait to guarantee all output is received
-            let stdout_text = stdout_handle.join().unwrap_or_default();
-            let stderr_text = stderr_handle.join().unwrap_or_default();
+            let stdout_text = stdout_handle.join().unwrap_or_else(|_| {
+                log::warn!("[purple] Snippet stdout reader thread panicked");
+                String::new()
+            });
+            let stderr_text = stderr_handle.join().unwrap_or_else(|_| {
+                log::warn!("[purple] Snippet stderr reader thread panicked");
+                String::new()
+            });
 
             // Now wait for the child to exit, then take it out of the
             // guard so Drop won't kill a potentially recycled PID.

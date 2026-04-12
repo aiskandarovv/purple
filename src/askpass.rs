@@ -91,8 +91,12 @@ pub fn handle() -> Result<()> {
             std::process::exit(1);
         }
         // Create marker for retry detection
-        let _ = std::fs::create_dir_all(marker_path.parent().unwrap());
-        let _ = std::fs::write(marker_path, b"");
+        if let Err(e) = std::fs::create_dir_all(marker_path.parent().unwrap()) {
+            debug!("[config] Failed to create askpass marker directory: {e}");
+        }
+        if let Err(e) = std::fs::write(marker_path, b"") {
+            debug!("[config] Failed to write askpass marker: {e}");
+        }
     }
 
     // Parse config and find askpass source

@@ -68,8 +68,10 @@ pub use types::{
 /// Kill active tunnel processes when App is dropped (e.g. on panic).
 impl Drop for App {
     fn drop(&mut self) {
-        for (_, mut tunnel) in self.active_tunnels.drain() {
-            let _ = tunnel.child.kill();
+        for (alias, mut tunnel) in self.active_tunnels.drain() {
+            if let Err(e) = tunnel.child.kill() {
+                log::debug!("[external] Failed to kill tunnel for {alias} on shutdown: {e}");
+            }
             let _ = tunnel.child.wait();
         }
         // Cancel and join any in-flight Vault SSH bulk-sign worker so it

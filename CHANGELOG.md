@@ -1,3 +1,14 @@
+## 2.33.5
+
+- Debug logging for silent error paths across the codebase
+- Pipe read failures in MCP tool execution, Vault SSH signing and Tailscale provider now surface in the log instead of being silently swallowed
+- First-launch init (directory creation, SSH config backup, permission setting) logs warnings on failure
+- Connection history read/write errors, preferences file access failures and SSH config backup pruning failures are now logged
+- Thread panics in stderr capture (SSH connection) and stdout/stderr readers (snippet execution) log a warning instead of silently returning empty strings
+- Tunnel and process cleanup failures (kill/wait) log at debug level
+- Proxmox guest OS info and VM config API calls log the specific failure reason instead of returning None silently
+- Version check cache write failures log at debug level
+
 ## 2.33.4
 
 - Internal: extract CLI handlers from main.rs, move test modules into dedicated files across the codebase, document unsafe block invariants, replace fragile unwrap patterns with let-else guards, route TUI-context error messages through the log system instead of stderr

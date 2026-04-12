@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use log::debug;
 use serde::Deserialize;
 
 use base64::Engine as _;
@@ -205,7 +206,9 @@ impl Tailscale {
                             .take()
                             .map(|mut s| {
                                 let mut buf = String::new();
-                                s.read_to_string(&mut buf).ok();
+                                if let Err(e) = s.read_to_string(&mut buf) {
+                                    debug!("[external] Failed to read tailscale stderr: {e}");
+                                }
                                 buf
                             })
                             .unwrap_or_default();
