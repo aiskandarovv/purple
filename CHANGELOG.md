@@ -1,3 +1,11 @@
+## 2.33.3
+
+- Safer render paths: recover from poisoned mutex, remove unwrap panics from container overlay, replace unreachable! with safe fallbacks in provider and tunnel forms
+- Faster host sorting: cache lowercased keys instead of allocating per comparison. HashSet dedup for group tab ordering
+- Allocation-free host width calculation in the host list renderer
+- Container cache write errors now surface in the debug log instead of being silently swallowed
+- Internal: split handler.rs (11k lines) and app.rs (11k lines) into focused submodules. No behavior change
+
 ## 2.33.2
 
 - Active tunnels now render green in the detail panel

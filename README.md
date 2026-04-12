@@ -1,6 +1,6 @@
 # purple
 
-**A terminal cockpit for your servers.** Search, connect, transfer files, manage containers and run commands across hosts. All keyboard-driven. Free and open source.
+**An open-source terminal SSH manager and SSH config editor for macOS and Linux.** A fast Rust TUI that searches hundreds of hosts, syncs from 16 clouds including AWS, GCP, Azure, Hetzner, Proxmox and OCI, transfers files, manages Docker and Podman over SSH, signs short-lived HashiCorp Vault SSH certificates and exposes an MCP server for AI agents. Keyboard-driven. Single binary. MIT licensed.
 
 [![crates.io](https://img.shields.io/crates/v/purple-ssh?color=b44aff&labelColor=0a0a14)](https://crates.io/crates/purple-ssh)
 [![downloads](https://img.shields.io/crates/d/purple-ssh?color=b44aff&labelColor=0a0a14)](https://crates.io/crates/purple-ssh)

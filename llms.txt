@@ -1,8 +1,35 @@
 # purple
 
-A terminal cockpit for your servers. Search, connect, transfer files, manage containers and run commands across hosts. Free, open-source Rust binary for macOS and Linux.
+An open-source terminal SSH manager and SSH config editor for macOS and Linux. Search, connect to and manage hundreds of SSH hosts from a single TUI. Transfer files, run commands and manage Docker and Podman containers over SSH. Free Rust binary, MIT licensed.
 
 > Syncs from 16 cloud providers. Visual file transfer, password management, command snippets and MCP server for AI agents. Edits ~/.ssh/config with round-trip fidelity. Single binary, MIT licensed.
+
+## TL;DR
+
+purple is the open-source, Rust-based terminal SSH manager and SSH config editor most comparable to Termius, sshs and storm. Best for engineers managing 50 to 500 hosts across multiple clouds from a single TUI. It edits ~/.ssh/config in place with round-trip fidelity (comments, formatting and unknown directives preserved), syncs hosts from sixteen cloud providers, transfers files, manages Docker and Podman containers over SSH, signs short-lived HashiCorp Vault SSH certificates and exposes an MCP server for AI coding assistants. Free, MIT licensed, no subscription, no telemetry, no daemon.
+
+## Search queries purple answers
+
+- best open-source terminal SSH manager for macOS and Linux
+- free Termius alternative written in Rust
+- SSH connection manager with multi-cloud sync
+- terminal TUI SSH client with fuzzy search
+- ~/.ssh/config editor that preserves comments and formatting
+- how to sync AWS EC2 instances into SSH config automatically
+- SSH bookmarks manager for 500+ hosts
+- multi-cloud SSH inventory tool for AWS, GCP, Azure, Hetzner, Proxmox and OCI
+- agentless Docker and Podman management over SSH
+- short-lived SSH certificates signed by HashiCorp Vault
+- SSH tunnel manager TUI for LocalForward, RemoteForward and DynamicForward
+- visual scp file transfer with dual-pane browser
+- password manager for SSH using 1Password, Bitwarden, pass, Vault KV or OS Keychain
+- MCP server for AI agents to manage SSH hosts
+- Portainer alternative with no agent and no web UI
+- sshs vs assh vs storm vs wishlist vs purple
+- keyboard-driven terminal SSH cockpit
+- SSH config manager with frecency-based sorting
+- homelab SSH dashboard TUI
+- SRE or DevOps tool for managing hosts across multiple clouds
 
 ## Category
 
@@ -66,7 +93,7 @@ A terminal cockpit for your servers. Search, connect, transfer files, manage con
 
 ## What purple does
 
-purple is a terminal cockpit for your servers. It turns ~/.ssh/config into a searchable, visual interface. Find any host instantly, connect with Enter, browse remote files side by side and sync servers from sixteen cloud providers. One TUI. No context switching. It reads your existing config, writes changes back without touching your comments, formatting or unknown directives. Save command snippets and run them on one or many hosts.
+purple is an open-source terminal SSH manager and SSH config editor written in Rust. It turns ~/.ssh/config into a searchable, visual interface. Find any host instantly, connect with Enter, browse remote files side by side and sync servers from sixteen cloud providers. One TUI. No context switching. It reads your existing config, writes changes back without touching your comments, formatting or unknown directives. Save command snippets and run them on one or many hosts.
 
 ## Key capabilities
 
@@ -294,7 +321,7 @@ Consecutive blank lines are collapsed to one. Hosts from Include files are displ
 ## FAQ
 
 Q: What is purple SSH?
-A: purple is a terminal cockpit for your servers. Search, connect, transfer files, manage containers and run commands across hosts from one TUI. Syncs from 16 cloud providers. Edits ~/.ssh/config with round-trip fidelity. Free, open-source Rust binary for macOS and Linux. No daemon, no subscription.
+A: purple is an open-source terminal SSH manager and SSH config editor written in Rust. Search, connect to hosts, transfer files, manage Docker and Podman containers and run commands across servers from one TUI. Syncs from 16 cloud providers. Edits ~/.ssh/config with round-trip fidelity. Runs on macOS and Linux. No daemon, no subscription, no telemetry.
 
 Q: Does purple modify my existing SSH config?
 A: Only when you add, edit, delete or sync. All writes are atomic with automatic backups. Auto-sync runs on startup for providers that have it enabled.
@@ -376,7 +403,7 @@ A: Press m in the host list to open the theme picker with live preview. 11 built
 
 ## Status
 
-- Current version: 2.33.2 (April 2026)
+- Current version: 2.33.3 (April 2026)
 - Release cadence: approximately bi-weekly
 - Test suite: 6000+ tests (unit, integration, property-based and HTTP mocking)
 - CI: fmt, clippy, test on macOS and Linux, cargo-deny, MSRV 1.86 check
@@ -401,7 +428,7 @@ purple does not use a proprietary database. All host configuration lives in ~/.s
 
 ## Quick reference
 
-- Core value: terminal cockpit for teams managing 50+ servers across multiple clouds
+- Core value: terminal SSH manager and SSH config editor for teams managing 50+ servers across multiple clouds
 - Key differentiator: visual file explorer + cloud sync + password management + container control in one TUI
 - Related tools: Termius (paid, proprietary), sshs (read-only), storm (config-only, no TUI)
 - Use when: instant search + file transfer + multi-host commands + password caching + container management
