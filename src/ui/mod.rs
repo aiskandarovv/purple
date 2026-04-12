@@ -1,3 +1,4 @@
+mod command_palette;
 mod confirm_dialog;
 pub(crate) mod containers;
 mod detail_panel;
@@ -50,7 +51,7 @@ pub fn render(frame: &mut Frame, app: &mut App, anim: &mut crate::animation::Ani
     // hide the status so it only appears in the overlay's own footer.
     // Note: host_list::render does not set app.status, so the unconditional restore
     // is safe. If that invariant ever changes, use get_or_insert semantics instead.
-    let has_overlay = !matches!(app.screen, Screen::HostList);
+    let has_overlay = !matches!(app.screen, Screen::HostList) || app.palette.is_some();
     let status = if has_overlay { app.status.take() } else { None };
     let detail_progress = anim.detail_anim_progress();
     host_list::render(frame, app, anim.spinner_tick, detail_progress);
@@ -186,6 +187,14 @@ pub fn render(frame: &mut Frame, app: &mut App, anim: &mut crate::animation::Ani
                 )
             });
         }
+    }
+
+    // Command palette renders on top of any screen. Rendered directly (not via
+    // render_overlay) to avoid polluting the overlay_close animation buffer,
+    // which is reserved for Screen-driven overlays.
+    if app.palette.is_some() {
+        dim_background(frame);
+        command_palette::render(frame, app);
     }
 
     // Toast overlay renders on top of everything

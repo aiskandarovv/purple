@@ -247,6 +247,9 @@ pub struct App {
     /// background thread so the main-thread cert-check spawner can skip any
     /// host that is mid-signing (TOCTOU guard).
     pub vault_sign_in_flight: Arc<std::sync::Mutex<HashSet<String>>>,
+
+    /// Command palette state. Some when palette is open.
+    pub palette: Option<CommandPaletteState>,
 }
 
 impl App {
@@ -389,6 +392,7 @@ impl App {
             vault_signing_cancel: None,
             vault_sign_thread: None,
             vault_sign_in_flight: Arc::new(std::sync::Mutex::new(HashSet::new())),
+            palette: None,
         }
     }
 
@@ -918,6 +922,182 @@ pub(crate) fn page_up(state: &mut ListState, len: usize, page_size: usize) {
     let current = state.selected().unwrap_or(0);
     let prev = current.saturating_sub(page_size);
     state.select(Some(prev));
+}
+
+/// A command that can be executed from the command palette.
+#[derive(Debug, Clone, Copy)]
+pub struct PaletteCommand {
+    pub key: char,
+    pub label: &'static str,
+    /// Section for future grouped display. Not yet used by the renderer.
+    #[allow(dead_code)]
+    pub section: &'static str,
+}
+
+static ALL_PALETTE_COMMANDS: &[PaletteCommand] = &[
+    PaletteCommand {
+        key: 'a',
+        label: "add host",
+        section: "manage",
+    },
+    PaletteCommand {
+        key: 'A',
+        label: "add pattern",
+        section: "manage",
+    },
+    PaletteCommand {
+        key: 'e',
+        label: "edit",
+        section: "manage",
+    },
+    PaletteCommand {
+        key: 'd',
+        label: "del",
+        section: "manage",
+    },
+    PaletteCommand {
+        key: 'c',
+        label: "clone",
+        section: "manage",
+    },
+    PaletteCommand {
+        key: 'u',
+        label: "undo del",
+        section: "manage",
+    },
+    PaletteCommand {
+        key: 't',
+        label: "tag (inline)",
+        section: "manage",
+    },
+    PaletteCommand {
+        key: 'i',
+        label: "all directives",
+        section: "manage",
+    },
+    PaletteCommand {
+        key: 'y',
+        label: "copy ssh command",
+        section: "clipboard",
+    },
+    PaletteCommand {
+        key: 'x',
+        label: "copy config block",
+        section: "clipboard",
+    },
+    PaletteCommand {
+        key: 'X',
+        label: "purge stale",
+        section: "clipboard",
+    },
+    PaletteCommand {
+        key: 'F',
+        label: "file explorer",
+        section: "tools",
+    },
+    PaletteCommand {
+        key: 'T',
+        label: "tunnels",
+        section: "tools",
+    },
+    PaletteCommand {
+        key: 'C',
+        label: "containers",
+        section: "tools",
+    },
+    PaletteCommand {
+        key: 'K',
+        label: "SSH keys",
+        section: "tools",
+    },
+    PaletteCommand {
+        key: 'S',
+        label: "providers",
+        section: "tools",
+    },
+    PaletteCommand {
+        key: 'V',
+        label: "vault sign",
+        section: "tools",
+    },
+    PaletteCommand {
+        key: 'I',
+        label: "import known_hosts",
+        section: "tools",
+    },
+    PaletteCommand {
+        key: 'm',
+        label: "theme",
+        section: "tools",
+    },
+    PaletteCommand {
+        key: 'r',
+        label: "run snippet",
+        section: "connect",
+    },
+    PaletteCommand {
+        key: 'R',
+        label: "run on all visible",
+        section: "connect",
+    },
+    PaletteCommand {
+        key: 'p',
+        label: "ping",
+        section: "connect",
+    },
+    PaletteCommand {
+        key: 'P',
+        label: "ping all",
+        section: "connect",
+    },
+    PaletteCommand {
+        key: '!',
+        label: "down-only filter",
+        section: "connect",
+    },
+];
+
+impl PaletteCommand {
+    pub fn all() -> &'static [PaletteCommand] {
+        ALL_PALETTE_COMMANDS
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CommandPaletteState {
+    pub query: String,
+    pub selected: usize,
+}
+
+impl CommandPaletteState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn push_query(&mut self, c: char) {
+        if self.query.len() < 64 {
+            self.query.push(c);
+        }
+        self.selected = 0;
+    }
+
+    pub fn pop_query(&mut self) {
+        self.query.pop();
+        self.selected = 0;
+    }
+
+    /// Return commands filtered by the current query (substring match on label).
+    pub fn filtered_commands(&self) -> Vec<PaletteCommand> {
+        let all = PaletteCommand::all();
+        if self.query.is_empty() {
+            return all.to_vec();
+        }
+        let q = self.query.to_lowercase();
+        all.iter()
+            .filter(|cmd| cmd.label.to_lowercase().contains(&q))
+            .copied()
+            .collect()
+    }
 }
 
 #[cfg(test)]

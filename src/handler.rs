@@ -8,6 +8,7 @@ use crate::app::{App, HostForm, Screen};
 use crate::event::AppEvent;
 use crate::ssh_config::model::HostEntry;
 
+mod command_palette;
 mod confirm;
 mod containers;
 mod file_browser;
@@ -117,6 +118,12 @@ pub fn handle_key_event(
             cancel.store(true, std::sync::atomic::Ordering::Relaxed);
         }
         app.running = false;
+        return Ok(());
+    }
+
+    // Command palette intercept
+    if app.palette.is_some() {
+        command_palette::handle_command_palette(app, key, events_tx);
         return Ok(());
     }
 

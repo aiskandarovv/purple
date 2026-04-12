@@ -1209,6 +1209,9 @@ fn footer_spans(detail_active: bool, filter_down_only: bool) -> Vec<Span<'static
         Span::raw("  "),
         Span::styled(" v ", theme::footer_key()),
         Span::styled(view_label, theme::muted()),
+        Span::raw("  "),
+        Span::styled(" : ", theme::footer_key()),
+        Span::styled(" cmds ", theme::muted()),
     ];
     if filter_down_only {
         spans.push(Span::raw("  "));

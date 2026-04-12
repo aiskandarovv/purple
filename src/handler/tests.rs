@@ -5966,3 +5966,161 @@ fn zone_data_for_returns_nonempty_for_known_providers() {
         );
     }
 }
+
+// --- Command palette tests ---
+
+#[test]
+fn colon_opens_command_palette() {
+    let mut app = make_app("");
+    app.screen = Screen::HostList;
+    let (tx, _rx) = mpsc::channel();
+    handle_key_event(&mut app, key(KeyCode::Char(':')), &tx).unwrap();
+    assert!(app.palette.is_some());
+}
+
+#[test]
+fn palette_esc_closes() {
+    let mut app = make_app("");
+    app.palette = Some(crate::app::CommandPaletteState::new());
+    let (tx, _rx) = mpsc::channel();
+    handle_key_event(&mut app, key(KeyCode::Esc), &tx).unwrap();
+    assert!(app.palette.is_none());
+}
+
+#[test]
+fn palette_char_always_filters() {
+    // All chars go to filter, even recognized command keys like 'K'
+    let mut app = make_app("");
+    app.palette = Some(crate::app::CommandPaletteState::new());
+    let (tx, _rx) = mpsc::channel();
+    handle_key_event(&mut app, key(KeyCode::Char('K')), &tx).unwrap();
+    assert!(app.palette.is_some(), "palette should stay open");
+    assert_eq!(app.palette.as_ref().unwrap().query, "K");
+    assert!(
+        matches!(app.screen, Screen::HostList),
+        "should not navigate away"
+    );
+}
+
+#[test]
+fn palette_filter_then_enter_executes() {
+    // Type "SSH" to filter, then Enter to execute the selected result
+    let mut app = make_app("");
+    let mut state = crate::app::CommandPaletteState::new();
+    state.push_query('S');
+    state.push_query('S');
+    state.push_query('H');
+    let filtered = state.filtered_commands();
+    // Find the SSH keys entry and set selected to its index
+    let ssh_idx = filtered.iter().position(|c| c.key == 'K').unwrap();
+    state.selected = ssh_idx;
+    app.palette = Some(state);
+    let (tx, _rx) = mpsc::channel();
+    handle_key_event(&mut app, key(KeyCode::Enter), &tx).unwrap();
+    assert!(matches!(app.screen, Screen::KeyList));
+    assert!(app.palette.is_none());
+}
+
+#[test]
+fn palette_up_down_navigates() {
+    let mut app = make_app("");
+    app.palette = Some(crate::app::CommandPaletteState::new());
+    let (tx, _rx) = mpsc::channel();
+    handle_key_event(&mut app, key(KeyCode::Down), &tx).unwrap();
+    assert_eq!(app.palette.as_ref().unwrap().selected, 1);
+    handle_key_event(&mut app, key(KeyCode::Up), &tx).unwrap();
+    assert_eq!(app.palette.as_ref().unwrap().selected, 0);
+}
+
+#[test]
+fn palette_any_char_appends_to_filter() {
+    let mut app = make_app("");
+    app.palette = Some(crate::app::CommandPaletteState::new());
+    let (tx, _rx) = mpsc::channel();
+    handle_key_event(&mut app, key(KeyCode::Char('t')), &tx).unwrap();
+    assert!(app.palette.is_some());
+    assert_eq!(app.palette.as_ref().unwrap().query, "t");
+    // 't' is a command key (tag inline), but should filter, not execute
+    assert!(matches!(app.screen, Screen::HostList));
+}
+
+#[test]
+fn palette_enter_on_empty_filter_does_nothing() {
+    let mut app = make_app("");
+    app.palette = Some(crate::app::CommandPaletteState::new());
+    app.palette.as_mut().unwrap().push_query('z');
+    app.palette.as_mut().unwrap().push_query('z');
+    app.palette.as_mut().unwrap().push_query('z');
+    let (tx, _rx) = mpsc::channel();
+    handle_key_event(&mut app, key(KeyCode::Enter), &tx).unwrap();
+    assert!(app.palette.is_some());
+}
+
+#[test]
+fn palette_backspace_on_empty_closes() {
+    let mut app = make_app("");
+    app.palette = Some(crate::app::CommandPaletteState::new());
+    let (tx, _rx) = mpsc::channel();
+    handle_key_event(&mut app, key(KeyCode::Backspace), &tx).unwrap();
+    assert!(app.palette.is_none());
+}
+
+#[test]
+fn palette_backspace_removes_filter_char() {
+    let mut app = make_app("");
+    app.palette = Some(crate::app::CommandPaletteState::new());
+    app.palette.as_mut().unwrap().push_query('t');
+    app.palette.as_mut().unwrap().push_query('u');
+    let (tx, _rx) = mpsc::channel();
+    handle_key_event(&mut app, key(KeyCode::Backspace), &tx).unwrap();
+    assert_eq!(app.palette.as_ref().unwrap().query, "t");
+}
+
+#[test]
+fn palette_navigate_then_enter_executes() {
+    let mut app = make_app("");
+    app.palette = Some(crate::app::CommandPaletteState::new());
+    let (tx, _rx) = mpsc::channel();
+    // The 3rd command in all() is 'e' (edit). Navigate Down twice to index 2.
+    handle_key_event(&mut app, key(KeyCode::Down), &tx).unwrap();
+    handle_key_event(&mut app, key(KeyCode::Down), &tx).unwrap();
+    assert_eq!(app.palette.as_ref().unwrap().selected, 2);
+    // Enter on index 2 should dispatch 'e' (edit) — but with no host selected
+    // it does nothing visible (no crash). Palette should close.
+    handle_key_event(&mut app, key(KeyCode::Enter), &tx).unwrap();
+    assert!(app.palette.is_none(), "palette should close after Enter");
+}
+
+#[test]
+fn palette_filter_shrink_then_enter_clamps_selected() {
+    let mut app = make_app("");
+    let mut state = crate::app::CommandPaletteState::new();
+    // Set selected to a high index, then add a filter that reduces the list
+    state.selected = 10;
+    state.push_query('S'); // push_query resets selected to 0
+    state.push_query('S');
+    state.push_query('H');
+    // Filtered list narrows to a few items
+    let filtered = state.filtered_commands();
+    assert!(!filtered.is_empty(), "filter should have results");
+    assert!(filtered.len() < crate::app::PaletteCommand::all().len());
+    // Force selected to way out-of-bounds to test clamping in Enter handler
+    state.selected = 50;
+    app.palette = Some(state);
+    let (tx, _rx) = mpsc::channel();
+    // Enter should clamp selected to last item, execute it, and close palette
+    handle_key_event(&mut app, key(KeyCode::Enter), &tx).unwrap();
+    assert!(
+        app.palette.is_none(),
+        "palette should close after clamped Enter"
+    );
+}
+
+#[test]
+fn palette_query_capped_at_64() {
+    let mut state = crate::app::CommandPaletteState::new();
+    for _ in 0..100 {
+        state.push_query('a');
+    }
+    assert_eq!(state.query.len(), 64, "query should be capped at 64 chars");
+}

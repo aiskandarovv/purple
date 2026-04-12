@@ -604,6 +604,10 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
                 super::snippet::open_snippet_picker(app, aliases);
             }
         }
+        KeyCode::Char(':') => {
+            log::debug!("palette: opened from host list");
+            app.palette = Some(crate::app::CommandPaletteState::new());
+        }
         KeyCode::Char('F') => actions::open_file_browser(app, events_tx),
         KeyCode::Char('C') => actions::open_container_overlay(app, events_tx),
         KeyCode::Char('?') => {

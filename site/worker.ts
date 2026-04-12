@@ -177,7 +177,7 @@ const LANDING_PAGE = `<!DOCTYPE html>
   "url": "https://getpurple.sh",
   "downloadUrl": "https://getpurple.sh",
   "installUrl": "https://github.com/erickochen/purple/releases",
-  "softwareVersion": "2.34.0",
+  "softwareVersion": "2.35.0",
   "datePublished": "2024-10-01",
   "dateModified": "2026-04-12",
   "softwareRequirements": "macOS or Linux",
@@ -914,7 +914,7 @@ footer .sep { margin: 0 0.3em; }
           <button class="copy-btn copy-inline" id="copy-btn" onclick="copy(this)" style="display:none">copy</button>
         </div>
         <div class="install-output" id="install-output" style="display:none">
-          <div>Downloading purple v2.34.0 for darwin-arm64...</div>
+          <div>Downloading purple v2.35.0 for darwin-arm64...</div>
           <div>Installing to /usr/local/bin/purple... <span class="success">done.</span></div>
         </div>
         <div class="alt-installs" id="alt-installs" style="display:none">
@@ -948,7 +948,7 @@ footer .sep { margin: 0 0.3em; }
   <div class="features">
     <div class="feat">
       <span class="feat-icon">🔍</span>
-      <span class="feat-text"><strong>Find any host in a keystroke.</strong> Fuzzy matching across hostnames, IPs, tags and users. Your most-used servers float to the top automatically.</span>
+      <span class="feat-text"><strong>Find any host in a keystroke.</strong> Fuzzy matching across hostnames, IPs, tags and users. Your most-used servers float to the top automatically. Press <code>:</code> for a command palette with all 24 actions.</span>
     </div>
     <div class="feat">
       <span class="feat-icon">☁️</span>
@@ -1032,7 +1032,7 @@ footer .sep { margin: 0 0.3em; }
         <summary>How do I troubleshoot connection problems?</summary>
         <div class="answer">Run with <code>--verbose</code> to enable debug logging, then <code>purple logs --tail</code> in another terminal. Logs are written to <code>~/.purple/purple.log</code> with fault domain prefixes: <code>[external]</code> for remote/tool errors, <code>[config]</code> for local config issues. Set <code>PURPLE_LOG=trace</code> for maximum detail.</div>
       </details>
-      <div class="man-foot"><span>purple v2.34.0</span><span>2026-04-12</span><span>PURPLE(1)</span></div>
+      <div class="man-foot"><span>purple v2.35.0</span><span>2026-04-12</span><span>PURPLE(1)</span></div>
     </div>
   </div>
 
@@ -1207,6 +1207,7 @@ purple is an open-source terminal SSH manager and SSH config editor written in R
 - Auto-reload: detects external config changes every 4 seconds
 - Self-update mechanism (macOS and Linux curl installs). Homebrew and cargo users update via their package manager
 - Shell completions (bash, zsh, fish)
+- Command palette (: key): searchable overlay with 24 actions. Type to filter by name, press Enter to execute. Case-insensitive matching
 - 11 built-in color themes (default: Purple) with custom theme support (~/.purple/themes/*.toml). Works in any terminal, respects NO_COLOR
 
 ## Install
@@ -1217,7 +1218,7 @@ cargo install purple-ssh
 
 ## Usage
 
-The primary interface is the TUI. Run purple to launch it. Press ? for the full keybindings cheat sheet. Most actions are available from the TUI: S for provider management, r for snippets, T for tunnels, C for containers, F for file browser. The CLI subcommands below are alternatives for scripting and automation.
+The primary interface is the TUI. Run purple to launch it. Press ? for the full keybindings cheat sheet. Press : to open the command palette with 24 searchable actions. Most actions are available from the TUI: S for provider management, r for snippets, T for tunnels, C for containers, F for file browser. The CLI subcommands below are alternatives for scripting and automation.
 
 purple                              # Launch the TUI
 purple --config ~/other/ssh_config  # Use alternate config file
@@ -1492,7 +1493,7 @@ A: Press m in the host list to open the theme picker with live preview. 11 built
 
 ## Status
 
-- Current version: 2.34.0 (April 2026)
+- Current version: 2.35.0 (April 2026)
 - Release cadence: approximately bi-weekly
 - Test suite: 6000+ tests (unit, integration, property-based and HTTP mocking)
 - CI: fmt, clippy, test on macOS and Linux, cargo-deny, MSRV 1.86 check

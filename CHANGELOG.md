@@ -1,3 +1,12 @@
+## 2.35.0
+
+- Command palette. Press `:` to search and run any action
+- 24 searchable actions: add, edit, delete, file explorer, tunnels, containers, SSH keys, providers and more ([#21](https://github.com/erickochen/purple/issues/21))
+- Type to filter by name, press Enter to execute. Case-insensitive matching
+- Up/Down to navigate, Esc to close, Backspace to clear filter
+- Shortcuts shown next to each command so you learn the direct keys over time
+- Footer shows `: cmds` hint. Help overlay lists `:` in the TOOLS section
+
 ## 2.34.0
 
 - Toast notifications for user action feedback

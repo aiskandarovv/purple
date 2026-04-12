@@ -274,6 +274,9 @@ fn host_list_columns(_app: &App) -> (Vec<Line<'static>>, Vec<Line<'static>>) {
     col1.push(help_line("Shift+Tab", "prev field"));
     col2.push(help_line("m", "theme"));
 
+    col1.push(blank());
+    col2.push(help_line(":", "search commands"));
+
     col1.push(help_line("Enter", "save / picker"));
     col2.push(help_line("q/Esc", "quit"));
 
@@ -660,5 +663,19 @@ mod tests {
         assert!(!lines.is_empty());
         let text: String = lines.iter().map(|l| l.to_string()).collect();
         assert!(text.contains("filter by tag"), "should have Enter shortcut");
+    }
+
+    #[test]
+    fn host_list_contains_palette_shortcut() {
+        let (col1, col2) = host_list_columns(&empty_app());
+        let all_text: String = col1
+            .iter()
+            .chain(col2.iter())
+            .map(|l| l.to_string())
+            .collect();
+        assert!(
+            all_text.contains("commands"),
+            "help should mention command palette"
+        );
     }
 }

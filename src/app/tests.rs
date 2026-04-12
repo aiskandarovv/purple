@@ -6641,3 +6641,54 @@ fn message_class_is_error() {
     assert!(mk(MessageClass::Alert).is_error());
     assert!(!mk(MessageClass::Progress).is_error());
 }
+
+#[test]
+fn palette_commands_have_unique_keys() {
+    let commands = PaletteCommand::all();
+    let mut seen = std::collections::HashSet::new();
+    for cmd in commands {
+        assert!(seen.insert(cmd.key), "duplicate palette key: '{}'", cmd.key);
+    }
+    assert!(
+        commands.len() >= 20,
+        "expected at least 20 palette commands"
+    );
+}
+
+#[test]
+fn palette_state_filters_by_query() {
+    let mut state = CommandPaletteState::new();
+    state.push_query('t');
+    let filtered = state.filtered_commands();
+    assert!(
+        filtered
+            .iter()
+            .all(|c| c.label.to_lowercase().contains("t")),
+        "all filtered commands should contain 't' in label"
+    );
+    assert!(
+        filtered.len() < PaletteCommand::all().len(),
+        "filtering should reduce the list"
+    );
+}
+
+#[test]
+fn palette_state_empty_query_returns_all() {
+    let state = CommandPaletteState::new();
+    let filtered = state.filtered_commands();
+    assert_eq!(filtered.len(), PaletteCommand::all().len());
+}
+
+#[test]
+fn palette_selected_resets_on_query_change() {
+    let mut state = CommandPaletteState::new();
+    state.selected = 5;
+    state.push_query('x');
+    assert_eq!(
+        state.selected, 0,
+        "selected should reset when query changes"
+    );
+    state.selected = 3;
+    state.pop_query();
+    assert_eq!(state.selected, 0, "selected should reset on pop too");
+}
