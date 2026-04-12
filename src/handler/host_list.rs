@@ -10,6 +10,31 @@ use crate::ssh_config::model::ConfigElement;
 
 mod actions;
 
+fn serialize_host_block(elements: &[ConfigElement], alias: &str, crlf: bool) -> Option<String> {
+    let line_ending = if crlf { "\r\n" } else { "\n" };
+    for element in elements {
+        match element {
+            ConfigElement::HostBlock(block) if block.host_pattern == alias => {
+                let mut output = block.raw_host_line.clone();
+                for directive in &block.directives {
+                    output.push_str(line_ending);
+                    output.push_str(&directive.raw_line);
+                }
+                return Some(output);
+            }
+            ConfigElement::Include(include) => {
+                for file in &include.resolved_files {
+                    if let Some(result) = serialize_host_block(&file.elements, alias, crlf) {
+                        return Some(result);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::Sender<AppEvent>) {
     // Handle tag input mode
     if app.tag_input.is_some() {
@@ -184,7 +209,7 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
             if let Some(host) = app.selected_host() {
                 let alias = host.alias.clone();
                 if let Some(block) =
-                    super::serialize_host_block(&app.config.elements, &alias, app.config.crlf)
+                    serialize_host_block(&app.config.elements, &alias, app.config.crlf)
                 {
                     match clipboard::copy_to_clipboard(&block) {
                         Ok(()) => {

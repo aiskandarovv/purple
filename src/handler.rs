@@ -6,7 +6,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::{App, HostForm, Screen};
 use crate::event::AppEvent;
-use crate::ssh_config::model::{ConfigElement, HostEntry};
+use crate::ssh_config::model::HostEntry;
 
 mod confirm;
 mod containers;
@@ -339,36 +339,6 @@ pub(super) fn open_edit_form(app: &mut App, host: HostEntry) -> bool {
     app.capture_form_mtime();
     app.capture_form_baseline();
     true
-}
-
-/// Serialize a host block to its raw SSH config text.
-pub(super) fn serialize_host_block(
-    elements: &[ConfigElement],
-    alias: &str,
-    crlf: bool,
-) -> Option<String> {
-    let line_ending = if crlf { "\r\n" } else { "\n" };
-    for element in elements {
-        match element {
-            ConfigElement::HostBlock(block) if block.host_pattern == alias => {
-                let mut output = block.raw_host_line.clone();
-                for directive in &block.directives {
-                    output.push_str(line_ending);
-                    output.push_str(&directive.raw_line);
-                }
-                return Some(output);
-            }
-            ConfigElement::Include(include) => {
-                for file in &include.resolved_files {
-                    if let Some(result) = serialize_host_block(&file.elements, alias, crlf) {
-                        return Some(result);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    None
 }
 
 #[cfg(test)]
