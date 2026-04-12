@@ -62,12 +62,11 @@ impl ColorSlot {
         style
     }
 
-    /// Resolve this slot to a background Style based on color mode.
     #[allow(dead_code)]
     pub fn to_style_bg(&self, mode: u8) -> Style {
         let mut style = Style::default();
         match mode {
-            0 => {} // NO_COLOR: no fg/bg colors
+            0 => {}
             2 => {
                 if let Some(c) = self.truecolor {
                     style = style.bg(c);

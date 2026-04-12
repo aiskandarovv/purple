@@ -725,6 +725,71 @@ impl App {
         }
         false
     }
+
+    /// Poll active tunnels for exit. Returns (alias, message, is_error) tuples.
+    pub fn poll_tunnels(&mut self) -> Vec<(String, String, bool)> {
+        if self.active_tunnels.is_empty() {
+            return Vec::new();
+        }
+        let mut exited = Vec::new();
+        let mut to_remove = Vec::new();
+        for (alias, tunnel) in &mut self.active_tunnels {
+            match tunnel.child.try_wait() {
+                Ok(Some(status)) => {
+                    let stderr_msg = tunnel.child.stderr.take().and_then(|mut stderr| {
+                        use std::io::Read;
+                        let mut buf = vec![0u8; 1024];
+                        match stderr.read(&mut buf) {
+                            Ok(n) if n > 0 => {
+                                let s = String::from_utf8_lossy(&buf[..n]);
+                                let trimmed = s.trim();
+                                if trimmed.is_empty() {
+                                    None
+                                } else {
+                                    Some(trimmed.to_string())
+                                }
+                            }
+                            _ => None,
+                        }
+                    });
+                    let exit_code = status.code().unwrap_or(-1);
+                    if !status.success() {
+                        log::error!(
+                            "[external] Tunnel exited unexpectedly: alias={alias} exit={exit_code}"
+                        );
+                        if let Some(ref err) = stderr_msg {
+                            log::debug!("[external] Tunnel stderr: {}", err.trim());
+                        }
+                    }
+                    let (msg, is_error) = if status.success() {
+                        (format!("Tunnel for {} closed.", alias), false)
+                    } else if let Some(err) = stderr_msg {
+                        (format!("Tunnel for {}: {}", alias, err), true)
+                    } else {
+                        (
+                            format!("Tunnel for {} exited with code {}.", alias, exit_code),
+                            true,
+                        )
+                    };
+                    exited.push((alias.clone(), msg, is_error));
+                    to_remove.push(alias.clone());
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    exited.push((
+                        alias.clone(),
+                        format!("Tunnel for {} lost: {}", alias, e),
+                        true,
+                    ));
+                    to_remove.push(alias.clone());
+                }
+            }
+        }
+        for alias in to_remove {
+            self.active_tunnels.remove(&alias);
+        }
+        exited
+    }
 }
 
 /// Cycle list selection forward or backward with wraparound.

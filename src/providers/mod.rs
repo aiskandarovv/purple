@@ -24,7 +24,6 @@ use thiserror::Error;
 
 /// A host discovered from a cloud provider API.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct ProviderHost {
     /// Provider-assigned server ID.
     pub server_id: String,
@@ -84,6 +83,7 @@ pub trait Provider {
     /// Short label for aliases (e.g. "do").
     fn short_label(&self) -> &str;
     /// Fetch hosts with cancellation support.
+    #[allow(dead_code)]
     fn fetch_hosts_cancellable(
         &self,
         token: &str,
@@ -95,6 +95,7 @@ pub trait Provider {
         self.fetch_hosts_cancellable(token, &AtomicBool::new(false))
     }
     /// Fetch hosts with progress reporting. Default delegates to fetch_hosts_cancellable.
+    #[allow(dead_code)]
     fn fetch_hosts_with_progress(
         &self,
         token: &str,
@@ -1656,12 +1657,10 @@ mod tests {
             ip: String,
         }
         #[derive(serde::Deserialize)]
-        #[allow(dead_code)]
         struct Meta {
             total: u32,
         }
         #[derive(serde::Deserialize)]
-        #[allow(dead_code)]
         struct Resp {
             data: Vec<Host>,
             meta: Meta,

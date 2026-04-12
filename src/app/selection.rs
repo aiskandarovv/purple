@@ -3,7 +3,6 @@
 
 use std::path::Path;
 
-use log::{debug, error};
 use ratatui::widgets::ListState;
 
 use super::{HostListItem, Screen};
@@ -407,73 +406,6 @@ impl App {
     }
 
     /// Poll active tunnels for exit status. Returns messages for any that exited.
-    /// Poll active tunnels for exit. Returns (alias, message, is_error) tuples.
-    pub fn poll_tunnels(&mut self) -> Vec<(String, String, bool)> {
-        if self.active_tunnels.is_empty() {
-            return Vec::new();
-        }
-        let mut exited = Vec::new();
-        let mut to_remove = Vec::new();
-        for (alias, tunnel) in &mut self.active_tunnels {
-            match tunnel.child.try_wait() {
-                Ok(Some(status)) => {
-                    // Read up to 1KB of stderr for error details
-                    let stderr_msg = tunnel.child.stderr.take().and_then(|mut stderr| {
-                        use std::io::Read;
-                        let mut buf = vec![0u8; 1024];
-                        match stderr.read(&mut buf) {
-                            Ok(n) if n > 0 => {
-                                let s = String::from_utf8_lossy(&buf[..n]);
-                                let trimmed = s.trim();
-                                if trimmed.is_empty() {
-                                    None
-                                } else {
-                                    Some(trimmed.to_string())
-                                }
-                            }
-                            _ => None,
-                        }
-                    });
-                    let exit_code = status.code().unwrap_or(-1);
-                    if !status.success() {
-                        error!(
-                            "[external] Tunnel exited unexpectedly: alias={alias} exit={exit_code}"
-                        );
-                        if let Some(ref err) = stderr_msg {
-                            debug!("[external] Tunnel stderr: {}", err.trim());
-                        }
-                    }
-                    let (msg, is_error) = if status.success() {
-                        (format!("Tunnel for {} closed.", alias), false)
-                    } else if let Some(err) = stderr_msg {
-                        (format!("Tunnel for {}: {}", alias, err), true)
-                    } else {
-                        (
-                            format!("Tunnel for {} exited with code {}.", alias, exit_code),
-                            true,
-                        )
-                    };
-                    exited.push((alias.clone(), msg, is_error));
-                    to_remove.push(alias.clone());
-                }
-                Ok(None) => {} // Still running
-                Err(e) => {
-                    exited.push((
-                        alias.clone(),
-                        format!("Tunnel for {} lost: {}", alias, e),
-                        true,
-                    ));
-                    to_remove.push(alias.clone());
-                }
-            }
-        }
-        for alias in to_remove {
-            // Just remove — try_wait() already reaped the process above
-            self.active_tunnels.remove(&alias);
-        }
-        exited
-    }
-
     /// Move selection to the next non-header item.
     pub fn select_next_skipping_headers(&mut self) {
         let current = self.ui.list_state.selected().unwrap_or(0);

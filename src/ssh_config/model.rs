@@ -34,7 +34,6 @@ pub struct SshConfigFile {
 
 /// An Include directive that references other config files.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct IncludeDirective {
     pub raw_line: String,
     pub pattern: String,
@@ -395,12 +394,14 @@ impl HostBlock {
     }
 
     /// Remove and return trailing blank lines.
+    #[allow(dead_code)]
     fn pop_trailing_blanks(&mut self) -> Vec<Directive> {
         let end = self.content_end();
         self.directives.drain(end..).collect()
     }
 
     /// Ensure exactly one trailing blank line.
+    #[allow(dead_code)]
     fn ensure_trailing_blank(&mut self) {
         self.pop_trailing_blanks();
         self.directives.push(Directive {
@@ -1877,7 +1878,6 @@ impl SshConfigFile {
     }
 
     /// Delete a host entry by alias.
-    #[allow(dead_code)]
     pub fn delete_host(&mut self, alias: &str) {
         // Before deletion, check if this host belongs to a provider so we can
         // clean up an orphaned group header afterwards.
@@ -1921,16 +1921,6 @@ impl SshConfigFile {
             .position(|e| matches!(e, ConfigElement::HostBlock(b) if b.host_pattern == alias))?;
         let element = self.elements.remove(pos);
         Some((element, pos))
-    }
-
-    /// Find the position of the `# purple:group <DisplayName>` GlobalLine for a provider.
-    #[allow(dead_code)]
-    fn find_group_header_position(&self, provider_name: &str) -> Option<usize> {
-        let display = provider_group_display_name(provider_name);
-        let header = format!("# purple:group {}", display);
-        self.elements
-            .iter()
-            .position(|e| matches!(e, ConfigElement::GlobalLine(line) if *line == header))
     }
 
     /// Remove the `# purple:group <DisplayName>` GlobalLine for a provider
