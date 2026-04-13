@@ -150,7 +150,7 @@ jobs:
         uses: actions/download-artifact@v8
 
       - name: Create release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           body_path: /tmp/release_notes.md
