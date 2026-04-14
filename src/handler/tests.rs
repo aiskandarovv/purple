@@ -6411,8 +6411,13 @@ fn host_form_smart_paste_no_fire_on_edit_with_hostname() {
 
 fn bulk_make_app() -> App {
     // Config path gets written during apply — use a unique /tmp path per
-    // test so parallel runs don't stomp each other.
-    let path = std::env::temp_dir().join(format!("purple_bulk_test_{}.cfg", std::process::id()));
+    // test so parallel runs don't stomp each other. Thread ID ensures
+    // uniqueness when cargo test runs tests in parallel threads.
+    let path = std::env::temp_dir().join(format!(
+        "purple_bulk_test_{}_{:?}.cfg",
+        std::process::id(),
+        std::thread::current().id()
+    ));
     let mut app = make_app(
         "Host a\n  HostName 1.1.1.1\n  # purple:tags prod\n\
          Host b\n  HostName 2.2.2.2\n  # purple:tags prod,db\n\
