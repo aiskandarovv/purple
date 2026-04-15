@@ -1,0 +1,14 @@
+{
+    "_meta": {
+        "provider": "gcp",
+        "endpoint": "GET /compute/v1/projects/{}/aggregated/instances",
+        "spec_url": "https://cloud.google.com/compute/docs/reference/rest/v1/instances/aggregatedList",
+        "spec_version": "compute/v1",
+        "last_verified": "2026-04-15"
+    },
+    "fixture": "gcp_aggregated_instances.json",
+    "required_paths": [
+        "items"
+    ],
+    "_note": "Instance fields (id, name, status, machineType, zone, networkInterfaces) are output-only per GCP docs. Validated per-zone in contract_snapshots.rs since zone keys are dynamic."
+}

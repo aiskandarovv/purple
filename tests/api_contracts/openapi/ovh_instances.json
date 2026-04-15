@@ -1,0 +1,18 @@
+{
+    "_meta": {
+        "provider": "ovhcloud",
+        "endpoint": "GET /cloud/project/{}/instance",
+        "spec_url": "https://api.ovh.com/console-preview/?section=%2Fcloud&branch=v1#get-/cloud/project/-serviceName-/instance",
+        "spec_version": "1.0",
+        "last_verified": "2026-04-15"
+    },
+    "fixture": "ovh_instances.json",
+    "root": "array",
+    "required_paths": [
+        "id",
+        "name",
+        "status",
+        "region",
+        "ipAddresses"
+    ]
+}

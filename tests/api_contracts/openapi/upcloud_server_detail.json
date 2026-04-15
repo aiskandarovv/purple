@@ -1,0 +1,21 @@
+{
+    "_meta": {
+        "provider": "upcloud",
+        "endpoint": "GET /1.3/server/{uuid}",
+        "spec_url": "https://developers.upcloud.com/1.3/7-servers/#get-server-details",
+        "spec_version": "1.3",
+        "last_verified": "2026-04-15"
+    },
+    "fixture": "upcloud_server_detail.json",
+    "required_paths": [
+        "server",
+        "server.networking",
+        "server.networking.interfaces",
+        "server.networking.interfaces.interface",
+        "server.networking.interfaces.interface[0].type",
+        "server.networking.interfaces.interface[0].ip_addresses",
+        "server.networking.interfaces.interface[0].ip_addresses.ip_address",
+        "server.networking.interfaces.interface[0].ip_addresses.ip_address[0].address",
+        "server.networking.interfaces.interface[0].ip_addresses.ip_address[0].family"
+    ]
+}

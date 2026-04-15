@@ -1,0 +1,13 @@
+{
+    "_meta": {
+        "provider": "oracle",
+        "endpoint": "GET /20160918/vnics/{vnicId}",
+        "spec_url": "https://docs.oracle.com/en-us/iaas/api/#/en/iaas/20160918/Vnic/GetVnic",
+        "spec_version": "20160918",
+        "last_verified": "2026-04-15"
+    },
+    "fixture": "oracle_vnic.json",
+    "required_paths": [
+        "privateIp"
+    ]
+}

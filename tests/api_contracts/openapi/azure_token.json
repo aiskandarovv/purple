@@ -1,0 +1,15 @@
+{
+    "_meta": {
+        "provider": "azure",
+        "endpoint": "POST /oauth2/token",
+        "spec_url": "https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-client-creds-grant-flow",
+        "spec_version": "v2.0",
+        "last_verified": "2026-04-15"
+    },
+    "fixture": "azure_token.json",
+    "required_paths": [
+        "access_token",
+        "token_type",
+        "expires_in"
+    ]
+}

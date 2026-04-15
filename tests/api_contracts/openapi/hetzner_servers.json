@@ -1,0 +1,24 @@
+{
+    "_meta": {
+        "provider": "hetzner",
+        "endpoint": "GET /v1/servers",
+        "spec_url": "https://docs.hetzner.cloud/#servers-get-all-servers",
+        "spec_version": "v1",
+        "last_verified": "2026-04-15"
+    },
+    "fixture": "hetzner_servers.json",
+    "required_paths": [
+        "servers",
+        "meta",
+        "meta.pagination",
+        "meta.pagination.page",
+        "meta.pagination.last_page",
+        "servers[0].id",
+        "servers[0].name",
+        "servers[0].public_net",
+        "servers[0].server_type.name",
+        "servers[0].location.name",
+        "servers[0].status",
+        "servers[0].labels"
+    ]
+}

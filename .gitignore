@@ -27,6 +27,7 @@ demo.mov
 fuzz/artifacts/
 fuzz/corpus/
 fuzz/target/
+libnull.rlib
 
 # Proptest
 proptest-regressions/

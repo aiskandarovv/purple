@@ -1,0 +1,18 @@
+{
+    "_meta": {
+        "provider": "tailscale",
+        "endpoint": "GET /api/v2/tailnet/{tailnet}/devices",
+        "spec_url": "https://tailscale.com/api#tag/devices/GET/api/v2/tailnet/{tailnet}/devices",
+        "spec_version": "v2",
+        "last_verified": "2026-04-15"
+    },
+    "fixture": "tailscale_api_devices.json",
+    "required_paths": [
+        "devices",
+        "devices[0].nodeId",
+        "devices[0].hostname",
+        "devices[0].name",
+        "devices[0].addresses",
+        "devices[0].os"
+    ]
+}

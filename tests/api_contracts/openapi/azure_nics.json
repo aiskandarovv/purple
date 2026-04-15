@@ -1,0 +1,18 @@
+{
+    "_meta": {
+        "provider": "azure",
+        "endpoint": "GET /subscriptions/{}/providers/Microsoft.Network/networkInterfaces",
+        "spec_url": "https://learn.microsoft.com/en-us/rest/api/virtualnetwork/network-interfaces/list-all",
+        "spec_version": "2024-05-01",
+        "last_verified": "2026-04-15"
+    },
+    "fixture": "azure_nics.json",
+    "required_paths": [
+        "value",
+        "value[0].id",
+        "value[0].properties",
+        "value[0].properties.ipConfigurations",
+        "value[0].properties.ipConfigurations[0].properties",
+        "value[0].properties.ipConfigurations[0].properties.privateIPAddress"
+    ]
+}

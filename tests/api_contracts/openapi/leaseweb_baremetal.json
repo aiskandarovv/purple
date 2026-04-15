@@ -1,0 +1,20 @@
+{
+    "_meta": {
+        "provider": "leaseweb",
+        "endpoint": "GET /bareMetals/v2/servers",
+        "spec_url": "https://developer.leaseweb.com/api-docs/baremetal_v2/",
+        "spec_version": "v2",
+        "last_verified": "2026-04-15"
+    },
+    "fixture": "leaseweb_baremetal.json",
+    "required_paths": [
+        "servers",
+        "_metadata",
+        "_metadata.totalCount",
+        "_metadata.limit",
+        "_metadata.offset",
+        "servers[0].id",
+        "servers[0].networkInterfaces",
+        "servers[0].contract"
+    ]
+}

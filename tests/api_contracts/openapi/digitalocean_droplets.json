@@ -1,0 +1,25 @@
+{
+    "_meta": {
+        "provider": "digitalocean",
+        "endpoint": "GET /v2/droplets",
+        "spec_url": "https://github.com/digitalocean/openapi/blob/main/specification/DigitalOcean-public.v2.yaml",
+        "spec_version": "v2",
+        "last_verified": "2026-04-15"
+    },
+    "fixture": "digitalocean_droplets.json",
+    "required_paths": [
+        "droplets",
+        "meta",
+        "meta.total",
+        "droplets[0].id",
+        "droplets[0].name",
+        "droplets[0].networks",
+        "droplets[0].networks.v4",
+        "droplets[0].networks.v4[0].ip_address",
+        "droplets[0].networks.v4[0].type",
+        "droplets[0].tags",
+        "droplets[0].image",
+        "droplets[0].size_slug",
+        "droplets[0].region"
+    ]
+}

@@ -1,0 +1,15 @@
+{
+    "_meta": {
+        "provider": "gcp",
+        "endpoint": "POST /token (OAuth2)",
+        "spec_url": "https://cloud.google.com/iam/docs/reference/credentials/rest",
+        "spec_version": "v1",
+        "last_verified": "2026-04-15"
+    },
+    "fixture": "gcp_token.json",
+    "required_paths": [
+        "access_token",
+        "token_type",
+        "expires_in"
+    ]
+}

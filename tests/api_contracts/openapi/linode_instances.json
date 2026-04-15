@@ -1,0 +1,21 @@
+{
+    "_meta": {
+        "provider": "linode",
+        "endpoint": "GET /v4/linode/instances",
+        "spec_url": "https://techdocs.akamai.com/linode-api/reference/get-linode-instances",
+        "spec_version": "v4",
+        "last_verified": "2026-04-15"
+    },
+    "fixture": "linode_instances.json",
+    "required_paths": [
+        "data",
+        "page",
+        "pages",
+        "data[0].id",
+        "data[0].label",
+        "data[0].ipv4",
+        "data[0].tags",
+        "data[0].status",
+        "data[0].region"
+    ]
+}

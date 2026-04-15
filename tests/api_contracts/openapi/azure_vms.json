@@ -1,0 +1,19 @@
+{
+    "_meta": {
+        "provider": "azure",
+        "endpoint": "GET /subscriptions/{}/providers/Microsoft.Compute/virtualMachines",
+        "spec_url": "https://learn.microsoft.com/en-us/rest/api/compute/virtual-machines/list",
+        "spec_version": "2024-07-01",
+        "last_verified": "2026-04-15"
+    },
+    "fixture": "azure_vms.json",
+    "required_paths": [
+        "value",
+        "value[0].name",
+        "value[0].location",
+        "value[0].properties",
+        "value[0].properties.vmId",
+        "value[0].properties.hardwareProfile.vmSize",
+        "value[0].properties.networkProfile.networkInterfaces"
+    ]
+}

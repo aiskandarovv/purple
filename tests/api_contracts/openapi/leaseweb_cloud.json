@@ -1,0 +1,17 @@
+{
+    "_meta": {
+        "provider": "leaseweb",
+        "endpoint": "GET /publicCloud/v1/instances",
+        "spec_url": "https://developer.leaseweb.com/api-docs/publicCloud_v1/",
+        "spec_version": "v1",
+        "last_verified": "2026-04-15"
+    },
+    "fixture": "leaseweb_cloud.json",
+    "required_paths": [
+        "instances",
+        "_metadata",
+        "_metadata.totalCount",
+        "instances[0].id",
+        "instances[0].ips"
+    ]
+}

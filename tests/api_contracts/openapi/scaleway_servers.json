@@ -1,0 +1,21 @@
+{
+    "_meta": {
+        "provider": "scaleway",
+        "endpoint": "GET /instance/v1/zones/{zone}/servers",
+        "spec_url": "https://www.scaleway.com/en/developers/api/instance/",
+        "spec_version": "instance/v1",
+        "last_verified": "2026-04-15"
+    },
+    "fixture": "scaleway_servers.json",
+    "required_paths": [
+        "servers",
+        "servers[0].id",
+        "servers[0].name",
+        "servers[0].state",
+        "servers[0].commercial_type",
+        "servers[0].tags",
+        "servers[0].public_ips",
+        "servers[0].public_ips[0].address",
+        "servers[0].public_ips[0].family"
+    ]
+}

@@ -1,3 +1,11 @@
+## 2.40.0
+
+- Provider API verification pipeline ([#28](https://github.com/erickochen/purple/issues/28))
+- OpenAPI schema fragments for all 16 providers validate that golden fixtures match the upstream spec. `tests/schema_validation.rs` catches field drift before it breaks syncs
+- Daily changelog monitoring via `scripts/check-api-changelogs.sh` watches 12 provider changelog pages for deprecation keywords. Runs as a GitHub Actions workflow at 06:00 UTC
+- CVE fix: rustls-webpki updated to 0.103.12
+- Fix flaky `bulk_tag_undo` test caused by shared temp file path
+
 ## 2.39.0
 
 - Contract snapshot tests for API drift detection

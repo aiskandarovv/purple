@@ -1,0 +1,22 @@
+{
+    "_meta": {
+        "provider": "vultr",
+        "endpoint": "GET /v2/instances",
+        "spec_url": "https://www.vultr.com/api/#tag/instances/operation/list-instances",
+        "spec_version": "v2",
+        "last_verified": "2026-04-15"
+    },
+    "fixture": "vultr_instances.json",
+    "required_paths": [
+        "instances",
+        "meta",
+        "meta.links.next",
+        "instances[0].id",
+        "instances[0].label",
+        "instances[0].main_ip",
+        "instances[0].region",
+        "instances[0].plan",
+        "instances[0].os",
+        "instances[0].tags"
+    ]
+}
