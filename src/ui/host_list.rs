@@ -2,9 +2,10 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, List, ListItem, Paragraph, Tabs};
+use ratatui::widgets::{List, ListItem, Paragraph, Tabs};
 use unicode_width::UnicodeWidthStr;
 
+use super::design;
 use super::theme;
 use crate::app::{self, App, GroupBy, HostListItem, PingStatus, ViewMode};
 
@@ -311,10 +312,10 @@ pub fn render(frame: &mut Frame, app: &mut App, spinner_tick: u64, detail_progre
         if detail.width >= DETAIL_RENDER_MIN {
             super::detail_panel::render(frame, app, detail, spinner_tick);
         } else {
-            // During animation: render empty bordered area
-            let block = ratatui::widgets::Block::bordered()
-                .border_type(ratatui::widgets::BorderType::Rounded)
-                .border_style(theme::border());
+            // During animation: render empty bordered area (no title) alongside
+            // the main list. Uses `main_block_line(Line::default())` so the
+            // border style/type stay consistent with the main host-list block.
+            let block = design::main_block_line(Line::default());
             frame.render_widget(block, detail);
         }
     }
@@ -358,10 +359,7 @@ fn render_group_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
             .collect(),
     };
 
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .title(Span::styled(" purple ", theme::brand()))
-        .border_style(theme::border());
+    let block = design::main_block("purple");
 
     let tabs = Tabs::new(titles)
         .select(app.group_tab_index)
@@ -451,11 +449,10 @@ fn render_display_list(
     let url_label = Line::from(Span::styled(" getpurple.sh ", theme::muted()));
 
     if app.hosts.is_empty() {
-        let mut block = Block::bordered()
-            .border_type(BorderType::Rounded)
-            .title(title)
-            .title_bottom(url_label.clone().right_aligned())
-            .border_style(theme::border());
+        // Compound multi-span title: use `main_block_line` so the helper owns
+        // the border style/type and we only supply the pre-built `Line`.
+        let mut block =
+            design::main_block_line(title).title_bottom(url_label.clone().right_aligned());
         if let Some(update) = update_title {
             block = block.title_top(update.right_aligned());
         }
@@ -469,12 +466,9 @@ fn render_display_list(
         return;
     }
 
-    // Build block and render border separately for column header
-    let mut block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .title(title)
-        .title_bottom(url_label.right_aligned())
-        .border_style(theme::border());
+    // Build block and render border separately for column header.
+    // Compound multi-span title: use `main_block_line`.
+    let mut block = design::main_block_line(title).title_bottom(url_label.right_aligned());
     if let Some(update) = update_title {
         block = block.title_top(update.right_aligned());
     }
@@ -636,7 +630,7 @@ fn render_display_list(
 
     let list = List::new(items)
         .highlight_style(theme::selected_row())
-        .highlight_symbol("\u{258C}");
+        .highlight_symbol(design::HOST_HIGHLIGHT);
 
     frame.render_stateful_widget(list, list_area, &mut app.ui.list_state);
 }
@@ -672,11 +666,9 @@ fn render_search_list(
     let url_label = Line::from(Span::styled(" getpurple.sh ", theme::muted()));
 
     if app.search.filtered_indices.is_empty() && app.search.filtered_pattern_indices.is_empty() {
-        let mut block = Block::bordered()
-            .border_type(BorderType::Rounded)
-            .title(title)
-            .title_bottom(url_label.clone().right_aligned())
-            .border_style(theme::border_search());
+        // Compound multi-span title: use `search_block_line`.
+        let mut block =
+            design::search_block_line(title).title_bottom(url_label.clone().right_aligned());
         if let Some(update) = update_title {
             block = block.title_top(update.right_aligned());
         }
@@ -687,11 +679,8 @@ fn render_search_list(
         return;
     }
 
-    let mut block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .title(title)
-        .title_bottom(url_label.right_aligned())
-        .border_style(theme::border_search());
+    // Compound multi-span title: use `search_block_line`.
+    let mut block = design::search_block_line(title).title_bottom(url_label.right_aligned());
     if let Some(update) = update_title {
         block = block.title_top(update.right_aligned());
     }
@@ -767,7 +756,7 @@ fn render_search_list(
 
     let list = List::new(items)
         .highlight_style(theme::selected_row())
-        .highlight_symbol("\u{258C}");
+        .highlight_symbol(design::HOST_HIGHLIGHT);
 
     frame.render_stateful_widget(list, list_area, &mut app.ui.list_state);
 }
@@ -1246,19 +1235,12 @@ fn footer_spans(
     // applies to the whole selection. The hint replaces the less-urgent
     // `v` and `:` items to keep the footer one line wide on narrow terms.
     if selection_active {
-        return vec![
-            Span::styled(" t ", theme::footer_key()),
-            Span::styled(" bulk tag ", theme::muted()),
-            Span::raw("  "),
-            Span::styled(" r ", theme::footer_key()),
-            Span::styled(" run ", theme::muted()),
-            Span::raw("  "),
-            Span::styled(" Esc ", theme::footer_key()),
-            Span::styled(" clear ", theme::muted()),
-            Span::raw("  "),
-            Span::styled(" ? ", theme::footer_key()),
-            Span::styled(" help", theme::muted()),
-        ];
+        return design::Footer::new()
+            .action("t", " bulk tag ")
+            .action("r", " run ")
+            .action("Esc", " clear ")
+            .action("?", " help")
+            .into_spans();
     }
 
     let view_label = if detail_active {
@@ -1266,24 +1248,15 @@ fn footer_spans(
     } else {
         " detail "
     };
-    let mut spans = vec![
-        Span::styled(" Enter ", theme::footer_key()),
-        Span::styled(" connect ", theme::muted()),
-        Span::raw("  "),
-        Span::styled(" / ", theme::footer_key()),
-        Span::styled(" search ", theme::muted()),
-        Span::raw("  "),
-        Span::styled(" # ", theme::footer_key()),
-        Span::styled(" tag ", theme::muted()),
-        Span::raw("  "),
-        Span::styled(" v ", theme::footer_key()),
-        Span::styled(view_label, theme::muted()),
-        Span::raw("  "),
-        Span::styled(" : ", theme::footer_key()),
-        Span::styled(" cmds ", theme::muted()),
-    ];
+    let mut spans = design::Footer::new()
+        .primary("Enter", " connect ")
+        .action("/", " search ")
+        .action("#", " tag ")
+        .action("v", view_label)
+        .action(":", " cmds ")
+        .into_spans();
     if filter_down_only {
-        spans.push(Span::raw("  "));
+        spans.push(Span::raw(design::FOOTER_GAP));
         spans.push(Span::styled("DOWN ONLY", theme::warning()));
     }
     spans
@@ -1295,34 +1268,26 @@ fn pattern_footer_spans(detail_active: bool) -> Vec<Span<'static>> {
     } else {
         " detail "
     };
-    vec![
-        Span::styled(" / ", theme::footer_key()),
-        Span::styled(" search ", theme::muted()),
-        Span::raw("  "),
-        Span::styled(" # ", theme::footer_key()),
-        Span::styled(" tag ", theme::muted()),
-        Span::raw("  "),
-        Span::styled(" v ", theme::footer_key()),
-        Span::styled(view_label, theme::muted()),
-    ]
+    design::Footer::new()
+        .action("/", " search ")
+        .action("#", " tag ")
+        .action("v", view_label)
+        .into_spans()
 }
 
-fn search_footer_spans<'a>() -> Vec<Span<'a>> {
-    vec![
-        Span::styled(" Enter ", theme::footer_key()),
-        Span::styled(" connect ", theme::muted()),
-        Span::raw("  "),
-        Span::styled(" Ctrl+E ", theme::footer_key()),
-        Span::styled(" edit ", theme::muted()),
-        Span::raw("  "),
-        Span::styled(" Esc ", theme::footer_key()),
-        Span::styled(" cancel ", theme::muted()),
-        Span::raw("  "),
-        Span::styled(" tag: ", theme::footer_key()),
-        Span::styled("fuzzy ", theme::muted()),
-        Span::styled(" tag= ", theme::footer_key()),
-        Span::styled("exact", theme::muted()),
-    ]
+fn search_footer_spans() -> Vec<Span<'static>> {
+    let mut spans = design::Footer::new()
+        .primary("Enter", " connect ")
+        .action("Ctrl+E", " edit ")
+        .action("Esc", " cancel ")
+        .into_spans();
+    // Trailing mode hints share the footer row; rendered with the same gap.
+    spans.push(Span::raw(design::FOOTER_GAP));
+    spans.push(Span::styled(" tag: ", theme::footer_key()));
+    spans.push(Span::styled("fuzzy ", theme::muted()));
+    spans.push(Span::styled(" tag= ", theme::footer_key()));
+    spans.push(Span::styled("exact", theme::muted()));
+    spans
 }
 
 /// Build the spans for the tag input bar. Extracted for testability.
@@ -1355,16 +1320,14 @@ fn render_tag_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-fn tag_footer_spans<'a>() -> Vec<Span<'a>> {
-    vec![
-        Span::styled(" Enter ", theme::footer_key()),
-        Span::styled(" save ", theme::muted()),
-        Span::raw("  "),
-        Span::styled(" Esc ", theme::footer_key()),
-        Span::styled(" cancel ", theme::muted()),
-        Span::raw("  "),
-        Span::styled("comma-separated", theme::muted()),
-    ]
+fn tag_footer_spans() -> Vec<Span<'static>> {
+    let mut spans = design::Footer::new()
+        .primary("Enter", " save ")
+        .action("Esc", " cancel ")
+        .into_spans();
+    spans.push(Span::raw(design::FOOTER_GAP));
+    spans.push(Span::styled("comma-separated", theme::muted()));
+    spans
 }
 
 #[cfg(test)]

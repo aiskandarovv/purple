@@ -95,12 +95,13 @@ fn section_field(
     section_line(lines, spans, box_width);
 }
 
+use super::design;
 use super::theme;
 use crate::app::App;
 use crate::history::ConnectionHistory;
 use crate::ssh_config::model::ConfigElement;
 
-const LABEL_WIDTH: usize = 14;
+const LABEL_WIDTH: usize = design::SECTION_LABEL_W as usize;
 
 /// Testable detail panel data — what the detail panel will render.
 /// Extracted from `App` state without requiring a `Frame`.

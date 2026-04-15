@@ -1,9 +1,10 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, Paragraph};
+use ratatui::widgets::{Clear, List, ListItem, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
+use super::design;
 use super::theme;
 use crate::app::{App, Screen};
 
@@ -18,12 +19,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let searching = app.ui.snippet_search.is_some();
 
     let title = if host_count > 1 {
-        Line::from(Span::styled(
-            format!(" Snippets ({} hosts) ", host_count),
-            theme::brand(),
-        ))
+        format!("Snippets ({} hosts)", host_count)
     } else {
-        Line::from(Span::styled(" Snippets ", theme::brand()))
+        "Snippets".to_string()
     };
 
     let filtered = app.filtered_snippet_indices();
@@ -41,22 +39,14 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let header_row = if has_snippets { 1u16 } else { 0 };
     let height = (item_count as u16 + 6 + search_row + header_row)
         .min(frame.area().height.saturating_sub(4));
-    let area = {
-        let r = super::centered_rect(70, 80, frame.area());
-        super::centered_rect_fixed(r.width, height, frame.area())
-    };
+    let area = design::overlay_area(frame, 70, 80, height);
     frame.render_widget(Clear, area);
 
-    let border_style = if searching {
-        theme::border_search()
+    let block = if searching {
+        design::overlay_block(&title).border_style(theme::border_search())
     } else {
-        theme::accent()
+        design::overlay_block(&title)
     };
-
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .title(title)
-        .border_style(border_style);
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -181,70 +171,48 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
         let list = List::new(items)
             .highlight_style(theme::selected_row())
-            .highlight_symbol("  ");
+            .highlight_symbol(design::LIST_HIGHLIGHT);
 
         frame.render_stateful_widget(list, list_area, &mut app.ui.snippet_picker_state);
     }
 
     // Footer
     if searching {
-        super::render_footer_with_status(
-            frame,
-            footer_area,
-            vec![
-                Span::styled(" Enter ", theme::footer_key()),
-                Span::styled(" select ", theme::muted()),
-                Span::raw("  "),
-                Span::styled(" Esc ", theme::footer_key()),
-                Span::styled(" cancel", theme::muted()),
-            ],
-            app,
-        );
+        design::Footer::new()
+            .primary("Enter", " select ")
+            .action("Esc", " cancel")
+            .render_with_status(frame, footer_area, app);
     } else if app.pending_snippet_delete.is_some() {
         let name = app
             .pending_snippet_delete
             .and_then(|i| app.snippet_store.snippets.get(i))
             .map(|s| s.name.as_str())
             .unwrap_or("");
-        super::render_footer_with_status(
-            frame,
-            footer_area,
-            vec![
-                Span::styled(
-                    format!(" Remove '{}'? ", super::truncate(name, 20)),
-                    theme::bold(),
-                ),
-                Span::styled(" y ", theme::footer_key()),
-                Span::styled(" yes ", theme::muted()),
-                Span::raw("  "),
-                Span::styled(" Esc ", theme::footer_key()),
-                Span::styled(" no", theme::muted()),
-            ],
-            app,
+        let mut spans = vec![Span::styled(
+            format!(" Remove '{}'? ", super::truncate(name, 20)),
+            theme::bold(),
+        )];
+        spans.extend(
+            design::Footer::new()
+                .action("y", " yes ")
+                .action("Esc", " no")
+                .into_spans(),
         );
-    } else {
-        let mut spans: Vec<Span<'_>> = Vec::new();
-        if !app.snippet_store.snippets.is_empty() {
-            let [k, l] = super::footer_primary("Enter", " run ");
-            spans.extend([k, l, Span::raw("  ")]);
-            let [k, l] = super::footer_action("!", " terminal ");
-            spans.extend([k, l, Span::raw("  ")]);
-        }
-        let [k, l] = super::footer_action("a", " add ");
-        spans.extend([k, l]);
-        if !app.snippet_store.snippets.is_empty() {
-            spans.push(Span::raw("  "));
-            let [k, l] = super::footer_action("e", " edit ");
-            spans.extend([k, l, Span::raw("  ")]);
-            let [k, l] = super::footer_action("d", " del ");
-            spans.extend([k, l, Span::raw("  ")]);
-            let [k, l] = super::footer_action("/", " search ");
-            spans.extend([k, l]);
-        }
-        spans.push(Span::raw("  "));
-        let [k, l] = super::footer_action("Esc", " back");
-        spans.extend([k, l]);
         super::render_footer_with_status(frame, footer_area, spans, app);
+    } else {
+        let mut f = design::Footer::new();
+        if !app.snippet_store.snippets.is_empty() {
+            f = f.primary("Enter", " run ").action("!", " terminal ");
+        }
+        f = f.action("a", " add ");
+        if !app.snippet_store.snippets.is_empty() {
+            f = f
+                .action("e", " edit ")
+                .action("d", " del ")
+                .action("/", " search ");
+        }
+        f = f.action("Esc", " back");
+        f.render_with_status(frame, footer_area, app);
     }
 }
 

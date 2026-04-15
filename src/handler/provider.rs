@@ -33,18 +33,15 @@ pub(super) fn handle_provider_list(
                     app.provider_config.remove_section(name.as_str());
                     if let Err(e) = app.provider_config.save() {
                         app.provider_config.set_section(old_section);
-                        app.set_status(format!("Failed to save: {}", e), true);
+                        app.notify_error(format!("Failed to save: {}", e));
                     } else {
                         app.sync_history.remove(name.as_str());
                         crate::app::SyncRecord::save_all(&app.sync_history);
                         let display_name = crate::providers::provider_display_name(name.as_str());
-                        app.set_status(
-                            format!(
-                                "Removed {} configuration. Synced hosts remain in your SSH config.",
-                                display_name
-                            ),
-                            false,
-                        );
+                        app.notify(format!(
+                            "Removed {} configuration. Synced hosts remain in your SSH config.",
+                            display_name
+                        ));
                     }
                 }
             }
@@ -145,7 +142,7 @@ pub(super) fn handle_provider_list(
         }
         KeyCode::Char('s') => {
             if app.demo_mode {
-                app.set_status("Demo mode. Sync disabled.".to_string(), false);
+                app.notify("Demo mode. Sync disabled.".to_string());
                 return;
             }
             if let Some(index) = app.ui.provider_list_state.selected() {
@@ -157,15 +154,15 @@ pub(super) fn handle_provider_list(
                             app.syncing_providers.insert(name.clone(), cancel.clone());
                             let display_name =
                                 crate::providers::provider_display_name(name.as_str());
-                            app.set_info_status(format!("Syncing {}...", display_name));
+                            app.notify_info(format!("Syncing {}...", display_name));
                             super::sync::spawn_provider_sync(&section, events_tx.clone(), cancel);
                         }
                     } else {
                         let display_name = crate::providers::provider_display_name(name.as_str());
-                        app.set_status(
-                            format!("Configure {} first. Press Enter to set up.", display_name),
-                            true,
-                        );
+                        app.notify_error(format!(
+                            "Configure {} first. Press Enter to set up.",
+                            display_name
+                        ));
                     }
                 }
             }
@@ -178,10 +175,10 @@ pub(super) fn handle_provider_list(
                         app.pending_provider_delete = Some(name.clone());
                     } else {
                         let display_name = crate::providers::provider_display_name(name.as_str());
-                        app.set_status(
-                            format!("{} is not configured. Nothing to remove.", display_name),
-                            false,
-                        );
+                        app.notify(format!(
+                            "{} is not configured. Nothing to remove.",
+                            display_name
+                        ));
                     }
                 }
             }
@@ -207,7 +204,7 @@ pub(super) fn handle_provider_list(
                         .collect();
                     if provider_stale.is_empty() {
                         let display = crate::providers::provider_display_name(name);
-                        app.set_status(format!("No stale hosts for {}.", display), true);
+                        app.notify_error(format!("No stale hosts for {}.", display));
                     } else {
                         let aliases: Vec<String> =
                             provider_stale.into_iter().map(|(a, _)| a.clone()).collect();
@@ -236,7 +233,7 @@ fn warn_aws_token_format(app: &mut App, provider_name: &str) {
         return;
     }
     if !token.contains(':') {
-        app.set_status("Token format: AccessKeyId:SecretAccessKey", true);
+        app.notify_error("Token format: AccessKeyId:SecretAccessKey");
     }
 }
 
@@ -443,10 +440,7 @@ pub(super) fn handle_provider_form(
 
 fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
     if app.demo_mode {
-        app.set_status(
-            "Demo mode. Provider config changes disabled.".to_string(),
-            false,
-        );
+        app.notify("Demo mode. Provider config changes disabled.".to_string());
         app.screen = Screen::Providers;
         return;
     }
@@ -457,9 +451,8 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
 
     // Check for external provider config changes since form was opened
     if app.provider_config_changed_since_form_open() {
-        app.set_status(
+        app.notify_error(
             "Provider config changed externally. Press Esc and re-open to pick up changes.",
-            true,
         );
         return;
     }
@@ -477,7 +470,7 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
     ];
     for (value, name) in &pf_fields {
         if value.chars().any(|c| c.is_control()) {
-            app.set_status(format!("{} contains control characters.", name), true);
+            app.notify_error(format!("{} contains control characters.", name));
             return;
         }
     }
@@ -486,13 +479,12 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
     if provider_name == "proxmox" {
         let url = app.provider_form.url.trim();
         if url.is_empty() {
-            app.set_status("URL is required for Proxmox VE.", true);
+            app.notify_error("URL is required for Proxmox VE.");
             return;
         }
         if !url.to_ascii_lowercase().starts_with("https://") {
-            app.set_status(
+            app.notify_error(
                 "URL must start with https://. Toggle Verify TLS off for self-signed certificates.",
-                true,
             );
             return;
         }
@@ -516,46 +508,41 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
                 display_name
             )
         };
-        app.set_status(hint, true);
+        app.notify_error(hint);
         return;
     }
 
     // GCP requires a project ID
     if provider_name == "gcp" && app.provider_form.project.trim().is_empty() {
-        app.set_status("Project ID can't be empty. Set your GCP project ID.", true);
+        app.notify_error("Project ID can't be empty. Set your GCP project ID.");
         return;
     }
 
     // Oracle requires a compartment OCID
     if provider_name == "oracle" && app.provider_form.compartment.trim().is_empty() {
-        app.set_status(
-            "Compartment can't be empty. Set your OCI compartment OCID.",
-            true,
-        );
+        app.notify_error("Compartment can't be empty. Set your OCI compartment OCID.");
         return;
     }
 
     // AWS/Scaleway require at least one region/zone
     if provider_name == "aws" && app.provider_form.regions.trim().is_empty() {
-        app.set_status("Select at least one AWS region.", true);
+        app.notify_error("Select at least one AWS region.");
         return;
     }
     if provider_name == "scaleway" && app.provider_form.regions.trim().is_empty() {
-        app.set_status("Select at least one Scaleway zone.", true);
+        app.notify_error("Select at least one Scaleway zone.");
         return;
     }
     if provider_name == "azure" {
         let subs = app.provider_form.regions.trim();
         if subs.is_empty() {
-            app.set_status("Enter at least one Azure subscription ID.", true);
+            app.notify_error("Enter at least one Azure subscription ID.");
             return;
         }
         for sub in subs.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
             if !crate::providers::azure::is_valid_subscription_id(sub) {
-                app.set_status(
-                    format!("Invalid subscription ID '{}'. Expected UUID format (e.g. 12345678-1234-1234-1234-123456789012).", sub),
-                    true,
-                );
+                app.notify_error(
+                    format!("Invalid subscription ID '{}'. Expected UUID format (e.g. 12345678-1234-1234-1234-123456789012).", sub));
                 return;
             }
         }
@@ -564,10 +551,7 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
     let token = app.provider_form.token.trim().to_string();
     let alias_prefix = app.provider_form.alias_prefix.trim().to_string();
     if crate::ssh_config::model::is_host_pattern(&alias_prefix) {
-        app.set_status(
-            "Alias prefix can't contain spaces or pattern characters (*, ?, [, !).",
-            true,
-        );
+        app.notify_error("Alias prefix can't contain spaces or pattern characters (*, ?, [, !).");
         return;
     }
 
@@ -580,16 +564,13 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
         }
     };
     if user.contains(char::is_whitespace) {
-        app.set_status("User can't contain whitespace.", true);
+        app.notify_error("User can't contain whitespace.");
         return;
     }
 
     let vault_role_trimmed = app.provider_form.vault_role.trim();
     if !vault_role_trimmed.is_empty() && !crate::vault_ssh::is_valid_role(vault_role_trimmed) {
-        app.set_status(
-            "Vault SSH role must be in the form <mount>/sign/<role>.",
-            true,
-        );
+        app.notify_error("Vault SSH role must be in the form <mount>/sign/<role>.");
         return;
     }
 
@@ -618,7 +599,7 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
             Some(old) => app.provider_config.set_section(old),
             None => app.provider_config.remove_section(&provider_name),
         }
-        app.set_status(format!("Failed to save: {}", e), true);
+        app.notify_error(format!("Failed to save: {}", e));
         return;
     }
 
@@ -630,14 +611,11 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
             let cancel = Arc::new(AtomicBool::new(false));
             app.syncing_providers
                 .insert(provider_name.clone(), cancel.clone());
-            app.set_status(
-                format!("Saved {} configuration. Syncing...", display_name),
-                false,
-            );
+            app.notify(format!("Saved {} configuration. Syncing...", display_name));
             super::sync::spawn_provider_sync(&sync_section, events_tx.clone(), cancel);
         }
     } else {
-        app.set_status(format!("Saved {} configuration.", display_name), false);
+        app.notify(format!("Saved {} configuration.", display_name));
     }
     app.clear_form_mtime();
     app.provider_form_baseline = None;

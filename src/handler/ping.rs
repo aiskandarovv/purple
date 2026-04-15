@@ -26,10 +26,7 @@ pub(super) fn ping_selected_host(
                     bastion.port,
                 )
             } else {
-                app.set_status(
-                    format!("Bastion {} not found in config.", bastion_alias),
-                    true,
-                );
+                app.notify_error(format!("Bastion {} not found in config.", bastion_alias));
                 return;
             }
         } else {
@@ -39,13 +36,10 @@ pub(super) fn ping_selected_host(
             .status
             .insert(ping_alias.clone(), crate::app::PingStatus::Checking);
         if show_hint && !app.ping.has_pinged {
-            app.set_status(
-                format!("Pinging {}... (Shift+P pings all)", ping_alias),
-                false,
-            );
+            app.notify(format!("Pinging {}... (Shift+P pings all)", ping_alias));
             app.ping.has_pinged = true;
         } else {
-            app.set_status(format!("Pinging {}...", ping_alias), false);
+            app.notify(format!("Pinging {}...", ping_alias));
         }
         ping::ping_host(
             ping_alias,

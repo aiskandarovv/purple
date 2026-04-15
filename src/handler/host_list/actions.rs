@@ -14,13 +14,10 @@ use crate::event::AppEvent;
 pub(super) fn clone_selected(app: &mut App) {
     if let Some(pattern) = app.selected_pattern() {
         if pattern.source_file.is_some() {
-            app.set_status(
-                format!(
-                    "{} is in an included file. Clone it there.",
-                    pattern.pattern
-                ),
-                true,
-            );
+            app.notify_error(format!(
+                "{} is in an included file. Clone it there.",
+                pattern.pattern
+            ));
             return;
         }
         let mut form = HostForm::from_pattern_entry(pattern);
@@ -37,10 +34,7 @@ pub(super) fn clone_selected(app: &mut App) {
         if let Some(ref source) = host.source_file {
             let alias = host.alias.clone();
             let path = source.display();
-            app.set_status(
-                format!("{} lives in {}. Clone it there.", alias, path),
-                true,
-            );
+            app.notify_error(format!("{} lives in {}. Clone it there.", alias, path));
             return;
         }
         let stale_hint = if host.stale.is_some() {
@@ -57,9 +51,9 @@ pub(super) fn clone_selected(app: &mut App) {
         form.alias = copy_alias;
         form.cursor_pos = form.alias.chars().count();
         if let Some(hint) = stale_hint {
-            app.set_status(format!("Stale host.{}", hint), true);
+            app.notify_error(format!("Stale host.{}", hint));
         } else if vault_cleared {
-            app.set_status("Cloned. Vault SSH role cleared on copy.".to_string(), false);
+            app.notify("Cloned. Vault SSH role cleared on copy.".to_string());
         }
         app.form = form;
         app.screen = Screen::AddHost;
@@ -73,23 +67,22 @@ pub(super) fn clone_selected(app: &mut App) {
 /// in-progress signing thread if one is already running.
 pub(super) fn initiate_bulk_vault_sign(app: &mut App) {
     if !app.has_any_vault_role() {
-        app.set_status(
+        app.notify(
             "No Vault SSH role configured. Set one in the host form \
              (Vault SSH role field) or on a provider for shared defaults."
                 .to_string(),
-            false,
         );
         return;
     }
     if app.demo_mode {
-        app.set_status("Demo mode. Vault SSH signing disabled.".to_string(), false);
+        app.notify("Demo mode. Vault SSH signing disabled.".to_string());
         return;
     }
     // Cancel any in-progress vault signing thread
     if let Some(ref cancel) = app.vault.signing_cancel {
         cancel.store(true, std::sync::atomic::Ordering::Relaxed);
         app.vault.signing_cancel = None;
-        app.set_status("Vault SSH signing cancelled.".to_string(), false);
+        app.notify("Vault SSH signing cancelled.".to_string());
         return;
     }
     let provider_config = crate::providers::config::ProviderConfig::load();
@@ -126,15 +119,12 @@ pub(super) fn initiate_bulk_vault_sign(app: &mut App) {
         }
     }
     if let Some(msg) = pubkey_error {
-        app.set_status(format!("Vault SSH: {}", msg), true);
+        app.notify_error(format!("Vault SSH: {}", msg));
         return;
     }
 
     if signable.is_empty() {
-        app.set_status(
-            "No hosts with a Vault SSH role configured.".to_string(),
-            false,
-        );
+        app.notify("No hosts with a Vault SSH role configured.".to_string());
         return;
     }
 
@@ -148,11 +138,10 @@ pub(super) fn initiate_bulk_vault_sign(app: &mut App) {
         .map(|(_, _, _, _, a)| a.as_deref())
         .collect();
     if crate::handler::vault_addr_missing(&host_addrs, env_vault_addr.as_deref()) {
-        app.set_status(
+        app.notify_error(
             "No Vault address set. Edit the host (e) or provider \
              and fill in the Vault SSH Address field."
                 .to_string(),
-            true,
         );
         return;
     }
@@ -178,10 +167,7 @@ pub(super) fn initiate_bulk_vault_sign(app: &mut App) {
     }
 
     if needs_signing.is_empty() {
-        app.set_status(
-            "All Vault SSH certificates are still valid.".to_string(),
-            false,
-        );
+        app.notify("All Vault SSH certificates are still valid.".to_string());
         return;
     }
 
@@ -197,7 +183,7 @@ pub(super) fn open_file_browser(app: &mut App, events_tx: &mpsc::Sender<AppEvent
         return;
     }
     if app.demo_mode {
-        app.set_status("Demo mode. File browser disabled.".to_string(), false);
+        app.notify("Demo mode. File browser disabled.".to_string());
         return;
     }
     let Some(host) = app.selected_host() else {
@@ -211,7 +197,7 @@ pub(super) fn open_file_browser(app: &mut App, events_tx: &mpsc::Sender<AppEvent
     let alias = host.alias.clone();
     let askpass = host.askpass.clone();
     if let Some(hint) = stale_hint {
-        app.set_status(format!("Stale host.{}", hint), true);
+        app.notify_error(format!("Stale host.{}", hint));
     }
     let has_tunnel = app.active_tunnels.contains_key(&alias);
     let (local_path, remote_path) =
@@ -319,7 +305,7 @@ pub(super) fn open_container_overlay(app: &mut App, events_tx: &mpsc::Sender<App
     let alias = host.alias.clone();
     let askpass = host.askpass.clone();
     if let Some(hint) = stale_hint {
-        app.set_status(format!("Stale host.{}", hint), true);
+        app.notify_error(format!("Stale host.{}", hint));
     }
     let (cached_runtime, cached_containers) = if let Some(entry) = app.container_cache.get(&alias) {
         (Some(entry.runtime), entry.containers.clone())

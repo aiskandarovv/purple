@@ -1,8 +1,9 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Clear, List, ListItem, ListState, Paragraph};
 
+use super::design;
 use super::theme;
 use crate::app::App;
 
@@ -26,11 +27,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     frame.render_widget(Clear, area);
 
-    let title = Span::styled(" Commands ", theme::brand());
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .title(title)
-        .border_style(theme::accent());
+    let block = design::overlay_block("Commands");
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -94,17 +91,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 
     // Footer
-    let mut spans: Vec<Span<'_>> = Vec::new();
-    spans.push(Span::raw(" "));
-    let [k, l] = super::footer_action("Enter", " run ");
-    spans.extend([k, l]);
-    spans.push(Span::raw("  "));
-    let [k, l] = super::footer_action("\u{2191}\u{2193}", " select ");
-    spans.extend([k, l]);
-    spans.push(Span::raw("  "));
-    let [k, l] = super::footer_action("Esc", " close");
-    spans.extend([k, l]);
-    super::render_footer_with_status(frame, rows[4], spans, app);
+    design::Footer::new()
+        .action("Enter", " run ")
+        .action("\u{2191}\u{2193}", " select ")
+        .action("Esc", " close")
+        .render_with_status(frame, rows[4], app);
 }
 
 #[cfg(test)]

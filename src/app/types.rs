@@ -206,8 +206,8 @@ pub struct StatusMessage {
     pub text: String,
     pub class: MessageClass,
     pub tick_count: u32,
-    /// When true the message never auto-expires and `set_background_status`
-    /// will not overwrite it. Cleared by `set_status` or `set_sticky_status`.
+    /// When true the message never auto-expires and `notify_background`
+    /// will not overwrite it. Cleared by `notify` or `notify_progress`.
     pub sticky: bool,
 }
 
@@ -220,9 +220,9 @@ impl StatusMessage {
     /// Timeout in ticks for this message class.
     pub fn timeout(&self) -> u32 {
         match self.class {
-            MessageClass::Confirmation => 16,
-            MessageClass::Info => 16,
-            MessageClass::Alert => 20,
+            MessageClass::Confirmation => crate::ui::design::TIMEOUT_CONFIRM,
+            MessageClass::Info => crate::ui::design::TIMEOUT_INFO,
+            MessageClass::Alert => crate::ui::design::TIMEOUT_ALERT,
             MessageClass::Progress => u32::MAX,
         }
     }

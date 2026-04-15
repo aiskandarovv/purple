@@ -12,16 +12,13 @@ pub(super) fn handle_password_picker(app: &mut App, key: KeyEvent) {
                 match crate::preferences::save_askpass_default(value) {
                     Ok(()) => {
                         if is_none {
-                            app.set_status("Global default cleared.", false);
+                            app.notify("Global default cleared.");
                         } else {
-                            app.set_status(
-                                format!("Global default set to {}.", source.label),
-                                false,
-                            );
+                            app.notify(format!("Global default set to {}.", source.label));
                         }
                     }
                     Err(e) => {
-                        app.set_status(format!("Failed to save default: {}", e), true);
+                        app.notify_error(format!("Failed to save default: {}", e));
                     }
                 }
             }
@@ -50,26 +47,25 @@ pub(super) fn handle_password_picker(app: &mut App, key: KeyEvent) {
                     if is_none {
                         app.form.askpass = String::new();
                         app.form.sync_cursor_to_end();
-                        app.set_status("Password source cleared.", false);
+                        app.notify("Password source cleared.");
                     } else if is_custom_cmd {
                         app.form.askpass = String::new();
                         app.form.focused_field = FormField::AskPass;
                         app.form.sync_cursor_to_end();
-                        app.set_status(
+                        app.notify(
                             "Type your command. Use %a (alias) and %h (hostname) as placeholders.",
-                            false,
                         );
                         needs_more_input = true;
                     } else if is_prefix {
                         app.form.askpass = source.value.to_string();
                         app.form.focused_field = FormField::AskPass;
                         app.form.sync_cursor_to_end();
-                        app.set_status(format!("Complete the {} path.", source.label), false);
+                        app.notify(format!("Complete the {} path.", source.label));
                         needs_more_input = true;
                     } else {
                         app.form.askpass = source.value.to_string();
                         app.form.sync_cursor_to_end();
-                        app.set_status(format!("Password source set to {}.", source.label), false);
+                        app.notify(format!("Password source set to {}.", source.label));
                     }
                 }
             }
@@ -104,7 +100,7 @@ pub(super) fn handle_key_picker_shared(app: &mut App, key: KeyEvent, for_provide
                         app.form.identity_file = key_info.display_path.clone();
                         app.form.sync_cursor_to_end();
                     }
-                    app.set_status(format!("Locked and loaded with {}.", key_info.name), false);
+                    app.notify(format!("Locked and loaded with {}.", key_info.name));
                 }
             }
             app.ui.show_key_picker = false;
@@ -136,7 +132,7 @@ pub(super) fn handle_proxyjump_picker(app: &mut App, key: KeyEvent) {
                 {
                     app.form.proxy_jump = alias.clone();
                     app.form.sync_cursor_to_end();
-                    app.set_status(format!("Jumping through {}.", alias), false);
+                    app.notify(format!("Jumping through {}.", alias));
                     app.ui.show_proxyjump_picker = false;
                     super::try_auto_submit_after_picker(app);
                 }
@@ -164,7 +160,7 @@ pub(super) fn handle_vault_role_picker(app: &mut App, key: KeyEvent) {
                 if let Some(role) = candidates.get(index) {
                     app.form.vault_ssh = role.clone();
                     app.form.sync_cursor_to_end();
-                    app.set_status(format!("Vault SSH role set to {}.", role), false);
+                    app.notify(format!("Vault SSH role set to {}.", role));
                 }
             }
             app.ui.show_vault_role_picker = false;

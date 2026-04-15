@@ -1,10 +1,11 @@
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, Paragraph};
+use ratatui::widgets::{Clear, List, ListItem, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
+use super::design;
 use super::theme;
 use crate::app::{App, ProviderFormField};
 use crate::history::ConnectionHistory;
@@ -16,19 +17,10 @@ pub fn render_provider_list(frame: &mut Frame, app: &mut App) {
     // Overlay: percentage-based width, height fits content
     let item_count = sorted_names.len();
     let height = (item_count as u16 + 5).min(frame.area().height.saturating_sub(4));
-    let pct_width: u16 = 70;
-    let area = {
-        let r = super::centered_rect(pct_width, 80, frame.area());
-        super::centered_rect_fixed(r.width, height, frame.area())
-    };
+    let area = design::overlay_area(frame, 70, 80, height);
     frame.render_widget(Clear, area);
 
-    let title = Span::styled(" Providers ", theme::brand());
-
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .title(title)
-        .border_style(theme::accent());
+    let block = design::overlay_block("Providers");
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -120,36 +112,29 @@ pub fn render_provider_list(frame: &mut Frame, app: &mut App) {
         })
         .collect();
 
-    let chunks = Layout::vertical([
-        Constraint::Min(0),
-        Constraint::Length(1),
-        Constraint::Length(1),
-    ])
-    .split(inner);
+    let (content, footer_area) = design::content_and_footer(inner);
 
     let list = List::new(items)
         .highlight_style(theme::selected_row())
-        .highlight_symbol("  ");
+        .highlight_symbol(design::LIST_HIGHLIGHT);
 
-    frame.render_stateful_widget(list, chunks[0], &mut app.ui.provider_list_state);
+    frame.render_stateful_widget(list, content, &mut app.ui.provider_list_state);
 
     // Footer with status
     if app.pending_provider_delete.is_some() {
         let name = app.pending_provider_delete.as_deref().unwrap_or("");
         let display = crate::providers::provider_display_name(name);
-        super::render_footer_with_status(
-            frame,
-            chunks[2],
-            vec![
-                Span::styled(format!(" Remove {}? ", display), theme::bold()),
-                Span::styled(" y ", theme::footer_key()),
-                Span::styled(" yes ", theme::muted()),
-                Span::raw("  "),
-                Span::styled(" Esc ", theme::footer_key()),
-                Span::styled(" no", theme::muted()),
-            ],
-            app,
+        let mut spans = vec![Span::styled(
+            format!(" Remove {}? ", display),
+            theme::bold(),
+        )];
+        spans.extend(
+            design::Footer::new()
+                .action("y", " yes ")
+                .action("Esc", " no")
+                .into_spans(),
         );
+        super::render_footer_with_status(frame, footer_area, spans, app);
     } else {
         // Count stale hosts for selected provider
         let selected_stale_count: usize = app
@@ -165,38 +150,22 @@ pub fn render_provider_list(frame: &mut Frame, app: &mut App) {
             })
             .unwrap_or(0);
 
-        let mut footer = vec![
-            Span::styled(" Enter ", theme::footer_key()),
-            Span::styled(" edit ", theme::muted()),
-            Span::raw("  "),
-            Span::styled(" s ", theme::footer_key()),
-            Span::styled(" sync ", theme::muted()),
-            Span::raw("  "),
-            Span::styled(" d ", theme::footer_key()),
-            Span::styled(" remove ", theme::muted()),
-        ];
+        let mut f = design::Footer::new()
+            .primary("Enter", " edit ")
+            .action("s", " sync ")
+            .action("d", " remove ");
         if selected_stale_count > 0 {
-            footer.push(Span::raw("  "));
-            footer.push(Span::styled(" X ", theme::footer_key()));
-            footer.push(Span::styled(
-                format!(" purge {} stale ", selected_stale_count),
-                theme::muted(),
-            ));
+            f = f.action("X", &format!(" purge {} stale ", selected_stale_count));
         }
-        footer.push(Span::raw("  "));
-        footer.push(Span::styled(" Esc ", theme::footer_key()));
-        footer.push(Span::styled(" back", theme::muted()));
-
-        super::render_footer_with_status(frame, chunks[2], footer, app);
+        f = f.action("Esc", " back");
+        f.render_with_status(frame, footer_area, app);
     }
 }
 
 /// Render the provider configuration form.
 pub fn render_provider_form(frame: &mut Frame, app: &mut App, provider_name: &str) {
-    let area = frame.area();
-
     let display_name = crate::providers::provider_display_name(provider_name);
-    let title = format!(" Providers > {} ", display_name);
+    let title = format!("Providers > {}", display_name);
 
     let expanded = app.provider_form.expanded;
     // Progressive disclosure: when `vault_role` is empty, `VaultAddr` is
@@ -224,16 +193,12 @@ pub fn render_provider_form(frame: &mut Frame, app: &mut App, provider_name: &st
     let block_height = 2 + visible_fields.len() as u16 * 2;
     let total_height = block_height + 1; // + footer
 
-    let base = super::centered_rect(70, 80, area);
-    let form_area = super::centered_rect_fixed(base.width, total_height, area);
+    let form_area = design::overlay_area(frame, 70, 80, total_height);
     frame.render_widget(Clear, form_area);
 
     let block_area = Rect::new(form_area.x, form_area.y, form_area.width, block_height);
 
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .title(Span::styled(title, theme::brand()))
-        .border_style(theme::accent());
+    let block = design::overlay_block(&title);
 
     let inner = block.inner(block_area);
     frame.render_widget(block, block_area);
@@ -286,40 +251,29 @@ pub fn render_provider_form(frame: &mut Frame, app: &mut App, provider_name: &st
     }
 
     // Footer below the block
-    let footer_area = Rect::new(form_area.x, form_area.y + block_height, form_area.width, 1);
-    let footer_spans = if app.pending_discard_confirm {
-        vec![
-            Span::styled(" Discard changes? ", theme::error()),
-            Span::styled(" y ", theme::footer_key()),
-            Span::styled(" yes ", theme::muted()),
-            Span::raw("  "),
-            Span::styled(" Esc ", theme::footer_key()),
-            Span::styled(" no", theme::muted()),
-        ]
+    let footer_area = design::form_footer(form_area, block_height);
+    if app.pending_discard_confirm {
+        let mut spans = vec![Span::styled(" Discard changes? ", theme::error())];
+        spans.extend(
+            design::Footer::new()
+                .action("y", " yes ")
+                .action("Esc", " no")
+                .into_spans(),
+        );
+        super::render_footer_with_status(frame, footer_area, spans, app);
     } else if !expanded && visible_fields.len() < all_fields.len() {
-        vec![
-            Span::styled(" Enter ", theme::footer_key()),
-            Span::styled(" save ", theme::muted()),
-            Span::raw("  "),
-            Span::styled(" \u{2193} ", theme::footer_key()),
-            Span::styled(" more options ", theme::muted()),
-            Span::raw("  "),
-            Span::styled(" Esc ", theme::footer_key()),
-            Span::styled(" cancel", theme::muted()),
-        ]
+        design::Footer::new()
+            .primary("Enter", " save ")
+            .action("\u{2193}", " more options ")
+            .action("Esc", " cancel")
+            .render_with_status(frame, footer_area, app);
     } else {
-        vec![
-            Span::styled(" Enter ", theme::footer_key()),
-            Span::styled(" save ", theme::muted()),
-            Span::raw("  "),
-            Span::styled(" Tab ", theme::footer_key()),
-            Span::styled(" next ", theme::muted()),
-            Span::raw("  "),
-            Span::styled(" Esc ", theme::footer_key()),
-            Span::styled(" cancel", theme::muted()),
-        ]
-    };
-    super::render_footer_with_status(frame, footer_area, footer_spans, app);
+        design::Footer::new()
+            .primary("Enter", " save ")
+            .action("Tab", " next ")
+            .action("Esc", " cancel")
+            .render_with_status(frame, footer_area, app);
+    }
 
     // Key picker popup overlay
     if app.ui.show_key_picker {
@@ -558,12 +512,10 @@ fn render_region_picker_overlay(frame: &mut Frame, app: &mut App) {
         .filter(|s| !s.is_empty())
         .collect();
 
-    let area = frame.area();
     let visible_rows = 18u16;
     let block_height = visible_rows + 2; // top + bottom border
     let total_height = block_height + 1; // + footer
-    let base = super::centered_rect(60, 80, area);
-    let picker_area = super::centered_rect_fixed(base.width, total_height, area);
+    let picker_area = design::overlay_area(frame, 60, 80, total_height);
     frame.render_widget(Clear, picker_area);
 
     let count = selected.len();
@@ -574,17 +526,14 @@ fn render_region_picker_overlay(frame: &mut Frame, app: &mut App) {
     } else {
         "Regions"
     };
-    let title = format!(" Select {} ({} selected) ", zone_label, count);
+    let title = format!("Select {} ({} selected)", zone_label, count);
     let block_area = Rect::new(
         picker_area.x,
         picker_area.y,
         picker_area.width,
         block_height,
     );
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .title(Span::styled(title, theme::brand()))
-        .border_style(theme::accent());
+    let block = design::overlay_block(&title);
     let inner = block.inner(block_area);
     frame.render_widget(block, block_area);
 
@@ -642,27 +591,12 @@ fn render_region_picker_overlay(frame: &mut Frame, app: &mut App) {
         }
     }
 
-    let footer_area = Rect::new(
-        picker_area.x,
-        picker_area.y + block_height,
-        picker_area.width,
-        1,
-    );
-    super::render_footer_with_status(
-        frame,
-        footer_area,
-        vec![
-            Span::styled(" Space ", theme::footer_key()),
-            Span::styled(" toggle ", theme::muted()),
-            Span::raw("  "),
-            Span::styled(" Enter ", theme::footer_key()),
-            Span::styled(" done ", theme::muted()),
-            Span::raw("  "),
-            Span::styled(" Esc ", theme::footer_key()),
-            Span::styled(" back", theme::muted()),
-        ],
-        app,
-    );
+    let footer_area = design::form_footer(picker_area, block_height);
+    design::Footer::new()
+        .action("Space", " toggle ")
+        .primary("Enter", " done ")
+        .action("Esc", " back")
+        .render_with_status(frame, footer_area, app);
 }
 
 #[cfg(test)]

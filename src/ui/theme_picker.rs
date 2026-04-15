@@ -1,8 +1,8 @@
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Clear, List, ListItem};
+use ratatui::widgets::{Clear, List, ListItem};
 
+use super::design;
 use super::theme;
 use crate::app::App;
 use crate::ui::theme::ThemeDef;
@@ -15,7 +15,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let has_custom = !custom.is_empty();
     let total = builtins.len() + if has_custom { 1 + custom.len() } else { 0 };
     let height = (total as u16 + 4).min(frame.area().height.saturating_sub(4));
-    let area = super::centered_rect_fixed(50, height, frame.area());
+    let area = super::centered_rect_fixed(design::PICKER_MIN_W, height, frame.area());
     frame.render_widget(Clear, area);
 
     let mut items: Vec<ListItem> = Vec::new();
@@ -34,35 +34,23 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         }
     }
 
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .title(Span::styled(" Theme ", theme::brand()))
-        .border_style(theme::accent());
+    let block = design::overlay_block("Theme");
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let chunks = Layout::vertical([
-        Constraint::Min(0),
-        Constraint::Length(1),
-        Constraint::Length(1),
-    ])
-    .split(inner);
+    let (content, footer) = design::content_and_footer(inner);
 
     let list = List::new(items)
         .highlight_style(theme::selected_row())
-        .highlight_symbol("  ");
+        .highlight_symbol(design::LIST_HIGHLIGHT);
 
-    frame.render_stateful_widget(list, chunks[0], &mut app.ui.theme_picker_state);
+    frame.render_stateful_widget(list, content, &mut app.ui.theme_picker_state);
 
-    let spans = vec![
-        Span::styled(" Enter ", theme::footer_key()),
-        Span::styled(" select ", theme::muted()),
-        Span::raw("  "),
-        Span::styled(" Esc ", theme::footer_key()),
-        Span::styled(" cancel", theme::muted()),
-    ];
-    super::render_footer_with_status(frame, chunks[2], spans, app);
+    design::Footer::new()
+        .primary("Enter", " select ")
+        .action("Esc", " cancel")
+        .render_with_status(frame, footer, app);
 }
 
 fn theme_item<'a>(t: &ThemeDef, current_name: &str) -> ListItem<'a> {

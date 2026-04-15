@@ -1,8 +1,8 @@
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 
+use super::design;
 use super::theme;
 use crate::app::App;
 
@@ -27,11 +27,7 @@ pub fn render(frame: &mut Frame, app: &App, index: usize) {
 
     frame.render_widget(Clear, area);
 
-    let title = format!(" {} ", key.name);
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .title(Span::styled(title, theme::brand()))
-        .border_style(theme::accent());
+    let block = design::overlay_block(&key.name);
 
     let type_display = key.type_display();
     let mut lines = vec![
@@ -49,7 +45,7 @@ pub fn render(frame: &mut Frame, app: &App, index: usize) {
         detail_line("  Path                  ", &key.display_path),
         Line::from(""),
         Line::from(Span::styled("  Linked Hosts", theme::section_header())),
-        Line::from(Span::styled("  ────────────────────────", theme::muted())),
+        design::section_divider(),
     ];
 
     if key.linked_hosts.is_empty() {
@@ -83,18 +79,11 @@ pub fn render(frame: &mut Frame, app: &App, index: usize) {
     frame.render_widget(paragraph, area);
 
     // Footer with Esc close
-    let footer_chunks = Layout::vertical([
-        Constraint::Min(0),
-        Constraint::Length(1),
-        Constraint::Length(1),
-    ])
-    .split(inner);
+    let (_content, footer) = design::content_and_footer(inner);
 
-    let footer_spans = vec![
-        Span::styled(" Esc ", theme::footer_key()),
-        Span::styled(" close", theme::muted()),
-    ];
-    super::render_footer_with_status(frame, footer_chunks[2], footer_spans, app);
+    design::Footer::new()
+        .action("Esc", " close")
+        .render_with_status(frame, footer, app);
 }
 
 fn detail_line<'a>(label: &'a str, value: &'a str) -> Line<'a> {

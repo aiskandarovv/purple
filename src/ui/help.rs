@@ -1,8 +1,9 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 
+use super::design;
 use super::theme;
 use crate::app::{App, Screen};
 
@@ -67,11 +68,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     frame.render_widget(Clear, area);
 
-    let title = Span::styled(format!(" {} ", title_text), theme::brand());
-    let mut block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .title(title)
-        .border_style(theme::accent());
+    let mut block = design::overlay_block(title_text);
     if is_host_list {
         let version = Line::from(vec![
             Span::styled(format!(" v{}", env!("CARGO_PKG_VERSION")), theme::version()),
@@ -175,24 +172,23 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 
     let can_scroll = total_lines > max_body;
-    let mut spans: Vec<Span<'_>> = Vec::new();
+    let footer_row = if is_host_list { rows[5] } else { rows[3] };
     if can_scroll {
-        let [k, l] = super::footer_action("j/k", " scroll ");
-        spans.extend([k, l]);
+        let mut spans = design::Footer::new().action("j/k", " scroll ").into_spans();
         let position = app.ui.help_scroll.saturating_add(1);
         let max = max_scroll.saturating_add(1);
         spans.push(Span::styled(
             format!(" [{}/{}]", position, max),
             theme::muted(),
         ));
-        spans.push(Span::raw("  "));
+        spans.push(Span::raw(design::FOOTER_GAP));
+        spans.extend(design::Footer::new().action("Esc", " close").into_spans());
+        super::render_footer_with_status(frame, footer_row, spans, app);
     } else {
-        spans.push(Span::raw(" "));
+        design::Footer::new()
+            .action("Esc", " close")
+            .render_with_status(frame, footer_row, app);
     }
-    let [k, l] = super::footer_action("Esc", " close");
-    spans.extend([k, l]);
-    let footer_row = if is_host_list { rows[5] } else { rows[3] };
-    super::render_footer_with_status(frame, footer_row, spans, app);
 }
 
 fn context_title(screen: &Screen) -> &'static str {

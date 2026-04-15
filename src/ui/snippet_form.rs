@@ -2,20 +2,19 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
+use super::design;
 use super::theme;
 use crate::app::{App, Screen, SnippetFormField};
 
 pub fn render(frame: &mut Frame, app: &mut App) {
-    let area = frame.area();
-
     let title = match &app.screen {
         Screen::SnippetForm {
             editing: Some(_), ..
-        } => " Snippets > Edit ",
-        _ => " Snippets > Add ",
+        } => "Snippets > Edit",
+        _ => "Snippets > Add",
     };
 
     let fields = SnippetFormField::ALL;
@@ -24,22 +23,17 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let block_height = 2 + fields.len() as u16 * 2;
     let total_height = block_height + 1; // + footer
 
-    let base = super::centered_rect(70, 80, area);
-    let form_area = super::centered_rect_fixed(base.width, total_height, area);
+    let form_area = design::overlay_area(frame, 70, 80, total_height);
     frame.render_widget(Clear, form_area);
 
     let block_area = Rect::new(form_area.x, form_area.y, form_area.width, block_height);
 
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .title(Span::styled(title, theme::brand()))
-        .border_style(theme::accent());
-
+    let block = design::overlay_block(title);
     let inner = block.inner(block_area);
     frame.render_widget(block, block_area);
 
     for (i, &field) in fields.iter().enumerate() {
-        let divider_y = inner.y + (2 * i) as u16;
+        let divider_y = design::form_divider_y(inner, i);
         let content_y = divider_y + 1;
 
         let is_focused = app.snippet_form.focused_field == field;
@@ -68,29 +62,27 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 
     // Footer below the block
-    let footer_area = Rect::new(form_area.x, form_area.y + block_height, form_area.width, 1);
-    let footer_spans = if app.pending_discard_confirm {
-        vec![
-            Span::styled(" Discard changes? ", theme::error()),
-            Span::styled(" y ", theme::footer_key()),
-            Span::styled(" yes ", theme::muted()),
-            Span::raw("  "),
-            Span::styled(" Esc ", theme::footer_key()),
-            Span::styled(" no", theme::muted()),
-        ]
+    let footer_area = design::form_footer(form_area, block_height);
+    let footer = if app.pending_discard_confirm {
+        design::Footer::new()
+            .action("y", " yes ")
+            .action("Esc", " no")
     } else {
-        vec![
-            Span::styled(" Enter ", theme::footer_key()),
-            Span::styled(" save ", theme::muted()),
-            Span::raw("  "),
-            Span::styled(" Tab ", theme::footer_key()),
-            Span::styled(" next ", theme::muted()),
-            Span::raw("  "),
-            Span::styled(" Esc ", theme::footer_key()),
-            Span::styled(" cancel", theme::muted()),
-        ]
+        design::Footer::new()
+            .primary("Enter", " save ")
+            .action("Tab", " next ")
+            .action("Esc", " cancel")
     };
-    super::render_footer_with_status(frame, footer_area, footer_spans, app);
+    if app.pending_discard_confirm {
+        // Prepend the "Discard changes?" prompt as a raw span so the footer
+        // reads like "[Discard changes?] y yes  Esc no" (the prompt is not a
+        // keycap, it's a question addressed to the user).
+        let mut spans = vec![Span::styled(" Discard changes? ", theme::error())];
+        spans.extend(footer.into_spans());
+        super::render_footer_with_status(frame, footer_area, spans, app);
+    } else {
+        footer.render_with_status(frame, footer_area, app);
+    }
 }
 
 fn render_divider(

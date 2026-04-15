@@ -16,7 +16,7 @@ pub(super) fn handle_confirm_delete(app: &mut App, key: KeyEvent) {
                     if let Err(e) = app.config.write() {
                         // Restore the element on write failure
                         app.config.insert_host_at(element, position);
-                        app.set_status(format!("Failed to save: {}", e), true);
+                        app.notify_error(format!("Failed to save: {}", e));
                     } else {
                         // Stop active tunnel for the deleted host
                         if let Some(mut tunnel) = app.active_tunnels.remove(&alias) {
@@ -51,16 +51,16 @@ pub(super) fn handle_confirm_delete(app: &mut App, key: KeyEvent) {
                         app.update_last_modified();
                         app.reload_hosts();
                         if let Some(warning) = cert_cleanup_warning {
-                            app.set_status(warning, true);
+                            app.notify_error(warning);
                         } else {
-                            app.set_status(
-                                format!("Goodbye, {}. We barely knew ye. (u to undo)", alias),
-                                false,
-                            );
+                            app.notify(format!(
+                                "Goodbye, {}. We barely knew ye. (u to undo)",
+                                alias
+                            ));
                         }
                     }
                 } else {
-                    app.set_status(format!("Host '{}' not found.", alias), true);
+                    app.notify_error(format!("Host '{}' not found.", alias));
                 }
             }
             app.screen = Screen::HostList;
@@ -109,14 +109,11 @@ fn start_vault_bulk_sign(
     if total == 0 {
         return;
     }
-    app.set_sticky_status(
-        format!(
-            "{} Signing 0/{} (V to cancel)",
-            crate::animation::SPINNER_FRAMES[0],
-            total
-        ),
-        false,
-    );
+    app.notify_progress(format!(
+        "{} Signing 0/{} (V to cancel)",
+        crate::animation::SPINNER_FRAMES[0],
+        total
+    ));
 
     let cancel = Arc::new(AtomicBool::new(false));
     app.vault.signing_cancel = Some(cancel.clone());
@@ -260,10 +257,7 @@ fn start_vault_bulk_sign(
             // "Signing 0/N" with no way for the user to recover.
             app.vault.signing_cancel = None;
             app.vault.sign_thread = None;
-            app.set_status(
-                format!("Vault SSH: failed to spawn signing thread: {}", e),
-                true,
-            );
+            app.notify_error(format!("Vault SSH: failed to spawn signing thread: {}", e));
         }
     }
 }
@@ -306,25 +300,22 @@ pub(super) fn handle_confirm_host_key_reset(app: &mut App, key: KeyEvent) {
 
                 match output {
                     Ok(result) if result.status.success() => {
-                        app.set_status(
-                            format!("Removed host key for {}. Reconnecting...", hostname),
-                            false,
-                        );
+                        app.notify(format!(
+                            "Removed host key for {}. Reconnecting...",
+                            hostname
+                        ));
                         if app.demo_mode {
-                            app.set_status("Demo mode. Connection disabled.".to_string(), false);
+                            app.notify("Demo mode. Connection disabled.".to_string());
                         } else {
                             app.pending_connect = Some((alias, askpass));
                         }
                     }
                     Ok(result) => {
                         let stderr = String::from_utf8_lossy(&result.stderr);
-                        app.set_status(
-                            format!("Failed to remove host key: {}", stderr.trim()),
-                            true,
-                        );
+                        app.notify_error(format!("Failed to remove host key: {}", stderr.trim()));
                     }
                     Err(e) => {
-                        app.set_status(format!("Failed to run ssh-keygen: {}", e), true);
+                        app.notify_error(format!("Failed to run ssh-keygen: {}", e));
                     }
                 }
             }

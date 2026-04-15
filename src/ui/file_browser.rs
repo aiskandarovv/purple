@@ -2,8 +2,9 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, Paragraph, StatefulWidget};
+use ratatui::widgets::{Clear, List, ListItem, Paragraph, StatefulWidget};
 
+use super::design;
 use super::theme;
 use crate::app::App;
 use crate::file_browser::{BrowserPane, BrowserSort, FileBrowserState};
@@ -18,7 +19,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Terminal too narrow guard
     if area.width < 70 {
-        let overlay = super::centered_rect(60, 20, area);
+        let overlay = design::overlay_area(frame, 60, 20, area.height);
         frame.render_widget(Clear, overlay);
         let msg = Paragraph::new("Terminal too narrow for file browser. Need 70+ columns.")
             .style(theme::error());
@@ -26,14 +27,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         return;
     }
 
-    let overlay = super::centered_rect(90, 85, area);
+    let overlay = design::overlay_area(frame, 90, 85, area.height);
     frame.render_widget(Clear, overlay);
 
-    let title = format!(" Files: {} ", fb.alias);
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .title(Span::styled(title, theme::brand()))
-        .border_style(theme::accent());
+    let block = design::overlay_block(&format!("Files: {}", fb.alias));
 
     let inner = block.inner(overlay);
     frame.render_widget(block, overlay);
@@ -143,43 +140,30 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 
     // Footer
-    let mut footer_spans = Vec::new();
     let selected_count = match fb.active_pane {
         BrowserPane::Local => fb.local_selected.len(),
         BrowserPane::Remote => fb.remote_selected.len(),
     };
 
-    footer_spans.push(Span::styled(" Enter ", theme::footer_key()));
-    footer_spans.push(Span::styled(" copy ", theme::muted()));
-    footer_spans.push(Span::raw("  "));
-    footer_spans.push(Span::styled(" Tab ", theme::footer_key()));
-    footer_spans.push(Span::styled(" switch ", theme::muted()));
-    footer_spans.push(Span::raw("  "));
-    footer_spans.push(Span::styled(" ^Space ", theme::footer_key()));
-    footer_spans.push(Span::styled(" select ", theme::muted()));
-    footer_spans.push(Span::raw("  "));
-    footer_spans.push(Span::styled(" ^A ", theme::footer_key()));
-    footer_spans.push(Span::styled(" all ", theme::muted()));
-    footer_spans.push(Span::raw("  "));
-    footer_spans.push(Span::styled(" s ", theme::footer_key()));
     let sort_label = match fb.sort {
         BrowserSort::Name => " sort:name ",
         BrowserSort::Date => " sort:date\u{2193} ",
         BrowserSort::DateAsc => " sort:date\u{2191} ",
     };
-    footer_spans.push(Span::styled(sort_label, theme::muted()));
-    footer_spans.push(Span::raw("  "));
-    footer_spans.push(Span::styled(" . ", theme::footer_key()));
-    footer_spans.push(Span::styled(" hidden ", theme::muted()));
-    footer_spans.push(Span::raw("  "));
-    footer_spans.push(Span::styled(" R ", theme::footer_key()));
-    footer_spans.push(Span::styled(" refresh ", theme::muted()));
-    footer_spans.push(Span::raw("  "));
-    footer_spans.push(Span::styled(" Esc ", theme::footer_key()));
-    footer_spans.push(Span::styled(" close", theme::muted()));
+
+    let mut footer_spans = design::Footer::new()
+        .primary("Enter", " copy ")
+        .action("Tab", " switch ")
+        .action("^Space", " select ")
+        .action("^A", " all ")
+        .action("s", sort_label)
+        .action(".", " hidden ")
+        .action("R", " refresh ")
+        .action("Esc", " close")
+        .into_spans();
 
     if selected_count > 0 {
-        footer_spans.push(Span::raw("  "));
+        footer_spans.push(Span::raw(design::FOOTER_GAP));
         footer_spans.push(Span::styled(
             format!("{} selected", selected_count),
             theme::accent_bold(),
@@ -405,10 +389,7 @@ fn render_confirm_dialog(
 
     frame.render_widget(Clear, dialog_area);
 
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .title(Span::styled(" Confirm ", theme::brand()))
-        .border_style(theme::accent());
+    let block = design::overlay_block("Confirm");
     let inner = block.inner(dialog_area);
     frame.render_widget(block, dialog_area);
 
@@ -421,14 +402,11 @@ fn render_confirm_dialog(
 
     frame.render_widget(Paragraph::new(lines), rows[0]);
 
-    let footer = vec![
-        Span::styled(" y ", theme::footer_key()),
-        Span::styled(" confirm ", theme::muted()),
-        Span::raw("  "),
-        Span::styled(" Esc ", theme::footer_key()),
-        Span::styled(" cancel", theme::muted()),
-    ];
-    frame.render_widget(Paragraph::new(Line::from(footer)), rows[2]);
+    let footer_line = design::Footer::new()
+        .action("y", " confirm ")
+        .action("Esc", " cancel")
+        .to_line();
+    frame.render_widget(Paragraph::new(footer_line), rows[2]);
 }
 
 fn render_transfer_dialog(frame: &mut Frame, label: &str, area: Rect) {
@@ -441,10 +419,7 @@ fn render_transfer_dialog(frame: &mut Frame, label: &str, area: Rect) {
 
     frame.render_widget(Clear, dialog_area);
 
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .title(Span::styled(" Transfer ", theme::brand()))
-        .border_style(theme::accent());
+    let block = design::overlay_block("Transfer");
     let inner = block.inner(dialog_area);
     frame.render_widget(block, dialog_area);
 
@@ -486,10 +461,7 @@ fn render_error_dialog(frame: &mut Frame, message: &str, area: Rect) {
 
     frame.render_widget(Clear, dialog_area);
 
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .title(Span::styled(" Error ", theme::brand()))
-        .border_style(theme::border_danger());
+    let block = design::danger_block("Error");
     let inner = block.inner(dialog_area);
     frame.render_widget(block, dialog_area);
 
@@ -502,11 +474,8 @@ fn render_error_dialog(frame: &mut Frame, message: &str, area: Rect) {
 
     frame.render_widget(Paragraph::new(lines), rows[0]);
 
-    let footer = vec![
-        Span::styled(" Esc ", theme::footer_key()),
-        Span::styled(" dismiss", theme::muted()),
-    ];
-    frame.render_widget(Paragraph::new(Line::from(footer)), rows[2]);
+    let footer_line = design::Footer::new().action("Esc", " dismiss").to_line();
+    frame.render_widget(Paragraph::new(footer_line), rows[2]);
 }
 
 /// Truncate a string from the LEFT, prefixing with `\u{2026}` if truncated.

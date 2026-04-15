@@ -1,8 +1,9 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, Paragraph};
+use ratatui::widgets::{Clear, List, ListItem, Paragraph};
 
+use super::design;
 use super::theme;
 use crate::app::App;
 use crate::containers::truncate_str;
@@ -15,16 +16,6 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     let alias = state.alias.clone();
 
-    // Title
-    let mut title_spans = vec![Span::styled(
-        format!(" Containers for {} ", alias),
-        theme::brand(),
-    )];
-    if let Some(ref rt) = state.runtime {
-        title_spans.push(Span::styled(format!(" [{}] ", rt.as_str()), theme::muted()));
-    }
-    let title = Line::from(title_spans);
-
     // Overlay sizing: percentage-based width, height fits content
     let item_count = state.containers.len().max(1);
     let has_header = true; // Always show column headers for visual consistency
@@ -36,16 +27,16 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     };
     let height = (item_count as u16 + 6 + header_row + action_row)
         .min(frame.area().height.saturating_sub(4));
-    let area = {
-        let r = super::centered_rect(70, 80, frame.area());
-        super::centered_rect_fixed(r.width, height, frame.area())
-    };
+    let area = design::overlay_area(frame, 70, 80, height);
     frame.render_widget(Clear, area);
 
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .title(title)
-        .border_style(theme::accent());
+    let mut block = design::overlay_block(&format!("Containers for {}", alias));
+    if let Some(ref rt) = state.runtime {
+        block = block.title_top(Line::from(Span::styled(
+            format!(" [{}] ", rt.as_str()),
+            theme::muted(),
+        )));
+    }
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -196,7 +187,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
         let list = List::new(items)
             .highlight_style(theme::selected_row())
-            .highlight_symbol("  ");
+            .highlight_symbol(design::LIST_HIGHLIGHT);
 
         frame.render_stateful_widget(list, list_area, &mut state.list_state);
     }
@@ -213,18 +204,13 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 
     // Footer
-    let mut spans: Vec<Span<'_>> = Vec::new();
-    let [k, l] = super::footer_action("s", " start ");
-    spans.extend([k, l, Span::raw("  ")]);
-    let [k, l] = super::footer_action("x", " stop ");
-    spans.extend([k, l, Span::raw("  ")]);
-    let [k, l] = super::footer_action("r", " restart ");
-    spans.extend([k, l, Span::raw("  ")]);
-    let [k, l] = super::footer_action("R", " refresh ");
-    spans.extend([k, l, Span::raw("  ")]);
-    let [k, l] = super::footer_action("Esc", " back");
-    spans.extend([k, l]);
-    super::render_footer_with_status(frame, chunks[footer_ci], spans, app);
+    design::Footer::new()
+        .action("s", " start ")
+        .action("x", " stop ")
+        .action("r", " restart ")
+        .action("R", " refresh ")
+        .action("Esc", " back")
+        .render_with_status(frame, chunks[footer_ci], app);
 
     // Confirmation dialog for stop/restart
     if let Some(ref confirm_state) = app.container_state {
@@ -232,11 +218,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             let verb = action.as_str();
             let display_name = truncate_str(name, 30);
             let dialog_area = super::centered_rect_fixed(52, 7, frame.area());
-            frame.render_widget(ratatui::widgets::Clear, dialog_area);
-            let block = ratatui::widgets::Block::bordered()
-                .border_type(ratatui::widgets::BorderType::Rounded)
-                .title(Span::styled(format!(" Confirm {} ", verb), theme::danger()))
-                .border_style(theme::border_danger());
+            frame.render_widget(Clear, dialog_area);
+            let block = design::danger_block(&format!("Confirm {}", verb));
+            let footer_line = design::Footer::new()
+                .action("y", " yes ")
+                .action("Esc", " no")
+                .to_line();
             let text = vec![
                 Line::from(""),
                 Line::from(Span::styled(
@@ -244,15 +231,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                     theme::bold(),
                 )),
                 Line::from(""),
-                Line::from(vec![
-                    Span::styled(" y ", theme::footer_key()),
-                    Span::styled(" yes ", theme::muted()),
-                    Span::raw("  "),
-                    Span::styled(" Esc ", theme::footer_key()),
-                    Span::styled(" no", theme::muted()),
-                ]),
+                footer_line,
             ];
-            let paragraph = ratatui::widgets::Paragraph::new(text).block(block);
+            let paragraph = Paragraph::new(text).block(block);
             frame.render_widget(paragraph, dialog_area);
         }
     }

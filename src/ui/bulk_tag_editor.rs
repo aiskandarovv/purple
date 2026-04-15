@@ -1,8 +1,9 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, Paragraph};
+use ratatui::widgets::{Clear, List, ListItem, Paragraph};
 
+use super::design;
 use super::theme;
 use crate::app::{App, BulkTagAction};
 
@@ -24,14 +25,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     frame.render_widget(Clear, area);
 
     let title_text = if host_count == 1 {
-        " Bulk tags \u{00B7} 1 host ".to_string()
+        "Bulk tags \u{00B7} 1 host".to_string()
     } else {
-        format!(" Bulk tags \u{00B7} {} hosts ", host_count)
+        format!("Bulk tags \u{00B7} {} hosts", host_count)
     };
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .title(Span::styled(title_text, theme::brand()))
-        .border_style(theme::accent());
+    let block = design::overlay_block(&title_text);
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -110,7 +108,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             .collect();
         let list = List::new(items)
             .highlight_style(theme::selected_row())
-            .highlight_symbol("  ");
+            .highlight_symbol(design::LIST_HIGHLIGHT);
         frame.render_stateful_widget(list, chunks[list_idx], &mut app.ui.bulk_tag_editor_state);
     }
 
@@ -122,30 +120,18 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         frame.render_widget(Paragraph::new(Line::from(spans)), chunks[spacer_idx]);
     }
 
-    let footer_spans = if input_active {
-        vec![
-            Span::styled(" Enter ", theme::footer_key()),
-            Span::styled(" add ", theme::muted()),
-            Span::raw("  "),
-            Span::styled(" Esc ", theme::footer_key()),
-            Span::styled(" cancel", theme::muted()),
-        ]
+    let f = if input_active {
+        design::Footer::new()
+            .primary("Enter", " add ")
+            .action("Esc", " cancel")
     } else {
-        vec![
-            Span::styled(" Space ", theme::footer_key()),
-            Span::styled(" cycle ", theme::muted()),
-            Span::raw("  "),
-            Span::styled(" + ", theme::footer_key()),
-            Span::styled(" new ", theme::muted()),
-            Span::raw("  "),
-            Span::styled(" Enter ", theme::footer_key()),
-            Span::styled(" ok ", theme::muted()),
-            Span::raw("  "),
-            Span::styled(" Esc ", theme::footer_key()),
-            Span::styled(" back", theme::muted()),
-        ]
+        design::Footer::new()
+            .action("Space", " cycle ")
+            .action("+", " new ")
+            .primary("Enter", " ok ")
+            .action("Esc", " back")
     };
-    super::render_footer_with_status(frame, chunks[footer_idx], footer_spans, app);
+    f.render_with_status(frame, chunks[footer_idx], app);
 }
 
 /// Build the rendered line for a single bulk-tag row.

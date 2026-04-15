@@ -56,7 +56,7 @@ pub(super) fn handle_snippet_picker(
                     let removed = app.snippet_store.snippets.remove(sel);
                     if let Err(e) = app.snippet_store.save() {
                         app.snippet_store.snippets.insert(sel, removed);
-                        app.set_status(format!("Failed to save: {}", e), true);
+                        app.notify_error(format!("Failed to save: {}", e));
                     } else {
                         if app.snippet_store.snippets.is_empty() {
                             app.ui.snippet_picker_state.select(None);
@@ -65,7 +65,7 @@ pub(super) fn handle_snippet_picker(
                                 .snippet_picker_state
                                 .select(Some(app.snippet_store.snippets.len() - 1));
                         }
-                        app.set_status(format!("Removed snippet '{}'.", removed.name), false);
+                        app.notify(format!("Removed snippet '{}'.", removed.name));
                     }
                 }
             }
@@ -160,7 +160,7 @@ fn run_or_prompt_params(
     events_tx: &mpsc::Sender<AppEvent>,
 ) {
     if app.demo_mode {
-        app.set_status("Demo mode. Execution disabled.".to_string(), false);
+        app.notify("Demo mode. Execution disabled.".to_string());
         return;
     }
     let params = crate::snippet::parse_params(&snippet.command);
@@ -358,8 +358,8 @@ pub(super) fn handle_snippet_output(app: &mut App, key: KeyEvent) {
                     text.push('\n');
                 }
                 match clipboard::copy_to_clipboard(&text) {
-                    Ok(()) => app.set_status("Output copied.", false),
-                    Err(e) => app.set_status(format!("Copy failed: {}", e), true),
+                    Ok(()) => app.notify("Output copied."),
+                    Err(e) => app.notify_error(format!("Copy failed: {}", e)),
                 }
             }
         }
@@ -639,7 +639,7 @@ pub(super) fn handle_snippet_form(app: &mut App, key: KeyEvent) {
 
 fn submit_snippet_form(app: &mut App, target_aliases: &[String], editing: Option<usize>) {
     if let Err(msg) = app.snippet_form.validate() {
-        app.set_status(msg, true);
+        app.notify_error(msg);
         return;
     }
 
@@ -656,7 +656,7 @@ fn submit_snippet_form(app: &mut App, target_aliases: &[String], editing: Option
         .iter()
         .any(|s| s.name == new_name && Some(&s.name) != old_name.as_ref());
     if name_taken {
-        app.set_status(format!("'{}' already exists.", new_name), true);
+        app.notify_error(format!("'{}' already exists.", new_name));
         return;
     }
 
@@ -681,7 +681,7 @@ fn submit_snippet_form(app: &mut App, target_aliases: &[String], editing: Option
 
     if let Err(e) = app.snippet_store.save() {
         app.snippet_store.snippets = snapshot;
-        app.set_status(format!("Failed to save: {}", e), true);
+        app.notify_error(format!("Failed to save: {}", e));
         return;
     }
 
@@ -696,9 +696,9 @@ fn submit_snippet_form(app: &mut App, target_aliases: &[String], editing: Option
 
     app.snippet_form_baseline = None;
     if is_new {
-        app.set_status(format!("Added snippet '{}'.", name), false);
+        app.notify(format!("Added snippet '{}'.", name));
     } else {
-        app.set_status(format!("Updated snippet '{}'.", name), false);
+        app.notify(format!("Updated snippet '{}'.", name));
     }
     app.screen = Screen::SnippetPicker {
         target_aliases: target_aliases.to_vec(),

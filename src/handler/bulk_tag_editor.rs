@@ -42,11 +42,11 @@ pub(super) fn handle_bulk_tag_editor_screen(app: &mut App, key: KeyEvent) {
                 app.bulk_tag_editor = BulkTagEditorState::default();
                 let msg = format_apply_status(&result);
                 if !msg.is_empty() {
-                    app.set_status(msg, false);
+                    app.notify(msg);
                 }
             }
             Err(err) => {
-                app.set_status(err, true);
+                app.notify_error(err);
             }
         },
         _ => {}

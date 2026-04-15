@@ -170,34 +170,28 @@ fn execute_known_hosts_import(app: &mut App) {
             if imported > 0 {
                 if let Err(e) = app.config.write() {
                     app.config = config_backup;
-                    app.set_status(format!("Failed to save: {}", e), true);
+                    app.notify_error(format!("Failed to save: {}", e));
                     return;
                 }
                 app.reload_hosts();
-                app.set_status(
-                    format!(
-                        "Imported {} host{}, skipped {} duplicate{}.",
-                        imported,
-                        if imported == 1 { "" } else { "s" },
-                        skipped,
-                        if skipped == 1 { "" } else { "s" },
-                    ),
-                    false,
-                );
+                app.notify(format!(
+                    "Imported {} host{}, skipped {} duplicate{}.",
+                    imported,
+                    if imported == 1 { "" } else { "s" },
+                    skipped,
+                    if skipped == 1 { "" } else { "s" },
+                ));
             } else {
-                app.set_status(
-                    if skipped == 1 {
-                        "Host already exists.".to_string()
-                    } else {
-                        format!("All {} hosts already exist.", skipped)
-                    },
-                    false,
-                );
+                app.notify(if skipped == 1 {
+                    "Host already exists.".to_string()
+                } else {
+                    format!("All {} hosts already exist.", skipped)
+                });
             }
             app.known_hosts_count = 0;
         }
         Err(e) => {
-            app.set_status(e, true);
+            app.notify_error(e);
         }
     }
 }
@@ -231,7 +225,7 @@ fn execute_purge_stale(app: &mut App, provider: Option<&str>) {
     }
     if let Err(e) = app.config.write() {
         app.config = config_backup;
-        app.set_status(format!("Failed to save: {}", e), true);
+        app.notify_error(format!("Failed to save: {}", e));
         return;
     }
     // Kill active tunnels only after successful write (no rollback needed)
@@ -259,7 +253,7 @@ fn execute_purge_stale(app: &mut App, provider: Option<&str>) {
             if count == 1 { "" } else { "s" }
         )
     };
-    app.set_status(msg, false);
+    app.notify(msg);
 }
 
 /// Build a provider hint string for stale host messages, e.g. " gone from DigitalOcean".
@@ -274,14 +268,11 @@ pub(super) fn stale_provider_hint(host: &crate::ssh_config::model::HostEntry) ->
 /// `false` if the host is from an include file (status message set instead).
 pub(super) fn open_edit_form(app: &mut App, host: HostEntry) -> bool {
     if let Some(ref source) = host.source_file {
-        app.set_status(
-            format!(
-                "{} lives in {}. Edit it there.",
-                host.alias,
-                source.display()
-            ),
-            true,
-        );
+        app.notify_error(format!(
+            "{} lives in {}. Edit it there.",
+            host.alias,
+            source.display()
+        ));
         return false;
     }
     let stale_hint = host.stale.is_some().then(|| stale_provider_hint(&host));
@@ -290,14 +281,14 @@ pub(super) fn open_edit_form(app: &mut App, host: HostEntry) -> bool {
     let raw = match app.config.raw_host_entry(&host.alias) {
         Some(entry) => entry,
         None => {
-            app.set_status("Host not found in config.".to_string(), true);
+            app.notify_error("Host not found in config.".to_string());
             return false;
         }
     };
     let inherited = app.config.inherited_hints(&host.alias);
     app.form = HostForm::from_entry(&raw, inherited);
     if let Some(hint) = stale_hint {
-        app.set_status(format!("Stale host.{}", hint), true);
+        app.notify_error(format!("Stale host.{}", hint));
     }
     app.screen = Screen::EditHost { alias: host.alias };
     app.capture_form_mtime();

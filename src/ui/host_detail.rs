@@ -1,7 +1,8 @@
 use ratatui::Frame;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 
+use super::design;
 use super::theme;
 use crate::app::App;
 use crate::ssh_config::model::ConfigElement;
@@ -28,16 +29,12 @@ pub fn render(frame: &mut Frame, app: &App, index: usize) {
 
     frame.render_widget(Clear, area);
 
-    let title = format!(" {} ", host.alias);
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .title(Span::styled(title, theme::brand()))
-        .border_style(theme::accent());
+    let block = design::overlay_block(&host.alias);
 
     let mut lines = vec![
         Line::from(""),
         Line::from(Span::styled("  Directives", theme::section_header())),
-        Line::from(Span::styled("  ────────────────────────", theme::muted())),
+        design::section_divider(),
     ];
 
     if directives.is_empty() {
@@ -74,26 +71,20 @@ pub fn render(frame: &mut Frame, app: &App, index: usize) {
     }
 
     let is_included = host.source_file.is_some();
-    let mut footer_spans = vec![];
+    let mut footer_builder = design::Footer::new();
     if !is_included {
-        footer_spans.extend([
-            Span::styled(" e ", theme::footer_key()),
-            Span::styled(" edit ", theme::muted()),
-            Span::raw("  "),
-        ]);
-    } else {
-        footer_spans.push(Span::raw("  "));
+        footer_builder = footer_builder.action("e", " edit ");
     }
-    footer_spans.extend([
-        Span::styled(" T ", theme::footer_key()),
-        Span::styled(" tunnels ", theme::muted()),
-        Span::raw("  "),
-        Span::styled(" r ", theme::footer_key()),
-        Span::styled(" snippet ", theme::muted()),
-        Span::raw("  "),
-        Span::styled(" Esc ", theme::footer_key()),
-        Span::styled(" back", theme::muted()),
-    ]);
+    let mut footer_spans = footer_builder
+        .action("T", " tunnels ")
+        .action("r", " snippet ")
+        .action("Esc", " back")
+        .into_spans();
+    if is_included {
+        // Preserve the leading 2-space indent that kept alignment consistent
+        // with the non-included variant that starts with the "e edit" action.
+        footer_spans.insert(0, Span::raw("  "));
+    }
     lines.push(Line::from(""));
     lines.push(Line::from(footer_spans));
 

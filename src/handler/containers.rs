@@ -125,7 +125,7 @@ pub(super) fn handle_containers(
         KeyCode::Char('R') => {
             // Refresh container list
             if app.demo_mode {
-                app.set_status("Demo mode. Container refresh disabled.".to_string(), false);
+                app.notify("Demo mode. Container refresh disabled.".to_string());
                 return Ok(());
             }
             if let Some(ref mut state) = app.container_state {
@@ -185,7 +185,7 @@ fn container_action(
         return;
     }
     if app.demo_mode {
-        app.set_status("Demo mode. Container actions disabled.".to_string(), false);
+        app.notify("Demo mode. Container actions disabled.".to_string());
         return;
     }
     let Some(runtime) = state.runtime else {

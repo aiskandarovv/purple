@@ -1,7 +1,8 @@
 mod bulk_tag_editor;
 mod command_palette;
-mod confirm_dialog;
+pub(crate) mod confirm_dialog;
 pub(crate) mod containers;
+pub(crate) mod design;
 mod detail_panel;
 mod file_browser;
 mod help;
@@ -279,7 +280,11 @@ fn dim_background(frame: &mut Frame) {
     let dim_only = Style::default().add_modifier(Modifier::DIM);
     let style = match theme::color_mode() {
         2 => Style::default()
-            .fg(Color::Rgb(70, 70, 70))
+            .fg(Color::Rgb(
+                design::DIM_FG_RGB.0,
+                design::DIM_FG_RGB.1,
+                design::DIM_FG_RGB.2,
+            ))
             .add_modifier(Modifier::DIM),
         1 => Style::default()
             .fg(Color::DarkGray)
@@ -370,6 +375,7 @@ pub fn footer_action(key: &str, label: &str) -> [Span<'static>; 2] {
 }
 
 /// Build a primary footer action span: padded keycap + muted label.
+#[deprecated(note = "use design::Footer builder instead")]
 pub fn footer_primary(key: &str, label: &str) -> [Span<'static>; 2] {
     [
         footer_key_span(key),
@@ -405,7 +411,7 @@ pub fn render_footer_with_help(
 
 /// Render footer with shortcuts always visible and optional status right-aligned.
 /// Used by overlay screens. Shows any active footer status (Info, Progress, or
-/// sticky messages set via set_sticky_status).
+/// sticky messages set via notify_progress).
 pub fn render_footer_with_status(
     frame: &mut Frame,
     area: Rect,
@@ -473,10 +479,16 @@ fn render_toast(frame: &mut Frame, app: &App) {
     }
 
     let (icon, border_style) = match toast.class {
-        crate::app::MessageClass::Alert => ("\u{26A0} ", theme::toast_border_error()),
+        crate::app::MessageClass::Alert => (
+            format!("{} ", design::TOAST_ICON_ALERT),
+            theme::toast_border_error(),
+        ),
         crate::app::MessageClass::Confirmation
         | crate::app::MessageClass::Info
-        | crate::app::MessageClass::Progress => ("\u{2713} ", theme::toast_border_success()),
+        | crate::app::MessageClass::Progress => (
+            format!("{} ", design::TOAST_ICON_OK),
+            theme::toast_border_success(),
+        ),
     };
 
     let content = format!("{}{}", icon, toast.text);
@@ -486,9 +498,11 @@ fn render_toast(frame: &mut Frame, app: &App) {
     let box_width =
         (content_width.saturating_add(4).min(max_width) as u16).min(area.width.saturating_sub(4));
     let box_height = 3u16;
-    let x = area.width.saturating_sub(box_width + 2);
+    let x = area.width.saturating_sub(box_width + design::TOAST_INSET_X);
     // Position above the footer row (which is the last row)
-    let y = area.height.saturating_sub(box_height + 2);
+    let y = area
+        .height
+        .saturating_sub(box_height + design::TOAST_INSET_Y);
 
     let rect = Rect::new(x, y, box_width, box_height);
 
@@ -513,7 +527,7 @@ fn render_toast(frame: &mut Frame, app: &App) {
 }
 
 /// Create a centered rect of given percentage within the parent rect.
-pub fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+pub(crate) fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
     let vertical = Layout::vertical([
         Constraint::Percentage((100 - percent_y) / 2),
         Constraint::Percentage(percent_y),
@@ -582,7 +596,7 @@ pub(crate) fn render_divider(
 }
 
 /// Create a centered rect with fixed dimensions.
-pub fn centered_rect_fixed(width: u16, height: u16, area: Rect) -> Rect {
+pub(crate) fn centered_rect_fixed(width: u16, height: u16, area: Rect) -> Rect {
     let x = area.x + area.width.saturating_sub(width) / 2;
     let y = area.y + area.height.saturating_sub(height) / 2;
     Rect::new(x, y, width.min(area.width), height.min(area.height))
@@ -591,12 +605,17 @@ pub fn centered_rect_fixed(width: u16, height: u16, area: Rect) -> Rect {
 /// Uniform width clamp for picker overlays (ProxyJump, Vault role,
 /// Password source). Keeps all simple list pickers visually aligned at
 /// the same minimum and maximum width regardless of terminal size.
-pub const PICKER_MIN_WIDTH: u16 = 50;
-pub const PICKER_MAX_WIDTH: u16 = 64;
+/// Re-exported under `ui::` for the nearby `#[cfg(test)]` module; the
+/// canonical values live in `design.rs`.
+#[cfg(test)]
+pub(crate) const PICKER_MIN_WIDTH: u16 = crate::ui::design::PICKER_MIN_W;
+#[cfg(test)]
+pub(crate) const PICKER_MAX_WIDTH: u16 = crate::ui::design::PICKER_MAX_W;
 
-/// Width a picker overlay should use on this frame.
+/// Width a picker overlay should use on this frame. Delegates to
+/// `design::picker_width` so the picker-width formula lives in one place.
 pub fn picker_overlay_width(frame: &Frame) -> u16 {
-    frame.area().width.clamp(PICKER_MIN_WIDTH, PICKER_MAX_WIDTH)
+    design::picker_width(frame)
 }
 
 /// Minimum overlay height required to render rounded borders plus at
@@ -666,7 +685,7 @@ pub fn render_picker_overlay<'a>(
     let list = List::new(items)
         .block(block)
         .highlight_style(theme::selected_row())
-        .highlight_symbol("  ");
+        .highlight_symbol(design::LIST_HIGHLIGHT);
 
     frame.render_stateful_widget(list, area, list_state);
 }
@@ -792,7 +811,7 @@ mod tests {
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = make_app();
-        app.set_info_status("test");
+        app.notify_info("test");
         let mut anim = crate::animation::AnimationState::new();
         terminal
             .draw(|frame| {
@@ -815,7 +834,7 @@ mod tests {
         let backend = TestBackend::new(80, 3);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = make_app();
-        app.set_info_status("sync failed");
+        app.notify_info("sync failed");
         let mut anim = crate::animation::AnimationState::new();
         terminal
             .draw(|frame| {
@@ -844,7 +863,7 @@ mod tests {
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = make_app();
-        app.set_info_status("sync failed");
+        app.notify_info("sync failed");
         // Simulate an overlay being active.
         app.screen = crate::app::Screen::Help {
             return_screen: Box::new(crate::app::Screen::HostList),
@@ -1049,7 +1068,7 @@ mod tests {
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = make_app();
-        app.set_status("Copied web01", false); // Goes to toast (Confirmation)
+        app.notify("Copied web01"); // Goes to toast (Confirmation)
         terminal
             .draw(|frame| {
                 render_toast(frame, &app);
@@ -1089,7 +1108,7 @@ mod tests {
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = make_app();
-        app.set_status("Connection failed", true); // Goes to toast (Alert)
+        app.notify_error("Connection failed"); // Goes to toast (Alert)
         terminal
             .draw(|frame| {
                 render_toast(frame, &app);
@@ -1119,7 +1138,7 @@ mod tests {
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = make_app();
-        app.set_status("Copied", false); // Goes to toast, NOT footer
+        app.notify("Copied"); // Goes to toast, NOT footer
         assert!(app.toast.is_some());
         assert!(app.status.is_none()); // Footer should be clear
         let footer_spans = vec![
@@ -1148,7 +1167,7 @@ mod tests {
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = make_app();
-        app.set_info_status("Syncing AWS...");
+        app.notify_info("Syncing AWS...");
         assert!(app.status.is_some());
         assert!(app.toast.is_none());
         let footer_spans = vec![

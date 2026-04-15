@@ -2,9 +2,10 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, Paragraph};
+use ratatui::widgets::{Clear, List, ListItem, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
+use super::design;
 use super::theme;
 use crate::app::{App, FormField, Screen};
 
@@ -59,8 +60,6 @@ const ALL_FIELDS: &[(FormField, bool)] = &[
 ];
 
 pub fn render(frame: &mut Frame, app: &mut App) {
-    let area = frame.area();
-
     // Determine visible fields based on progressive disclosure state.
     // The Vault SSH Role override field follows the same expand/collapse rule
     // as every other optional field: hidden in collapsed state, shown in
@@ -85,39 +84,34 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let block_height = 2 + visible_fields.len() as u16 * 2;
     let total_height = block_height + 1; // + footer
 
-    let base = super::centered_rect(70, 80, area);
+    let form_area = design::overlay_area(frame, 70, 80, total_height);
 
     let title = if app.form.is_pattern {
         match &app.screen {
-            Screen::AddHost => " Add Pattern ".to_string(),
+            Screen::AddHost => "Add Pattern".to_string(),
             Screen::EditHost { alias } => {
-                let max_alias = (base.width as usize).saturating_sub(14);
+                let max_alias = (form_area.width as usize).saturating_sub(14);
                 let truncated = super::truncate(alias, max_alias);
-                format!(" Edit: {} ", truncated)
+                format!("Edit: {}", truncated)
             }
-            _ => " Pattern ".to_string(),
+            _ => "Pattern".to_string(),
         }
     } else {
         match &app.screen {
-            Screen::AddHost => " Add New Host ".to_string(),
+            Screen::AddHost => "Add New Host".to_string(),
             Screen::EditHost { alias } => {
-                let max_alias = (base.width as usize).saturating_sub(12);
+                let max_alias = (form_area.width as usize).saturating_sub(12);
                 let truncated = super::truncate(alias, max_alias);
-                format!(" Edit: {} ", truncated)
+                format!("Edit: {}", truncated)
             }
-            _ => " Host ".to_string(),
+            _ => "Host".to_string(),
         }
     };
-    let form_area = super::centered_rect_fixed(base.width, total_height, area);
     frame.render_widget(Clear, form_area);
 
     let block_area = Rect::new(form_area.x, form_area.y, form_area.width, block_height);
 
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .title(Span::styled(title, theme::brand()))
-        .border_style(theme::accent());
-
+    let block = design::overlay_block(&title);
     let inner = block.inner(block_area);
     frame.render_widget(block, block_area);
 
@@ -171,11 +165,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             None
         };
 
-    let mut y_offset: u16 = 0;
-    for &(field, field_required) in visible_fields.iter() {
-        let divider_y = inner.y + y_offset;
+    for (idx, &(field, field_required)) in visible_fields.iter().enumerate() {
+        let divider_y = design::form_divider_y(inner, idx);
         let content_y = divider_y + 1;
-        y_offset += 2;
 
         let is_focused = app.form.focused_field == field;
         let label_style = if is_focused {
@@ -221,39 +213,29 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 
     // Footer below the block
-    let footer_area = Rect::new(form_area.x, form_area.y + block_height, form_area.width, 1);
+    let footer_area = design::form_footer(form_area, block_height);
     let mut footer_spans = if app.pending_discard_confirm {
-        vec![
-            Span::styled(" Discard changes? ", theme::error()),
-            Span::styled(" y ", theme::footer_key()),
-            Span::styled(" yes ", theme::muted()),
-            Span::raw("  "),
-            Span::styled(" Esc ", theme::footer_key()),
-            Span::styled(" no", theme::muted()),
-        ]
+        let mut spans = vec![Span::styled(" Discard changes? ", theme::error())];
+        spans.extend(
+            design::Footer::new()
+                .action("y", " yes ")
+                .action("Esc", " no")
+                .into_spans(),
+        );
+        spans
     } else if !expanded {
         // Collapsed: show hint about more options
-        vec![
-            Span::styled(" Enter ", theme::footer_key()),
-            Span::styled(" save ", theme::muted()),
-            Span::raw("  "),
-            Span::styled(" \u{2193} ", theme::footer_key()),
-            Span::styled(" more options ", theme::muted()),
-            Span::raw("  "),
-            Span::styled(" Esc ", theme::footer_key()),
-            Span::styled(" cancel", theme::muted()),
-        ]
+        design::Footer::new()
+            .primary("Enter", " save ")
+            .action("\u{2193}", " more options ")
+            .action("Esc", " cancel")
+            .into_spans()
     } else {
-        vec![
-            Span::styled(" Enter ", theme::footer_key()),
-            Span::styled(" save ", theme::muted()),
-            Span::raw("  "),
-            Span::styled(" Tab ", theme::footer_key()),
-            Span::styled(" next ", theme::muted()),
-            Span::raw("  "),
-            Span::styled(" Esc ", theme::footer_key()),
-            Span::styled(" cancel", theme::muted()),
-        ]
+        design::Footer::new()
+            .primary("Enter", " save ")
+            .action("Tab", " next ")
+            .action("Esc", " cancel")
+            .into_spans()
     };
     if let Some(ref hint) = app.form.form_hint {
         let hint_width: usize = hint.width() + 4; // " ⚠ {hint} "
@@ -297,12 +279,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 pub fn render_key_picker_overlay(frame: &mut Frame, app: &mut App) {
     if app.keys.is_empty() {
         // Small popup saying no keys found
-        let area = super::centered_rect_fixed(50, 5, frame.area());
+        let area = super::centered_rect_fixed(design::PICKER_MIN_W, 5, frame.area());
         frame.render_widget(Clear, area);
-        let block = Block::bordered()
-            .border_type(BorderType::Rounded)
-            .title(Span::styled(" Select Key ", theme::brand()))
-            .border_style(theme::accent());
+        let block = design::overlay_block("Select Key");
         let msg = Paragraph::new(Line::from(Span::styled(
             "  No keys found in ~/.ssh/",
             theme::muted(),
@@ -313,16 +292,10 @@ pub fn render_key_picker_overlay(frame: &mut Frame, app: &mut App) {
     }
 
     let height = (app.keys.len() as u16 + 4).min(16);
-    let area = {
-        let r = super::centered_rect(70, 80, frame.area());
-        super::centered_rect_fixed(r.width, height, frame.area())
-    };
+    let area = design::overlay_area(frame, 70, 80, height);
     frame.render_widget(Clear, area);
 
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .title(Span::styled(" Select Key ", theme::brand()))
-        .border_style(theme::accent());
+    let block = design::overlay_block("Select Key");
 
     let inner_width = block.inner(area).width;
 
@@ -378,7 +351,7 @@ pub fn render_key_picker_overlay(frame: &mut Frame, app: &mut App) {
     let list = List::new(items)
         .block(block)
         .highlight_style(theme::selected_row())
-        .highlight_symbol("  ");
+        .highlight_symbol(design::LIST_HIGHLIGHT);
 
     frame.render_stateful_widget(list, area, &mut app.ui.key_picker_state);
 }

@@ -1,9 +1,10 @@
 use ratatui::Frame;
 use ratatui::layout::Alignment;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
+use super::design;
 use super::theme;
 use crate::app::App;
 
@@ -17,10 +18,12 @@ pub fn render(frame: &mut Frame, _app: &App, alias: &str) {
     // Clear background
     frame.render_widget(Clear, area);
 
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .title(Span::styled(" Confirm Delete ", theme::danger()))
-        .border_style(theme::border_danger());
+    let block = design::danger_block("Confirm Delete");
+
+    let buttons = design::Footer::new()
+        .action("y", " yes ")
+        .action("Esc", " no")
+        .to_line();
 
     let text = vec![
         Line::from(""),
@@ -29,13 +32,7 @@ pub fn render(frame: &mut Frame, _app: &App, alias: &str) {
             theme::bold(),
         )),
         Line::from(""),
-        Line::from(vec![
-            Span::styled(" y ", theme::footer_key()),
-            Span::styled(" yes ", theme::muted()),
-            Span::raw("  "),
-            Span::styled(" Esc ", theme::footer_key()),
-            Span::styled(" no", theme::muted()),
-        ]),
+        buttons,
     ];
 
     let paragraph = Paragraph::new(text).block(block);
@@ -48,10 +45,12 @@ pub fn render_host_key_reset(frame: &mut Frame, _app: &App, hostname: &str) {
 
     frame.render_widget(Clear, area);
 
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .title(Span::styled(" Host Key Changed ", theme::danger()))
-        .border_style(theme::border_danger());
+    let block = design::danger_block("Host Key Changed");
+
+    let buttons = design::Footer::new()
+        .action("y", " yes ")
+        .action("Esc", " no")
+        .to_line();
 
     let text = vec![
         Line::from(""),
@@ -68,13 +67,7 @@ pub fn render_host_key_reset(frame: &mut Frame, _app: &App, hostname: &str) {
             theme::muted(),
         )),
         Line::from(""),
-        Line::from(vec![
-            Span::styled(" y ", theme::footer_key()),
-            Span::styled(" yes ", theme::muted()),
-            Span::raw("  "),
-            Span::styled(" Esc ", theme::footer_key()),
-            Span::styled(" no", theme::muted()),
-        ]),
+        buttons,
     ];
 
     let paragraph = Paragraph::new(text).block(block);
@@ -86,10 +79,12 @@ pub fn render_confirm_import(frame: &mut Frame, _app: &App, count: usize) {
 
     frame.render_widget(Clear, area);
 
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .title(Span::styled(" Import ", theme::brand()))
-        .border_style(theme::accent());
+    let block = design::overlay_block("Import");
+
+    let buttons = design::Footer::new()
+        .action("y", " yes ")
+        .action("Esc", " no")
+        .to_line();
 
     let text = vec![
         Line::from(""),
@@ -102,13 +97,7 @@ pub fn render_confirm_import(frame: &mut Frame, _app: &App, count: usize) {
             theme::bold(),
         )),
         Line::from(""),
-        Line::from(vec![
-            Span::styled(" y ", theme::footer_key()),
-            Span::styled(" yes ", theme::muted()),
-            Span::raw("  "),
-            Span::styled(" Esc ", theme::footer_key()),
-            Span::styled(" no", theme::muted()),
-        ]),
+        buttons,
     ];
 
     let paragraph = Paragraph::new(text).block(block);
@@ -151,10 +140,7 @@ pub fn render_confirm_purge_stale(
 
     frame.render_widget(Clear, area);
 
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .title(Span::styled(" Purge Stale ", theme::danger()))
-        .border_style(theme::border_danger());
+    let block = design::danger_block("Purge Stale");
 
     let main_line = if let Some(prov) = provider {
         let display = crate::providers::provider_display_name(prov);
@@ -178,13 +164,12 @@ pub fn render_confirm_purge_stale(
     ];
     text.extend(host_lines);
     text.push(Line::from(""));
-    text.push(Line::from(vec![
-        Span::styled(" y ", theme::footer_key()),
-        Span::styled(" yes ", theme::muted()),
-        Span::raw("  "),
-        Span::styled(" Esc ", theme::footer_key()),
-        Span::styled(" no", theme::muted()),
-    ]));
+    text.push(
+        design::Footer::new()
+            .action("y", " yes ")
+            .action("Esc", " no")
+            .to_line(),
+    );
 
     let paragraph = Paragraph::new(text).block(block);
     frame.render_widget(paragraph, area);
@@ -213,22 +198,12 @@ pub fn render_confirm_vault_sign(frame: &mut Frame, _app: &App, signable: &[Stri
 
     frame.render_widget(Clear, area);
 
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .title(Span::styled(
-            " Sign Vault SSH Certificates ",
-            theme::accent(),
-        ))
-        .border_style(theme::accent());
+    let block = design::overlay_block("Sign Vault SSH Certificates");
 
-    let mut footer_spans: Vec<Span<'static>> = Vec::new();
-    for s in super::footer_action("y", " confirm ") {
-        footer_spans.push(s);
-    }
-    footer_spans.push(Span::raw("  "));
-    for s in super::footer_action("Esc", " cancel") {
-        footer_spans.push(s);
-    }
+    let buttons = design::Footer::new()
+        .action("y", " confirm ")
+        .action("Esc", " cancel")
+        .to_line();
 
     let text = vec![
         Line::from(""),
@@ -248,7 +223,7 @@ pub fn render_confirm_vault_sign(frame: &mut Frame, _app: &App, signable: &[Stri
             theme::muted(),
         )),
         Line::from(""),
-        Line::from(footer_spans),
+        buttons,
     ];
 
     let paragraph = Paragraph::new(text).block(block);
@@ -373,9 +348,7 @@ pub fn render_welcome(
 
     frame.render_widget(Clear, area);
 
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .border_style(theme::accent());
+    let block = design::plain_overlay_block();
 
     // --- Build text lines ---
     let mut text: Vec<Line<'_>> = Vec::new();

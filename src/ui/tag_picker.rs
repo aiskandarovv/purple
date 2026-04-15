@@ -1,19 +1,16 @@
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, Paragraph};
+use ratatui::widgets::{Clear, List, ListItem, Paragraph};
 
+use super::design;
 use super::theme;
 use crate::app::App;
 
 pub fn render(frame: &mut Frame, app: &mut App) {
     if app.tags.list.is_empty() {
-        let area = super::centered_rect_fixed(50, 5, frame.area());
+        let area = super::centered_rect_fixed(design::PICKER_MIN_W, 5, frame.area());
         frame.render_widget(Clear, area);
-        let block = Block::bordered()
-            .border_type(BorderType::Rounded)
-            .title(Span::styled(" Filter by Tag ", theme::brand()))
-            .border_style(theme::accent());
+        let block = design::overlay_block("Filter by Tag");
         let msg = Paragraph::new(Line::from(Span::styled(
             "  No tags yet. Press t on a host to add some.",
             theme::muted(),
@@ -79,7 +76,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     };
 
     let height = (app.tags.list.len() as u16 + 6).min(frame.area().height.saturating_sub(4));
-    let area = super::centered_rect_fixed(50, height, frame.area());
+    let area = super::centered_rect_fixed(design::PICKER_MIN_W, height, frame.area());
     frame.render_widget(Clear, area);
 
     let items: Vec<ListItem> = app
@@ -96,35 +93,23 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         })
         .collect();
 
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .title(Span::styled(" Filter by Tag ", theme::brand()))
-        .border_style(theme::accent());
+    let block = design::overlay_block("Filter by Tag");
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let chunks = Layout::vertical([
-        Constraint::Min(0),
-        Constraint::Length(1),
-        Constraint::Length(1),
-    ])
-    .split(inner);
+    let (content, footer) = design::content_and_footer(inner);
 
     let list = List::new(items)
         .highlight_style(theme::selected_row())
-        .highlight_symbol("  ");
+        .highlight_symbol(design::LIST_HIGHLIGHT);
 
-    frame.render_stateful_widget(list, chunks[0], &mut app.ui.tag_picker_state);
+    frame.render_stateful_widget(list, content, &mut app.ui.tag_picker_state);
 
-    let spans = vec![
-        Span::styled(" Enter ", theme::footer_key()),
-        Span::styled(" select ", theme::muted()),
-        Span::raw("  "),
-        Span::styled(" Esc ", theme::footer_key()),
-        Span::styled(" back", theme::muted()),
-    ];
-    super::render_footer_with_status(frame, chunks[2], spans, app);
+    design::Footer::new()
+        .primary("Enter", " select ")
+        .action("Esc", " back")
+        .render_with_status(frame, footer, app);
 }
 
 #[cfg(test)]

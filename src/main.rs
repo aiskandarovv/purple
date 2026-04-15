@@ -668,20 +668,17 @@ fn main() -> Result<()> {
         let mut app = App::new(config);
         apply_saved_sort(&mut app);
         if repaired_groups > 0 || orphaned_headers > 0 {
-            app.set_status(
-                format!(
-                    "Repaired SSH config ({} absorbed, {} orphaned group headers).",
-                    repaired_groups, orphaned_headers
-                ),
-                false,
-            );
+            app.notify(format!(
+                "Repaired SSH config ({} absorbed, {} orphaned group headers).",
+                repaired_groups, orphaned_headers
+            ));
         }
         app.start_search_with(alias);
         if app.search.filtered_indices.is_empty() {
-            app.set_status(
-                format!("No exact match for '{}'. Here's what we found.", alias),
-                false,
-            );
+            app.notify(format!(
+                "No exact match for '{}'. Here's what we found.",
+                alias
+            ));
         }
         return run_tui(app);
     }
@@ -690,13 +687,10 @@ fn main() -> Result<()> {
     let mut app = App::new(config);
     apply_saved_sort(&mut app);
     if repaired_groups > 0 || orphaned_headers > 0 {
-        app.set_status(
-            format!(
-                "Repaired SSH config ({} absorbed, {} orphaned group headers).",
-                repaired_groups, orphaned_headers
-            ),
-            false,
-        );
+        app.notify(format!(
+            "Repaired SSH config ({} absorbed, {} orphaned group headers).",
+            repaired_groups, orphaned_headers
+        ));
     }
     run_tui(app)
 }
@@ -710,10 +704,7 @@ fn apply_saved_sort(app: &mut App) {
     // Clear stale tag preference if the tag no longer exists in any host
     if app.clear_stale_group_tag() {
         if let Err(e) = preferences::save_group_by(&app.group_by) {
-            app.set_status(
-                format!("Group preference reset. (save failed: {})", e),
-                true,
-            );
+            app.notify_error(format!("Group preference reset. (save failed: {})", e));
         }
     }
     if saved != app::SortMode::Original || !matches!(app.group_by, app::GroupBy::None) {
@@ -807,9 +798,17 @@ pub(crate) fn set_sync_summary(app: &mut App) {
     let still_syncing = !app.syncing_providers.is_empty();
     let names = app.sync_done.join(", ");
     if still_syncing {
-        app.set_background_status(format!("Synced: {}...", names), app.sync_had_errors);
+        if app.sync_had_errors {
+            app.notify_background_error(format!("Synced: {}...", names));
+        } else {
+            app.notify_background(format!("Synced: {}...", names));
+        }
     } else {
-        app.set_background_status(format!("Synced: {}", names), app.sync_had_errors);
+        if app.sync_had_errors {
+            app.notify_background_error(format!("Synced: {}", names));
+        } else {
+            app.notify_background(format!("Synced: {}", names));
+        }
         app.sync_done.clear();
         app.sync_had_errors = false;
         app::SyncRecord::save_all(&app.sync_history);
@@ -1210,13 +1209,17 @@ fn run_tui(mut app: App) -> Result<()> {
                 ) {
                     Ok(()) => {
                         if let Some((ref msg, is_error)) = vault_msg {
-                            app.set_status(msg.clone(), is_error);
+                            if is_error {
+                                app.notify_error(msg.clone());
+                            } else {
+                                app.notify(msg.clone());
+                            }
                         } else {
-                            app.set_status(format!("Opened {} in new tmux window.", alias), false);
+                            app.notify(format!("Opened {} in new tmux window.", alias));
                         }
                     }
                     Err(e) => {
-                        app.set_status(format!("tmux: {e}"), true);
+                        app.notify_error(format!("tmux: {e}"));
                     }
                 }
             } else {
@@ -1279,15 +1282,19 @@ fn run_tui(mut app: App) -> Result<()> {
                                 } else {
                                     format!("SSH to {} exited with code {}.", alias, code)
                                 };
-                                app.set_status(msg, true);
+                                app.notify_error(msg);
                             }
                         } else if let Some((ref msg, is_error)) = vault_msg {
-                            app.set_status(msg.clone(), is_error);
+                            if is_error {
+                                app.notify_error(msg.clone());
+                            } else {
+                                app.notify(msg.clone());
+                            }
                         }
                     }
                     Err(e) => {
                         eprintln!("Connection failed: {}", e);
-                        app.set_status(format!("Connection to {} failed.", alias), true);
+                        app.notify_error(format!("Connection to {} failed.", alias));
                     }
                 }
                 askpass::cleanup_marker(&alias);

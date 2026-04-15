@@ -193,7 +193,7 @@ fn maybe_smart_paste(app: &mut App) {
                 .unwrap_or(&parsed.hostname)
                 .to_string();
             app.form.alias = clean_alias;
-            app.set_status("Smart-parsed that for you. Check the fields.", false);
+            app.notify("Smart-parsed that for you. Check the fields.");
             log::debug!(
                 "host_form: smart-paste parsed alias={} host={} user={} port={}",
                 app.form.alias,
@@ -223,7 +223,7 @@ fn maybe_smart_paste(app: &mut App) {
         // Copy the value to the Host field as a suggestion. The Name field
         // stays unchanged so the user keeps full control over the alias.
         app.form.hostname = trimmed.to_string();
-        app.set_status("Looks like an address. Suggested as Host.", false);
+        app.notify("Looks like an address. Suggested as Host.");
         log::debug!("host_form: auto-suggest hostname={trimmed}");
     }
 }
@@ -231,16 +231,13 @@ fn maybe_smart_paste(app: &mut App) {
 pub(super) fn submit_form(app: &mut App) {
     // Check for external config changes since form was opened
     if app.config_changed_since_form_open() {
-        app.set_status(
-            "Config changed externally. Press Esc and re-open to pick up changes.",
-            true,
-        );
+        app.notify_error("Config changed externally. Press Esc and re-open to pick up changes.");
         return;
     }
 
     // Validate
     if let Err(msg) = app.form.validate() {
-        app.set_status(msg, true);
+        app.notify_error(msg);
         return;
     }
 
@@ -290,13 +287,13 @@ pub(super) fn submit_form(app: &mut App) {
             // mutation. When set, it overrides the success message because
             // the user needs to see that something on disk failed.
             if let Some(warning) = app.vault.cleanup_warning.take() {
-                app.set_status(warning, true);
+                app.notify_error(warning);
             } else {
-                app.set_status(final_msg, false);
+                app.notify(final_msg);
             }
         }
         Err(msg) => {
-            app.set_status(msg, true);
+            app.notify_error(msg);
             return;
         }
     }

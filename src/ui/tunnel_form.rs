@@ -2,23 +2,22 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
+use super::design;
 use super::theme;
 use crate::app::{App, Screen, TunnelFormField};
 use crate::tunnel::TunnelType;
 
 pub fn render(frame: &mut Frame, app: &mut App) {
-    let area = frame.area();
-
     let title = match &app.screen {
         Screen::TunnelForm {
             alias,
             editing: Some(_),
             ..
-        } => format!(" Tunnels for {} > Edit ", alias),
-        Screen::TunnelForm { alias, .. } => format!(" Tunnels for {} > Add ", alias),
+        } => format!("Tunnels for {} > Edit", alias),
+        Screen::TunnelForm { alias, .. } => format!("Tunnels for {} > Add", alias),
         _ => return,
     };
 
@@ -39,22 +38,17 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let block_height = 2 + fields.len() as u16 * 2;
     let total_height = block_height + 1; // + footer
 
-    let base = super::centered_rect(70, 80, area);
-    let form_area = super::centered_rect_fixed(base.width, total_height, area);
+    let form_area = design::overlay_area(frame, 70, 80, total_height);
     frame.render_widget(Clear, form_area);
 
     let block_area = Rect::new(form_area.x, form_area.y, form_area.width, block_height);
 
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .title(Span::styled(title, theme::brand()))
-        .border_style(theme::accent());
-
+    let block = design::overlay_block(&title);
     let inner = block.inner(block_area);
     frame.render_widget(block, block_area);
 
     for (i, &field) in fields.iter().enumerate() {
-        let divider_y = inner.y + (2 * i) as u16;
+        let divider_y = design::form_divider_y(inner, i);
         let content_y = divider_y + 1;
 
         let is_focused = app.tunnel_form.focused_field == field;
@@ -78,31 +72,36 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 
     // Footer below the block
-    let footer_area = Rect::new(form_area.x, form_area.y + block_height, form_area.width, 1);
-    let footer_spans = if app.pending_discard_confirm {
-        vec![
-            Span::styled(" Discard changes? ", theme::error()),
-            Span::styled(" y ", theme::footer_key()),
-            Span::styled(" yes ", theme::muted()),
-            Span::raw("  "),
-            Span::styled(" Esc ", theme::footer_key()),
-            Span::styled(" no", theme::muted()),
-        ]
+    let footer_area = design::form_footer(form_area, block_height);
+    if app.pending_discard_confirm {
+        let footer = design::Footer::new()
+            .action("y", " yes ")
+            .action("Esc", " no");
+        let mut spans = vec![Span::styled(" Discard changes? ", theme::error())];
+        spans.extend(footer.into_spans());
+        super::render_footer_with_status(frame, footer_area, spans, app);
     } else {
-        vec![
-            Span::styled(" Enter ", theme::footer_key()),
-            Span::styled(" save ", theme::muted()),
-            Span::raw("  "),
-            Span::styled(" Tab ", theme::footer_key()),
-            Span::styled(" next ", theme::muted()),
-            Span::styled(" Space ", theme::footer_key()),
-            Span::styled(" type ", theme::muted()),
-            Span::raw("  "),
-            Span::styled(" Esc ", theme::footer_key()),
-            Span::styled(" cancel", theme::muted()),
-        ]
-    };
-    super::render_footer_with_status(frame, footer_area, footer_spans, app);
+        // Note: the Space keycap sits adjacent to " Tab  next " without a
+        // FOOTER_GAP in the original layout. We replicate that by using
+        // into_spans + manual concat so the pairing stays visually tight.
+        let tab_and_space: Vec<Span<'static>> = {
+            let mut v: Vec<Span<'static>> = Vec::new();
+            let tab = design::Footer::new().action("Tab", " next ").into_spans();
+            v.extend(tab);
+            let space = design::Footer::new().action("Space", " type ").into_spans();
+            v.extend(space);
+            v
+        };
+        let mut spans = design::Footer::new()
+            .primary("Enter", " save ")
+            .into_spans();
+        spans.push(Span::raw(design::FOOTER_GAP));
+        spans.extend(tab_and_space);
+        spans.push(Span::raw(design::FOOTER_GAP));
+        let esc = design::Footer::new().action("Esc", " cancel").into_spans();
+        spans.extend(esc);
+        super::render_footer_with_status(frame, footer_area, spans, app);
+    }
 }
 
 fn render_divider(

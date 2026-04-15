@@ -21,12 +21,12 @@ pub(super) fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
                     let value = rule.to_directive_value();
                     let config_backup = app.config.clone();
                     if !app.config.remove_forward(&alias, &key, &value) {
-                        app.set_status("Tunnel not found in config.", true);
+                        app.notify_error("Tunnel not found in config.");
                         return;
                     }
                     if let Err(e) = app.config.write() {
                         app.config = config_backup;
-                        app.set_status(format!("Failed to save: {}", e), true);
+                        app.notify_error(format!("Failed to save: {}", e));
                     } else {
                         app.update_last_modified();
                         app.refresh_tunnel_list(&alias);
@@ -38,7 +38,7 @@ pub(super) fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
                                 .tunnel_list_state
                                 .select(Some(app.tunnel_list.len() - 1));
                         }
-                        app.set_status("Tunnel removed.", false);
+                        app.notify("Tunnel removed.");
                     }
                 }
             }
@@ -70,7 +70,7 @@ pub(super) fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
             // Check if host is from an included file (read-only)
             if let Some(host) = app.hosts.iter().find(|h| h.alias == alias) {
                 if host.source_file.is_some() {
-                    app.set_status("Included host. Tunnels are read-only.", true);
+                    app.notify_error("Included host. Tunnels are read-only.");
                     return;
                 }
             }
@@ -86,7 +86,7 @@ pub(super) fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
             // Check if host is from an included file (read-only)
             if let Some(host) = app.hosts.iter().find(|h| h.alias == alias) {
                 if host.source_file.is_some() {
-                    app.set_status("Included host. Tunnels are read-only.", true);
+                    app.notify_error("Included host. Tunnels are read-only.");
                     return;
                 }
             }
@@ -106,7 +106,7 @@ pub(super) fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
             // Check if host is from an included file (read-only)
             if let Some(host) = app.hosts.iter().find(|h| h.alias == alias) {
                 if host.source_file.is_some() {
-                    app.set_status("Included host. Tunnels are read-only.", true);
+                    app.notify_error("Included host. Tunnels are read-only.");
                     return;
                 }
             }
@@ -125,12 +125,12 @@ pub(super) fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
                         debug!("[external] Failed to kill tunnel process for {alias}: {e}");
                     }
                     let _ = tunnel.child.wait();
-                    app.set_status(format!("Tunnel for {} stopped.", alias), false);
+                    app.notify(format!("Tunnel for {} stopped.", alias));
                 }
             } else if !app.tunnel_list.is_empty() {
                 // Start
                 if app.demo_mode {
-                    app.set_status("Demo mode. Tunnels disabled.".to_string(), false);
+                    app.notify("Demo mode. Tunnels disabled.".to_string());
                     return;
                 }
                 let askpass = app
@@ -156,10 +156,10 @@ pub(super) fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
                         }
                         app.active_tunnels
                             .insert(alias.clone(), crate::tunnel::ActiveTunnel { child });
-                        app.set_status(format!("Tunnel for {} started.", alias), false);
+                        app.notify(format!("Tunnel for {} started.", alias));
                     }
                     Err(e) => {
-                        app.set_status(format!("Failed to start tunnel: {}", e), true);
+                        app.notify_error(format!("Failed to start tunnel: {}", e));
                     }
                 }
             }
@@ -263,15 +263,12 @@ pub(super) fn handle_tunnel_form(app: &mut App, key: KeyEvent) {
 fn submit_tunnel_form(app: &mut App, alias: &str, editing: Option<usize>) {
     // Check for external config changes since form was opened
     if app.config_changed_since_form_open() {
-        app.set_status(
-            "Config changed externally. Press Esc and re-open to pick up changes.",
-            true,
-        );
+        app.notify_error("Config changed externally. Press Esc and re-open to pick up changes.");
         return;
     }
 
     if let Err(msg) = app.tunnel_form.validate() {
-        app.set_status(msg, true);
+        app.notify_error(msg);
         return;
     }
 
@@ -285,15 +282,12 @@ fn submit_tunnel_form(app: &mut App, alias: &str, editing: Option<usize>) {
             let old_value = old_rule.to_directive_value();
             if !app.config.remove_forward(alias, &old_key, &old_value) {
                 app.config = config_backup;
-                app.set_status("Original tunnel not found in config.", true);
+                app.notify_error("Original tunnel not found in config.");
                 return;
             }
         } else {
             // Index out of bounds (external config change) — abort
-            app.set_status(
-                "Tunnel list changed externally. Press Esc and re-open.",
-                true,
-            );
+            app.notify_error("Tunnel list changed externally. Press Esc and re-open.");
             return;
         }
     }
@@ -304,7 +298,7 @@ fn submit_tunnel_form(app: &mut App, alias: &str, editing: Option<usize>) {
         .has_forward(alias, directive_key, &directive_value)
     {
         app.config = config_backup;
-        app.set_status("Duplicate tunnel already configured.", true);
+        app.notify_error("Duplicate tunnel already configured.");
         return;
     }
 
@@ -312,7 +306,7 @@ fn submit_tunnel_form(app: &mut App, alias: &str, editing: Option<usize>) {
         .add_forward(alias, directive_key, &directive_value);
     if let Err(e) = app.config.write() {
         app.config = config_backup;
-        app.set_status(format!("Failed to save: {}", e), true);
+        app.notify_error(format!("Failed to save: {}", e));
         return;
     }
 
@@ -335,7 +329,7 @@ fn submit_tunnel_form(app: &mut App, alias: &str, editing: Option<usize>) {
     }
     app.clear_form_mtime();
     app.tunnel_form_baseline = None;
-    app.set_status("Tunnel saved.", false);
+    app.notify("Tunnel saved.");
     app.screen = Screen::TunnelList {
         alias: alias.to_string(),
     };

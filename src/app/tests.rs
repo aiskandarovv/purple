@@ -6255,7 +6255,7 @@ fn snippet_param_form_not_dirty_empty_params() {
 #[test]
 fn tick_status_sticky_never_expires() {
     let mut app = make_app("");
-    app.set_sticky_status("vault signing...", false);
+    app.notify_progress("vault signing...");
     for _ in 0..50 {
         app.tick_status();
     }
@@ -6265,7 +6265,7 @@ fn tick_status_sticky_never_expires() {
 #[test]
 fn tick_toast_non_sticky_error_expires() {
     let mut app = make_app("");
-    app.set_status("failed", true);
+    app.notify_error("failed");
     assert!(app.toast.is_some(), "error should route to toast");
     for _ in 0..=20 {
         app.tick_toast();
@@ -6279,7 +6279,7 @@ fn tick_toast_non_sticky_error_expires() {
 #[test]
 fn tick_toast_non_sticky_success_expires() {
     let mut app = make_app("");
-    app.set_status("done", false);
+    app.notify("done");
     assert!(app.toast.is_some(), "confirmation should route to toast");
     for _ in 0..=16 {
         app.tick_toast();
@@ -6291,69 +6291,69 @@ fn tick_toast_non_sticky_success_expires() {
 }
 
 #[test]
-fn set_status_does_not_overwrite_sticky() {
+fn notify_does_not_overwrite_sticky() {
     let mut app = make_app("");
-    app.set_sticky_status("signing...", false);
-    app.set_background_status("ping expired", false);
+    app.notify_progress("signing...");
+    app.notify_background("ping expired");
     assert_eq!(
         app.status.as_ref().unwrap().text,
         "signing...",
-        "set_background_status must not overwrite sticky"
+        "notify_background must not overwrite sticky"
     );
 }
 
 #[test]
-fn set_sticky_status_replaces_sticky() {
+fn notify_progress_replaces_sticky() {
     let mut app = make_app("");
-    app.set_sticky_status("signing...", false);
-    app.set_sticky_status("done signing", true);
+    app.notify_progress("signing...");
+    app.notify_sticky_error("done signing");
     assert_eq!(
         app.status.as_ref().unwrap().text,
         "done signing",
-        "set_sticky_status must replace sticky"
+        "notify_sticky_error must replace sticky"
     );
 }
 
 #[test]
-fn set_status_routes_confirmation_to_toast() {
+fn notify_routes_confirmation_to_toast() {
     let mut app = make_app("");
-    app.set_sticky_status("signing...", false);
-    // set_status (Confirmation) routes to toast, sticky footer stays
-    app.set_status("Signed 3 of 3 certificates.", false);
+    app.notify_progress("signing...");
+    // notify (Confirmation) routes to toast, sticky footer stays
+    app.notify("Signed 3 of 3 certificates.");
     assert_eq!(
         app.toast.as_ref().unwrap().text,
         "Signed 3 of 3 certificates.",
-        "set_status(false) must route to toast"
+        "notify must route to toast"
     );
     // Sticky footer is still there
     assert!(app.status.as_ref().unwrap().sticky);
 }
 
-// Gap 1: set_status on a fresh app with no prior status at all.
+// Gap 1: notify on a fresh app with no prior status at all.
 #[test]
-fn set_status_routes_to_toast_when_none() {
+fn notify_routes_to_toast_when_none() {
     let mut app = make_app("");
     assert!(app.toast.is_none(), "precondition: fresh app has no toast");
-    app.set_status("connected", false);
+    app.notify("connected");
     assert_eq!(
         app.toast.as_ref().unwrap().text,
         "connected",
-        "set_status(false) must route to toast"
+        "notify must route to toast"
     );
 }
 
-// Gap 2: set_status is still blocked after the sticky is replaced by a second set_sticky_status.
+// Gap 2: notify_background is still blocked after the sticky is replaced by a second notify_progress.
 // Verifies that the blocking invariant holds for the replacement sticky, not just the first one.
 #[test]
-fn set_background_status_blocked_after_sticky_replaced_by_sticky() {
+fn notify_background_blocked_after_sticky_replaced_by_sticky() {
     let mut app = make_app("");
-    app.set_sticky_status("signing...", false);
-    app.set_sticky_status("still signing...", false);
-    app.set_background_status("ping expired", false);
+    app.notify_progress("signing...");
+    app.notify_progress("still signing...");
+    app.notify_background("ping expired");
     assert_eq!(
         app.status.as_ref().unwrap().text,
         "still signing...",
-        "set_background_status must not overwrite the replacement sticky"
+        "notify_background must not overwrite the replacement sticky"
     );
 }
 
@@ -6361,7 +6361,7 @@ fn set_background_status_blocked_after_sticky_replaced_by_sticky() {
 #[test]
 fn tick_status_sticky_text_unchanged() {
     let mut app = make_app("");
-    app.set_sticky_status("vault signing...", false);
+    app.notify_progress("vault signing...");
     for _ in 0..50 {
         app.tick_status();
     }
@@ -6377,14 +6377,14 @@ fn tick_status_sticky_text_unchanged() {
 }
 
 // Gap 4: documents the user-action contract: while a sticky Vault signing message is active,
-// any incidental set_status call (e.g. from a navigation handler) is suppressed.
+// any incidental notify call (e.g. from a navigation handler) is suppressed.
 // This is intentional: Vault SSH signing feedback is more important than transient nav feedback.
 #[test]
-fn set_background_status_suppressed_during_vault_signing() {
+fn notify_background_suppressed_during_vault_signing() {
     let mut app = make_app("");
-    app.set_sticky_status("Signing certificate...", false);
+    app.notify_progress("Signing certificate...");
     // Background event (ping, tunnel) must not clobber signing status
-    app.set_background_status("Ping expired.", false);
+    app.notify_background("Ping expired.");
     assert_eq!(
         app.status.as_ref().unwrap().text,
         "Signing certificate...",
@@ -6394,22 +6394,22 @@ fn set_background_status_suppressed_during_vault_signing() {
 }
 
 #[test]
-fn set_background_status_works_when_no_sticky() {
+fn notify_background_works_when_no_sticky() {
     let mut app = make_app("");
-    app.set_background_status("ping expired", false);
+    app.notify_background("ping expired");
     assert_eq!(app.status.as_ref().unwrap().text, "ping expired");
 }
 
 #[test]
-fn set_background_error_goes_to_toast_even_with_sticky_and_existing_toast() {
+fn notify_background_error_goes_to_toast_even_with_sticky_and_existing_toast() {
     let mut app = make_app("");
     // Sticky progress in footer
-    app.set_sticky_status("Signing...", false);
+    app.notify_progress("Signing...");
     // First toast already active
-    app.set_status("Copied host", false);
+    app.notify("Copied host");
     assert!(app.toast.is_some());
     // Background error should queue to toast, not touch footer
-    app.set_background_status("Sync failed", true);
+    app.notify_background_error("Sync failed");
     assert_eq!(app.status.as_ref().unwrap().text, "Signing...");
     assert!(app.status.as_ref().unwrap().sticky);
     assert_eq!(app.toast.as_ref().unwrap().text, "Copied host");
@@ -6422,15 +6422,15 @@ fn set_background_error_goes_to_toast_even_with_sticky_and_existing_toast() {
 fn vault_signing_lifecycle() {
     let mut app = make_app("");
     // 1. Signing starts: sticky progress in footer
-    app.set_sticky_status("Signing certificate...", false);
+    app.notify_progress("Signing certificate...");
     assert!(app.status.as_ref().unwrap().sticky);
 
     // 2. Background event must not clobber sticky footer
-    app.set_background_status("Ping expired.", false);
+    app.notify_background("Ping expired.");
     assert_eq!(app.status.as_ref().unwrap().text, "Signing certificate...");
 
     // 3. Signing error routes to toast, sticky footer stays
-    app.set_status("Vault SSH: failed to sign host: timeout", true);
+    app.notify_error("Vault SSH: failed to sign host: timeout");
     assert!(app.toast.as_ref().unwrap().is_error());
     assert_eq!(
         app.toast.as_ref().unwrap().text,
@@ -6440,12 +6440,12 @@ fn vault_signing_lifecycle() {
     assert!(app.status.as_ref().unwrap().sticky);
 
     // 4. Final summary replaces sticky footer with sticky error
-    app.set_sticky_status("Signed 0 of 1 certificate. 1 failed: timeout", true);
+    app.notify_sticky_error("Signed 0 of 1 certificate. 1 failed: timeout");
     assert!(app.status.as_ref().unwrap().sticky);
     assert!(app.status.as_ref().unwrap().is_error());
 
     // 5. Background non-error cannot clobber sticky footer
-    app.set_background_status("Config reloaded. 5 hosts.", false);
+    app.notify_background("Config reloaded. 5 hosts.");
     assert_eq!(
         app.status.as_ref().unwrap().text,
         "Signed 0 of 1 certificate. 1 failed: timeout"
@@ -6456,11 +6456,11 @@ fn vault_signing_lifecycle() {
 fn vault_signing_success_clears_sticky_progress() {
     let mut app = make_app("");
     // Sticky progress during signing
-    app.set_sticky_status("Signing 3/3: last-server (V to cancel)", false);
+    app.notify_progress("Signing 3/3: last-server (V to cancel)");
     assert!(app.status.as_ref().unwrap().sticky);
 
-    // Success summary via set_info_status replaces sticky footer
-    app.set_info_status("Signed 3 of 3 certificates.");
+    // Success summary via notify_info replaces sticky footer
+    app.notify_info("Signed 3 of 3 certificates.");
     assert!(!app.status.as_ref().unwrap().sticky);
     assert_eq!(
         app.status.as_ref().unwrap().text,
@@ -6471,9 +6471,9 @@ fn vault_signing_success_clears_sticky_progress() {
 #[test]
 fn confirmation_replaces_previous_toast() {
     let mut app = make_app("");
-    app.set_status("first", false);
-    app.set_status("second", false);
-    app.set_status("third", false);
+    app.notify("first");
+    app.notify("second");
+    app.notify("third");
     // Confirmations replace immediately, no queue
     assert_eq!(app.toast.as_ref().unwrap().text, "third");
     assert!(app.toast_queue.is_empty());
@@ -6482,11 +6482,11 @@ fn confirmation_replaces_previous_toast() {
 #[test]
 fn confirmation_clears_alert_queue() {
     let mut app = make_app("");
-    app.set_status("err1", true);
-    app.set_status("err2", true);
+    app.notify_error("err1");
+    app.notify_error("err2");
     assert_eq!(app.toast_queue.len(), 1);
     // Confirmation replaces active toast and clears queue
-    app.set_status("copied", false);
+    app.notify("copied");
     assert_eq!(app.toast.as_ref().unwrap().text, "copied");
     assert!(app.toast_queue.is_empty());
 }
@@ -6494,9 +6494,9 @@ fn confirmation_clears_alert_queue() {
 #[test]
 fn alert_queue_sequential_display() {
     let mut app = make_app("");
-    app.set_status("err1", true);
-    app.set_status("err2", true);
-    app.set_status("err3", true);
+    app.notify_error("err1");
+    app.notify_error("err2");
+    app.notify_error("err3");
     assert_eq!(app.toast.as_ref().unwrap().text, "err1");
     assert_eq!(app.toast_queue.len(), 2);
     for _ in 0..=20 {
@@ -6515,7 +6515,7 @@ fn alert_queue_sequential_display() {
 fn alert_queue_max_five() {
     let mut app = make_app("");
     for i in 0..8 {
-        app.set_status(format!("err{i}"), true);
+        app.notify_error(format!("err{i}"));
     }
     assert_eq!(app.toast.as_ref().unwrap().text, "err0");
     assert_eq!(app.toast_queue.len(), 5);
@@ -6526,8 +6526,8 @@ fn alert_queue_max_five() {
 #[test]
 fn alert_queue_drains_fully() {
     let mut app = make_app("");
-    app.set_status("a", true);
-    app.set_status("b", true);
+    app.notify_error("a");
+    app.notify_error("b");
     for _ in 0..=20 {
         app.tick_toast();
     }
@@ -6539,9 +6539,9 @@ fn alert_queue_drains_fully() {
 }
 
 #[test]
-fn set_info_status_goes_to_footer() {
+fn notify_info_goes_to_footer() {
     let mut app = make_app("");
-    app.set_info_status("Syncing...");
+    app.notify_info("Syncing...");
     assert!(app.toast.is_none());
     assert_eq!(app.status.as_ref().unwrap().text, "Syncing...");
     assert_eq!(app.status.as_ref().unwrap().class, MessageClass::Info);
@@ -6550,7 +6550,7 @@ fn set_info_status_goes_to_footer() {
 #[test]
 fn tick_status_info_expires() {
     let mut app = make_app("");
-    app.set_info_status("done");
+    app.notify_info("done");
     for _ in 0..=16 {
         app.tick_status();
     }
@@ -6560,7 +6560,7 @@ fn tick_status_info_expires() {
 #[test]
 fn tick_status_does_not_expire_while_syncing() {
     let mut app = make_app("");
-    app.set_info_status("syncing...");
+    app.notify_info("syncing...");
     app.syncing_providers
         .insert("aws".to_string(), Arc::new(AtomicBool::new(true)));
     for _ in 0..30 {
@@ -6583,7 +6583,7 @@ fn tick_status_does_not_expire_while_syncing() {
 #[test]
 fn tick_toast_alert_expires() {
     let mut app = make_app("");
-    app.set_status("failed", true);
+    app.notify_error("failed");
     assert!(app.toast.is_some());
     assert!(app.status.is_none());
     for _ in 0..=20 {
@@ -6595,7 +6595,7 @@ fn tick_toast_alert_expires() {
 #[test]
 fn tick_toast_confirmation_expires() {
     let mut app = make_app("");
-    app.set_status("done", false);
+    app.notify("done");
     assert!(app.toast.is_some());
     for _ in 0..=16 {
         app.tick_toast();
@@ -6606,7 +6606,7 @@ fn tick_toast_confirmation_expires() {
 #[test]
 fn tick_toast_confirmation_still_visible_before_expiry() {
     let mut app = make_app("");
-    app.set_status("done", false);
+    app.notify("done");
     assert!(app.toast.is_some());
     // 16 ticks is the timeout; tick_count must exceed it to expire.
     // After 16 calls tick_count = 16, which is NOT > 16, so toast stays.

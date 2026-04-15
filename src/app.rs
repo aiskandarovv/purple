@@ -372,10 +372,10 @@ impl App {
         // call flush_pending_vault_write() itself to avoid recursion.
         if self.pending_vault_config_write && !self.is_form_open() {
             if let Err(e) = self.config.write() {
-                self.set_status(
-                    format!("Failed to update config after vault signing: {}", e),
-                    true,
-                );
+                self.notify_error(format!(
+                    "Failed to update config after vault signing: {}",
+                    e
+                ));
             }
         }
         // Always clear the flag: either we flushed, or the form-submit path
@@ -551,6 +551,7 @@ impl App {
         true
     }
 
+    #[deprecated(note = "use notify() / notify_error() instead")]
     pub fn set_status(&mut self, text: impl Into<String>, is_error: bool) {
         let class = if is_error {
             MessageClass::Alert
@@ -581,7 +582,7 @@ impl App {
             self.toast = Some(msg);
             self.toast_queue.clear();
         } else if self.toast.is_some() {
-            if self.toast_queue.len() >= 5 {
+            if self.toast_queue.len() >= crate::ui::design::TOAST_QUEUE_MAX {
                 if let Some(dropped) = self.toast_queue.front() {
                     log::debug!("toast queue full, dropping: {}", dropped.text);
                 }
@@ -594,6 +595,7 @@ impl App {
     }
 
     /// Set an Info-class status message that displays in the footer only.
+    #[deprecated(note = "use notify_info() instead")]
     pub fn set_info_status(&mut self, text: impl Into<String>) {
         let text = text.into();
         log::debug!("footer <- Info: {}", text);
@@ -605,10 +607,11 @@ impl App {
         });
     }
 
-    /// Like `set_status` but skips the write when a sticky message is active.
+    /// Like `notify` but skips the write when a sticky message is active.
     /// Use for background/timer events (ping expiry, sync ticks) that must
     /// not clobber an in-progress or critical sticky message.
     /// Routes to Info (footer) by default, Alert to toast if is_error.
+    #[deprecated(note = "use notify_background() / notify_background_error() instead")]
     pub fn set_background_status(&mut self, text: impl Into<String>, is_error: bool) {
         if is_error {
             let msg = StatusMessage {
@@ -624,13 +627,14 @@ impl App {
             log::debug!("background status suppressed (sticky active)");
             return;
         }
-        self.set_info_status(text);
+        self.notify_info(text);
     }
 
     /// Sticky messages always go to the footer (`self.status`), even when the
     /// class is Alert. The `sticky` flag overrides the normal toast routing
     /// because sticky messages (Vault SSH signing summaries, progress spinners)
     /// must remain visible in the footer until explicitly replaced.
+    #[deprecated(note = "use notify_progress() / notify_sticky_error() instead")]
     pub fn set_sticky_status(&mut self, text: impl Into<String>, is_error: bool) {
         let text = text.into();
         let class = if is_error {
@@ -645,6 +649,52 @@ impl App {
             tick_count: 0,
             sticky: true,
         });
+    }
+
+    /// User action feedback → toast (4s, last-write-wins).
+    /// For: copy, sort, delete, save, demo mode messages.
+    #[allow(deprecated)]
+    pub fn notify(&mut self, text: impl Into<String>) {
+        self.set_status(text, false);
+    }
+
+    /// User action error → toast queue (5s, max 5).
+    #[allow(deprecated)]
+    pub fn notify_error(&mut self, text: impl Into<String>) {
+        self.set_status(text, true);
+    }
+
+    /// Background event → footer (4s, suppressed if sticky active).
+    /// For: ping expiry, sync progress, tunnel exit.
+    #[allow(deprecated)]
+    pub fn notify_background(&mut self, text: impl Into<String>) {
+        self.set_background_status(text, false);
+    }
+
+    /// Background error → toast queue (bypasses sticky suppression).
+    #[allow(deprecated)]
+    pub fn notify_background_error(&mut self, text: impl Into<String>) {
+        self.set_background_status(text, true);
+    }
+
+    /// Long-running progress → footer sticky (never expires).
+    /// For: Vault SSH signing, multi-step operations.
+    #[allow(deprecated)]
+    pub fn notify_progress(&mut self, text: impl Into<String>) {
+        self.set_sticky_status(text, false);
+    }
+
+    /// Sticky error → footer sticky.
+    #[allow(deprecated)]
+    pub fn notify_sticky_error(&mut self, text: impl Into<String>) {
+        self.set_sticky_status(text, true);
+    }
+
+    /// Explicit info → footer (4s, not suppressed).
+    /// For: config reload, sync complete.
+    #[allow(deprecated)]
+    pub fn notify_info(&mut self, text: impl Into<String>) {
+        self.set_info_status(text);
     }
 
     /// Tick the footer status message timer. Info shows for 4s.
@@ -741,7 +791,7 @@ impl App {
                 self.reload.include_mtimes = Self::snapshot_include_mtimes(&self.config);
                 self.reload.include_dir_mtimes = Self::snapshot_include_dir_mtimes(&self.config);
                 let count = self.hosts.len();
-                self.set_background_status(format!("Config reloaded. {} hosts.", count), false);
+                self.notify_background(format!("Config reloaded. {} hosts.", count));
             }
         }
     }

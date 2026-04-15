@@ -1,35 +1,27 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, Paragraph};
+use ratatui::widgets::{Clear, List, ListItem, Paragraph};
 
+use super::design;
 use super::theme;
 use crate::app::App;
 
 pub fn render(frame: &mut Frame, app: &mut App) {
     let title = if app.keys.is_empty() {
-        Span::styled(" SSH Keys ", theme::brand())
+        "SSH Keys".to_string()
     } else {
         let pos = app.ui.key_list_state.selected().map(|i| i + 1).unwrap_or(0);
-        Span::styled(
-            format!(" SSH Keys {}/{} ", pos, app.keys.len()),
-            theme::brand(),
-        )
+        format!("SSH Keys {}/{}", pos, app.keys.len())
     };
 
     // Overlay: percentage-based width, height fits content
     let item_count = app.keys.len().max(1);
     let height = (item_count as u16 + 7).min(frame.area().height.saturating_sub(4));
-    let area = {
-        let r = super::centered_rect(70, 80, frame.area());
-        super::centered_rect_fixed(r.width, height, frame.area())
-    };
+    let area = design::overlay_area(frame, 70, 80, height);
     frame.render_widget(Clear, area);
 
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .title(title)
-        .border_style(theme::accent());
+    let block = design::overlay_block(&title);
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -93,15 +85,15 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Column header
     let mut header_spans = vec![
-        Span::styled(format!("   {:<name_w$}", "NAME"), theme::muted()),
+        Span::styled(format!("   {:<name_w$}", "NAME"), theme::bold()),
         Span::raw(gap_str.clone()),
-        Span::styled(format!("{:<type_w$}", "TYPE"), theme::muted()),
+        Span::styled(format!("{:<type_w$}", "TYPE"), theme::bold()),
         Span::raw(gap_str.clone()),
-        Span::styled(format!("{:<hosts_w$}", "HOSTS"), theme::muted()),
+        Span::styled(format!("{:<hosts_w$}", "HOSTS"), theme::bold()),
     ];
     if comment_w > 0 {
         header_spans.push(Span::raw(flex_str.clone()));
-        header_spans.push(Span::styled("COMMENT", theme::muted()));
+        header_spans.push(Span::styled("COMMENT", theme::bold()));
     }
     let header = Line::from(header_spans);
 
@@ -148,19 +140,15 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     let list = List::new(items)
         .highlight_style(theme::selected_row())
-        .highlight_symbol("  ");
+        .highlight_symbol(design::LIST_HIGHLIGHT);
 
     frame.render_stateful_widget(list, inner_chunks[1], &mut app.ui.key_list_state);
 
     // Footer
-    let spans = vec![
-        Span::styled(" Enter ", theme::footer_key()),
-        Span::styled(" details ", theme::muted()),
-        Span::raw("  "),
-        Span::styled(" Esc ", theme::footer_key()),
-        Span::styled(" back", theme::muted()),
-    ];
-    super::render_footer_with_status(frame, inner_chunks[3], spans, app);
+    design::Footer::new()
+        .primary("Enter", " details ")
+        .action("Esc", " back")
+        .render_with_status(frame, inner_chunks[3], app);
 }
 
 #[cfg(test)]

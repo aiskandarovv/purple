@@ -940,7 +940,7 @@ fn known_hosts_count_not_reset_on_import_error() {
     let mut app = empty_app();
     app.known_hosts_count = 5;
     // The Err branch only sets status, doesn't touch known_hosts_count
-    app.set_status("some error", true);
+    app.notify_error("some error");
     assert_eq!(app.known_hosts_count, 5);
 }
 
@@ -1002,20 +1002,84 @@ fn cheat_sheet_k_before_s_in_tools() {
 
 #[test]
 fn confirm_import_dialog_has_same_structure_as_confirm_delete() {
-    // Both dialogs use: Block + rounded borders + 4 text lines
-    // (blank, question, blank, y/Esc footer)
-    // ConfirmDelete: 48x7, ConfirmImport: 52x7
-    // Verify by checking source structure
-    let source = include_str!("ui/confirm_dialog.rs");
+    // Render both dialogs into TestBackend buffers and assert they share
+    // structural invariants: rounded top border, 7-row height, and the
+    // y / Esc footer glyphs. This replaces the earlier source-grep check
+    // with an end-to-end render verification.
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::buffer::Buffer;
 
-    // Both use BorderType::Rounded
-    let rounded_count = source.matches("BorderType::Rounded").count();
-    assert!(rounded_count >= 4, "all dialogs should use rounded borders");
+    fn row_contains(buf: &Buffer, row: u16, needle: &str) -> bool {
+        let mut line = String::new();
+        for x in 0..buf.area.width {
+            line.push_str(buf[(x, row)].symbol());
+        }
+        line.contains(needle)
+    }
 
-    // ConfirmImport uses footer_key for y (not danger, since import is not destructive)
+    fn find_top_border_row(buf: &Buffer) -> u16 {
+        for y in 0..buf.area.height {
+            if row_contains(buf, y, "\u{256D}") && row_contains(buf, y, "\u{256E}") {
+                return y;
+            }
+        }
+        panic!("no rounded top-border row found in rendered dialog");
+    }
+
+    fn find_bottom_border_row(buf: &Buffer) -> u16 {
+        for y in (0..buf.area.height).rev() {
+            if row_contains(buf, y, "\u{2570}") && row_contains(buf, y, "\u{256F}") {
+                return y;
+            }
+        }
+        panic!("no rounded bottom-border row found in rendered dialog");
+    }
+
+    // --- ConfirmDelete ---
+    let app = empty_app();
+    let backend = TestBackend::new(80, 24);
+    let mut term = Terminal::new(backend).unwrap();
+    term.draw(|f| crate::ui::confirm_dialog::render(f, &app, "example"))
+        .unwrap();
+    let delete_buf = term.backend().buffer().clone();
+    let delete_top = find_top_border_row(&delete_buf);
+    let delete_bottom = find_bottom_border_row(&delete_buf);
+    assert_eq!(
+        delete_bottom - delete_top + 1,
+        7,
+        "ConfirmDelete dialog height should be 7 rows"
+    );
     assert!(
-        source.contains(r#"Span::styled(" y ", theme::footer_key())"#),
-        "import dialog y should use footer_key"
+        (delete_top..=delete_bottom).any(|y| row_contains(&delete_buf, y, "y")),
+        "ConfirmDelete dialog should contain 'y' key in footer"
+    );
+    assert!(
+        (delete_top..=delete_bottom).any(|y| row_contains(&delete_buf, y, "Esc")),
+        "ConfirmDelete dialog should contain 'Esc' key in footer"
+    );
+
+    // --- ConfirmImport ---
+    let app = empty_app();
+    let backend = TestBackend::new(80, 24);
+    let mut term = Terminal::new(backend).unwrap();
+    term.draw(|f| crate::ui::confirm_dialog::render_confirm_import(f, &app, 5))
+        .unwrap();
+    let import_buf = term.backend().buffer().clone();
+    let import_top = find_top_border_row(&import_buf);
+    let import_bottom = find_bottom_border_row(&import_buf);
+    assert_eq!(
+        import_bottom - import_top + 1,
+        7,
+        "ConfirmImport dialog height should be 7 rows"
+    );
+    assert!(
+        (import_top..=import_bottom).any(|y| row_contains(&import_buf, y, "y")),
+        "ConfirmImport dialog should contain 'y' key in footer"
+    );
+    assert!(
+        (import_top..=import_bottom).any(|y| row_contains(&import_buf, y, "Esc")),
+        "ConfirmImport dialog should contain 'Esc' key in footer"
     );
 }
 

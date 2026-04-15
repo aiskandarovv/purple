@@ -1,9 +1,10 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
+use super::design;
 use super::theme;
 use crate::app::{App, Screen};
 
@@ -19,7 +20,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     };
 
     let area = frame.area();
-    let title = format!(" Parameters for '{}' ", super::truncate(&snippet.name, 30));
+    let title = format!("Parameters for '{}'", super::truncate(&snippet.name, 30));
 
     let scroll = form.scroll_offset;
     let max_visible = form.params.len().min(8);
@@ -30,20 +31,15 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let block_height = 2 + rendered_count as u16 * 2 + 2;
     let total_height = block_height + 1; // + footer
 
-    let base = super::centered_rect(60, 80, area);
     // Clamp total_height to available terminal space
     let clamped_height = total_height.min(area.height.saturating_sub(2));
-    let form_area = super::centered_rect_fixed(base.width, clamped_height, area);
+    let form_area = design::overlay_area(frame, 60, 80, clamped_height);
     frame.render_widget(Clear, form_area);
 
     let block_height = block_height.min(form_area.height.saturating_sub(1));
     let block_area = Rect::new(form_area.x, form_area.y, form_area.width, block_height);
 
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .title(Span::styled(title, theme::brand()))
-        .border_style(theme::accent());
-
+    let block = design::overlay_block(&title);
     let inner = block.inner(block_area);
     frame.render_widget(block, block_area);
 
@@ -65,7 +61,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // Render visible parameter fields
     let end = (scroll + actual_visible).min(param_count);
     for (vi, pi) in (scroll..end).enumerate() {
-        let divider_y = inner.y + (2 * vi) as u16;
+        let divider_y = design::form_divider_y(inner, vi);
         let content_y = divider_y + 1;
 
         // Bounds check: skip if we'd render outside the inner area
@@ -146,30 +142,21 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 
     // Footer below the block
-    let footer_y = form_area.y + block_height;
-    if footer_y < form_area.y + form_area.height {
-        let footer_area = Rect::new(form_area.x, footer_y, form_area.width, 1);
-        let footer_spans = if app.pending_discard_confirm {
-            vec![
-                Span::styled(" Discard changes? ", theme::error()),
-                Span::styled(" y ", theme::footer_key()),
-                Span::styled(" yes ", theme::muted()),
-                Span::raw("  "),
-                Span::styled(" Esc ", theme::footer_key()),
-                Span::styled(" no", theme::muted()),
-            ]
+    let footer_area = design::form_footer(form_area, block_height);
+    if footer_area.y < form_area.y + form_area.height {
+        if app.pending_discard_confirm {
+            let footer = design::Footer::new()
+                .action("y", " yes ")
+                .action("Esc", " no");
+            let mut spans = vec![Span::styled(" Discard changes? ", theme::error())];
+            spans.extend(footer.into_spans());
+            super::render_footer_with_status(frame, footer_area, spans, app);
         } else {
-            vec![
-                Span::styled(" Enter ", theme::footer_key()),
-                Span::styled(" run ", theme::muted()),
-                Span::raw("  "),
-                Span::styled(" Tab ", theme::footer_key()),
-                Span::styled(" next ", theme::muted()),
-                Span::raw("  "),
-                Span::styled(" Esc ", theme::footer_key()),
-                Span::styled(" cancel", theme::muted()),
-            ]
-        };
-        super::render_footer_with_status(frame, footer_area, footer_spans, app);
+            design::Footer::new()
+                .primary("Enter", " run ")
+                .action("Tab", " next ")
+                .action("Esc", " cancel")
+                .render_with_status(frame, footer_area, app);
+        }
     }
 }

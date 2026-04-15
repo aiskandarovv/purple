@@ -1,8 +1,8 @@
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, Paragraph};
+use ratatui::widgets::{Clear, List, ListItem, Paragraph};
 
+use super::design;
 use super::theme;
 use crate::app::App;
 
@@ -13,39 +13,21 @@ pub fn render(frame: &mut Frame, app: &mut App, alias: &str) {
         .iter()
         .any(|h| h.alias == alias && h.source_file.is_some());
 
-    // Title
-    let mut title_spans = vec![Span::styled(
-        format!(" Tunnels for {} ", alias),
-        theme::brand(),
-    )];
-    if is_active {
-        title_spans.push(Span::styled("[running] ", theme::success()));
-    }
-    let title = Line::from(title_spans);
-
     // Overlay: percentage-based width, height fits content
     let item_count = app.tunnel_list.len().max(1);
     let height = (item_count as u16 + 6).min(frame.area().height.saturating_sub(4));
-    let area = {
-        let r = super::centered_rect(70, 80, frame.area());
-        super::centered_rect_fixed(r.width, height, frame.area())
-    };
+    let area = design::overlay_area(frame, 70, 80, height);
     frame.render_widget(Clear, area);
 
-    let block = Block::bordered()
-        .border_type(BorderType::Rounded)
-        .title(title)
-        .border_style(theme::accent());
+    let mut block = design::overlay_block(&format!("Tunnels for {}", alias));
+    if is_active {
+        block = block.title_top(Line::from(Span::styled("[running] ", theme::success())));
+    }
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let chunks = Layout::vertical([
-        Constraint::Min(0),
-        Constraint::Length(1),
-        Constraint::Length(1),
-    ])
-    .split(inner);
+    let (content, footer) = design::content_and_footer(inner);
 
     if app.tunnel_list.is_empty() {
         let msg = if is_readonly {
@@ -53,7 +35,7 @@ pub fn render(frame: &mut Frame, app: &mut App, alias: &str) {
         } else {
             "  No tunnels. Press 'a' to add one."
         };
-        frame.render_widget(Paragraph::new(msg).style(theme::muted()), chunks[0]);
+        frame.render_widget(Paragraph::new(msg).style(theme::muted()), content);
     } else {
         let items: Vec<ListItem> = app
             .tunnel_list
@@ -89,58 +71,36 @@ pub fn render(frame: &mut Frame, app: &mut App, alias: &str) {
 
         let list = List::new(items)
             .highlight_style(theme::selected_row())
-            .highlight_symbol("  ");
+            .highlight_symbol(design::LIST_HIGHLIGHT);
 
-        frame.render_stateful_widget(list, chunks[0], &mut app.ui.tunnel_list_state);
+        frame.render_stateful_widget(list, content, &mut app.ui.tunnel_list_state);
     }
 
     // Footer
     if app.pending_tunnel_delete.is_some() {
-        super::render_footer_with_status(
-            frame,
-            chunks[2],
-            vec![
-                Span::styled(" Remove tunnel? ", theme::bold()),
-                Span::styled(" y ", theme::footer_key()),
-                Span::styled(" yes ", theme::muted()),
-                Span::raw("  "),
-                Span::styled(" Esc ", theme::footer_key()),
-                Span::styled(" no", theme::muted()),
-            ],
-            app,
+        let mut spans = vec![Span::styled(" Remove tunnel? ", theme::bold())];
+        spans.extend(
+            design::Footer::new()
+                .action("y", " yes ")
+                .action("Esc", " no")
+                .into_spans(),
         );
+        super::render_footer_with_status(frame, footer, spans, app);
     } else {
-        let mut spans: Vec<Span<'_>> = Vec::new();
+        let mut f = design::Footer::new();
         if is_active {
-            let [k, l] = super::footer_primary("Enter", " stop ");
-            spans.extend([k, l]);
+            f = f.primary("Enter", " stop ");
         } else if !app.tunnel_list.is_empty() {
-            let [k, l] = super::footer_primary("Enter", " start ");
-            spans.extend([k, l]);
+            f = f.primary("Enter", " start ");
         }
         if !is_readonly {
-            if !spans.is_empty() {
-                spans.push(Span::raw("  "));
-            }
-            let [k, l] = super::footer_action("a", " add ");
-            spans.extend([k, l]);
+            f = f.action("a", " add ");
             if !app.tunnel_list.is_empty() {
-                spans.push(Span::raw("  "));
-                let [k, l] = super::footer_action("e", " edit ");
-                spans.extend([k, l, Span::raw("  ")]);
-                let [k, l] = super::footer_action("d", " del ");
-                spans.extend([k, l]);
+                f = f.action("e", " edit ").action("d", " del ");
             }
         }
-        if spans.is_empty() {
-            let [k, l] = super::footer_action("Esc", " back");
-            spans.extend([k, l]);
-        } else {
-            spans.push(Span::raw("  "));
-            let [k, l] = super::footer_action("Esc", " back");
-            spans.extend([k, l]);
-        }
-        super::render_footer_with_status(frame, chunks[2], spans, app);
+        f = f.action("Esc", " back");
+        f.render_with_status(frame, footer, app);
     }
 }
 

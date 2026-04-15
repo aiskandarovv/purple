@@ -18,21 +18,18 @@ pub(super) fn handle_tag_input(app: &mut App, key: KeyEvent) {
                     if let Err(e) = app.config.write() {
                         // Restore old tags on write failure
                         app.config.set_host_tags(&alias, &old_tags);
-                        app.set_status(format!("Failed to save: {}", e), true);
+                        app.notify_error(format!("Failed to save: {}", e));
                     } else {
                         app.update_last_modified();
                         let count = tags.len();
                         app.reload_hosts();
                         app.select_host_by_alias(&alias);
-                        app.set_status(
-                            format!(
-                                "Tagged {} with {} label{}.",
-                                alias,
-                                count,
-                                if count == 1 { "" } else { "s" }
-                            ),
-                            false,
-                        );
+                        app.notify(format!(
+                            "Tagged {} with {} label{}.",
+                            alias,
+                            count,
+                            if count == 1 { "" } else { "s" }
+                        ));
                     }
                 }
             }
@@ -113,7 +110,7 @@ pub(super) fn handle_host_detail(app: &mut App, key: KeyEvent) {
                 };
                 let alias = host.alias.clone();
                 if let Some(hint) = stale_hint {
-                    app.set_status(format!("Stale host.{}", hint), true);
+                    app.notify_error(format!("Stale host.{}", hint));
                 }
                 app.refresh_tunnel_list(&alias);
                 app.ui.tunnel_list_state = ratatui::widgets::ListState::default();
@@ -132,7 +129,7 @@ pub(super) fn handle_host_detail(app: &mut App, key: KeyEvent) {
                 };
                 let alias = host.alias.clone();
                 if let Some(hint) = stale_hint {
-                    app.set_status(format!("Stale host.{}", hint), true);
+                    app.notify_error(format!("Stale host.{}", hint));
                 }
                 app.screen = Screen::SnippetPicker {
                     target_aliases: vec![alias],
