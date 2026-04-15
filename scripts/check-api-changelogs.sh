@@ -374,8 +374,9 @@ fi
 
 # --- exit code --------------------------------------------------------------
 
-# Exit 1 if new matches found OR if any provider failed to fetch
-if [[ "$HAS_NEW_MATCHES" == true ]] || [[ $FETCH_FAILURES -gt 0 ]]; then
+# Exit 1 only if new keyword matches found. Fetch failures are logged
+# but do not trigger issue creation (those providers use OpenAPI validation).
+if [[ "$HAS_NEW_MATCHES" == true ]]; then
     exit 1
 fi
 
