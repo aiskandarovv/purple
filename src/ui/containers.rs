@@ -218,11 +218,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             let paragraph = Paragraph::new(text).block(block);
             frame.render_widget(paragraph, dialog_area);
 
+            // Stakes test: stop/restart take effect on the remote
+            // immediately. Use the action verb (stop/restart) per CLAUDE.md.
             let footer_area = design::render_overlay_footer(frame, dialog_area);
-            let footer = design::Footer::new()
-                .action("y", " yes ")
-                .action("Esc", " no")
-                .to_line();
+            let footer = design::confirm_footer_destructive(verb, "keep").to_line();
             frame.render_widget(Paragraph::new(footer), footer_area);
         }
     }

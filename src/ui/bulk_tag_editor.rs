@@ -111,20 +111,29 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         frame.render_widget(Paragraph::new(Line::from(spans)), chunks[spacer_idx]);
     }
 
-    // Footer below the block
+    // Footer below the block. Discard prompt takes precedence — uniform
+    // with all other editable surfaces. CLAUDE.md "Keyboard interaction
+    // rules": every dirty-checked surface uses `render_discard_prompt`.
     let footer_area = design::render_overlay_footer(frame, area);
-    let f = if input_active {
-        design::Footer::new()
-            .primary("Enter", " add ")
-            .action("Esc", " cancel")
+    if app.pending_discard_confirm {
+        design::render_discard_prompt(frame, footer_area, app);
     } else {
-        design::Footer::new()
-            .action("Space", " cycle ")
-            .action("+", " new ")
-            .primary("Enter", " ok ")
-            .action("Esc", " back")
-    };
-    f.render_with_status(frame, footer_area, app);
+        let f = if input_active {
+            design::Footer::new()
+                .primary("Enter", " add ")
+                .action("Esc", " cancel")
+        } else {
+            // Stakes test: this is a list-completion action ("apply my
+            // changes"), so primary verb is "apply" not generic "ok".
+            // NNGroup: name a button to explain what it does.
+            design::Footer::new()
+                .action("Space", " cycle ")
+                .action("+", " new ")
+                .primary("Enter", " apply ")
+                .action("Esc", " back")
+        };
+        f.render_with_status(frame, footer_area, app);
+    }
 }
 
 /// Build the rendered line for a single bulk-tag row.

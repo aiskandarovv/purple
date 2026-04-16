@@ -193,12 +193,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             format!(" Remove '{}'? ", super::truncate(name, 20)),
             theme::bold(),
         )];
-        spans.extend(
-            design::Footer::new()
-                .action("y", " yes ")
-                .action("Esc", " no")
-                .into_spans(),
-        );
+        // Stakes test: snippet deletion rewrites the snippet store.
+        spans.extend(design::confirm_footer_destructive("delete", "keep").into_spans());
         super::render_footer_with_status(frame, footer_area, spans, app);
     } else {
         let mut f = design::Footer::new();

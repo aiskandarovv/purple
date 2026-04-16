@@ -17,7 +17,7 @@
 │   ● pve-web-0├─ Remote Port* ─────────────────────────────────────────────────────┤         14h  │
 │   ● pve-web-0│                                                                    │         15h  │
 │   ● pve-db-01╰────────────────────────────────────────────────────────────────────╯x        16h  │
-│   ● pve-db-02 Enter  save    Tab  next  Space  type    Esc  cancel                 x        17h  │
+│   ● pve-db-02 Enter  save    Space  toggle    Tab  next    Esc  cancel             x        17h  │
 │   ● pve-redis          192.168.1.40 ⇄                      cache internal proxmox           18h  │
 │   ● pve-mail           192.168.1.50                        mail internal proxmox            19h  │
 │   ● pve-monitor        192.168.1.60 ⇄                      monitoring internal proxmox      20h  │
@@ -1705,37 +1705,39 @@
 (32,19) fg=White bg=DarkGray mod=-
 (33,19) fg=White bg=DarkGray mod=-
 (34,19) fg=White bg=DarkGray mod=-
-(35,19) fg=Reset bg=Reset mod=DIM
-(36,19) fg=Reset bg=Reset mod=DIM
+(35,19) fg=White bg=DarkGray mod=-
+(36,19) fg=White bg=DarkGray mod=-
 (37,19) fg=Reset bg=Reset mod=DIM
 (38,19) fg=Reset bg=Reset mod=DIM
 (39,19) fg=Reset bg=Reset mod=DIM
 (40,19) fg=Reset bg=Reset mod=DIM
-(41,19) fg=White bg=DarkGray mod=-
-(42,19) fg=White bg=DarkGray mod=-
-(43,19) fg=White bg=DarkGray mod=-
-(44,19) fg=White bg=DarkGray mod=-
-(45,19) fg=White bg=DarkGray mod=-
-(46,19) fg=White bg=DarkGray mod=-
+(41,19) fg=Reset bg=Reset mod=DIM
+(42,19) fg=Reset bg=Reset mod=DIM
+(43,19) fg=Reset bg=Reset mod=DIM
+(44,19) fg=Reset bg=Reset mod=DIM
 (47,19) fg=White bg=DarkGray mod=-
-(48,19) fg=Reset bg=Reset mod=DIM
-(49,19) fg=Reset bg=Reset mod=DIM
-(50,19) fg=Reset bg=Reset mod=DIM
-(51,19) fg=Reset bg=Reset mod=DIM
+(48,19) fg=White bg=DarkGray mod=-
+(49,19) fg=White bg=DarkGray mod=-
+(50,19) fg=White bg=DarkGray mod=-
+(51,19) fg=White bg=DarkGray mod=-
 (52,19) fg=Reset bg=Reset mod=DIM
 (53,19) fg=Reset bg=Reset mod=DIM
-(56,19) fg=White bg=DarkGray mod=-
-(57,19) fg=White bg=DarkGray mod=-
-(58,19) fg=White bg=DarkGray mod=-
-(59,19) fg=White bg=DarkGray mod=-
+(54,19) fg=Reset bg=Reset mod=DIM
+(55,19) fg=Reset bg=Reset mod=DIM
+(56,19) fg=Reset bg=Reset mod=DIM
+(57,19) fg=Reset bg=Reset mod=DIM
 (60,19) fg=White bg=DarkGray mod=-
-(61,19) fg=Reset bg=Reset mod=DIM
-(62,19) fg=Reset bg=Reset mod=DIM
-(63,19) fg=Reset bg=Reset mod=DIM
-(64,19) fg=Reset bg=Reset mod=DIM
+(61,19) fg=White bg=DarkGray mod=-
+(62,19) fg=White bg=DarkGray mod=-
+(63,19) fg=White bg=DarkGray mod=-
+(64,19) fg=White bg=DarkGray mod=-
 (65,19) fg=Reset bg=Reset mod=DIM
 (66,19) fg=Reset bg=Reset mod=DIM
 (67,19) fg=Reset bg=Reset mod=DIM
+(68,19) fg=Reset bg=Reset mod=DIM
+(69,19) fg=Reset bg=Reset mod=DIM
+(70,19) fg=Reset bg=Reset mod=DIM
+(71,19) fg=Reset bg=Reset mod=DIM
 (85,19) fg=DarkGray bg=Reset mod=DIM
 (86,19) fg=DarkGray bg=Reset mod=DIM
 (87,19) fg=DarkGray bg=Reset mod=DIM

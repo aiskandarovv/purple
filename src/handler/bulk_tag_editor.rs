@@ -6,16 +6,43 @@ pub(super) fn handle_bulk_tag_editor_screen(app: &mut App, key: KeyEvent) {
     // When the "new tag" input bar is active, route character input there
     // first so users can type tag names without triggering the row-level
     // keybindings (j/k/Space/Enter). Esc cancels the input without closing
-    // the editor.
+    // the editor. The new-tag-input early-return runs BEFORE the discard
+    // confirm so typing-mode Esc does not trigger the dirty check.
     if app.bulk_tag_editor.new_tag_input.is_some() {
         handle_new_tag_input(app, key);
         return;
     }
 
+    // Discard confirmation: when the user pressed Esc on a dirty editor, the
+    // main handler set `pending_discard_confirm` and re-rendered with the
+    // discard footer. Route the next keypress through the central confirm
+    // router (uniform with form discard prompts elsewhere).
+    if app.pending_discard_confirm {
+        match super::route_confirm_key(key) {
+            super::ConfirmAction::Yes => {
+                app.pending_discard_confirm = false;
+                app.screen = Screen::HostList;
+                app.bulk_tag_editor = BulkTagEditorState::default();
+            }
+            super::ConfirmAction::No => {
+                app.pending_discard_confirm = false;
+            }
+            super::ConfirmAction::Ignored => {}
+        }
+        return;
+    }
+
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') => {
-            app.screen = Screen::HostList;
-            app.bulk_tag_editor = BulkTagEditorState::default();
+            // Stakes test: tag edits are non-trivial work (typing new tags,
+            // deciding add/remove per row across N hosts). Warn before
+            // discarding. Documented in CLAUDE.md "Keyboard interaction rules".
+            if app.bulk_tag_editor.is_dirty() {
+                app.pending_discard_confirm = true;
+            } else {
+                app.screen = Screen::HostList;
+                app.bulk_tag_editor = BulkTagEditorState::default();
+            }
         }
         KeyCode::Char('?') => {
             let old = std::mem::replace(&mut app.screen, Screen::HostList);

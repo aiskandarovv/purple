@@ -15,7 +15,7 @@
 │   ● do-worker-ams     │  Delete "bastion-ams"?                           │cean              12h  │
 │   ● do-ci-runner      │                                                  │                  13h  │
 │   ● pve-web-01        ╰──────────────────────────────────────────────────╯oxmox             14h  │
-│   ● pve-web-02         y  yes    Esc  no                                  oxmox             15h  │
+│   ● pve-web-02         y  delete    n/Esc  keep                           oxmox             15h  │
 │   ● pve-db-01          192.168.1.30 ⇄                      database internal proxmox        16h  │
 │   ● pve-db-02          192.168.1.31                        database internal proxmox        17h  │
 │   ● pve-redis          192.168.1.40 ⇄                      cache internal proxmox           18h  │
@@ -1634,14 +1634,21 @@
 (29,17) fg=Reset bg=Reset mod=DIM
 (30,17) fg=Reset bg=Reset mod=DIM
 (31,17) fg=Reset bg=Reset mod=DIM
-(34,17) fg=White bg=DarkGray mod=-
-(35,17) fg=White bg=DarkGray mod=-
-(36,17) fg=White bg=DarkGray mod=-
+(32,17) fg=Reset bg=Reset mod=DIM
+(33,17) fg=Reset bg=Reset mod=DIM
+(34,17) fg=Reset bg=Reset mod=DIM
 (37,17) fg=White bg=DarkGray mod=-
 (38,17) fg=White bg=DarkGray mod=-
-(39,17) fg=Reset bg=Reset mod=DIM
-(40,17) fg=Reset bg=Reset mod=DIM
-(41,17) fg=Reset bg=Reset mod=DIM
+(39,17) fg=White bg=DarkGray mod=-
+(40,17) fg=White bg=DarkGray mod=-
+(41,17) fg=White bg=DarkGray mod=-
+(42,17) fg=White bg=DarkGray mod=-
+(43,17) fg=White bg=DarkGray mod=-
+(44,17) fg=Reset bg=Reset mod=DIM
+(45,17) fg=Reset bg=Reset mod=DIM
+(46,17) fg=Reset bg=Reset mod=DIM
+(47,17) fg=Reset bg=Reset mod=DIM
+(48,17) fg=Reset bg=Reset mod=DIM
 (76,17) fg=DarkGray bg=Reset mod=DIM
 (77,17) fg=DarkGray bg=Reset mod=DIM
 (78,17) fg=DarkGray bg=Reset mod=DIM

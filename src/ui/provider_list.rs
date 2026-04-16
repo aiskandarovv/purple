@@ -127,12 +127,9 @@ pub fn render_provider_list(frame: &mut Frame, app: &mut App) {
             format!(" Remove {}? ", display),
             theme::bold(),
         )];
-        spans.extend(
-            design::Footer::new()
-                .action("y", " yes ")
-                .action("Esc", " no")
-                .into_spans(),
-        );
+        // Stakes test: removing the provider config is destructive
+        // (synced hosts stay but the integration is gone). Action verbs.
+        spans.extend(design::confirm_footer_destructive("remove", "keep").into_spans());
         super::render_footer_with_status(frame, footer_area, spans, app);
     } else {
         // Count stale hosts for selected provider
@@ -249,29 +246,19 @@ pub fn render_provider_form(frame: &mut Frame, app: &mut App, provider_name: &st
         );
     }
 
-    // Footer below the block
+    // Footer below the block. Discard prompt takes precedence; otherwise
+    // dynamic save footer reflects the focused field's kind so users discover
+    // Space-toggle (VerifyTls/AutoSync) and Space-pick (IdentityFile/Regions).
     let footer_area = design::render_overlay_footer(frame, block_area);
     if app.pending_discard_confirm {
-        let mut spans = vec![Span::styled(" Discard changes? ", theme::error())];
-        spans.extend(
-            design::Footer::new()
-                .action("y", " yes ")
-                .action("Esc", " no")
-                .into_spans(),
-        );
-        super::render_footer_with_status(frame, footer_area, spans, app);
-    } else if !expanded && visible_fields.len() < all_fields.len() {
-        design::Footer::new()
-            .primary("Enter", " save ")
-            .action("\u{2193}", " more options ")
-            .action("Esc", " cancel")
-            .render_with_status(frame, footer_area, app);
+        design::render_discard_prompt(frame, footer_area, app);
     } else {
-        design::Footer::new()
-            .primary("Enter", " save ")
-            .action("Tab", " next ")
-            .action("Esc", " cancel")
-            .render_with_status(frame, footer_area, app);
+        let mode = if !expanded && visible_fields.len() < all_fields.len() {
+            design::FormFooterMode::Collapsed
+        } else {
+            design::FormFooterMode::Expanded(app.provider_form.focused_field.kind(provider_name))
+        };
+        design::form_save_footer(mode).render_with_status(frame, footer_area, app);
     }
 
     // Key picker popup overlay

@@ -254,17 +254,15 @@ pub(super) fn handle_provider_form(
     // snapshot of `fields_for(provider)` taken once per key press.
     let visible = app.provider_form.visible_fields(&provider_name);
     let fields: &[crate::app::ProviderFormField] = &visible;
-    let is_toggle = |f: crate::app::ProviderFormField| {
-        matches!(
-            f,
-            crate::app::ProviderFormField::VerifyTls | crate::app::ProviderFormField::AutoSync
-        )
-    };
-    let is_picker = |f: crate::app::ProviderFormField| {
-        matches!(f, crate::app::ProviderFormField::IdentityFile)
-            || (f == crate::app::ProviderFormField::Regions
-                && matches!(provider_name.as_str(), "aws" | "scaleway" | "gcp"))
-    };
+    // Field-kind predicates live on `ProviderFormField` so the rule is
+    // enforced in one place. Note: `is_picker` here matches the full set
+    // (aws/scaleway/gcp/oracle/ovh) -- the previous local closure only
+    // matched aws/scaleway/gcp which was a bug; oracle/ovh need the picker
+    // too because their `Regions` Space-handler at the bottom of this match
+    // expects to open the picker. `is_picker` on the type is the source of
+    // truth.
+    let is_toggle = |f: crate::app::ProviderFormField| f.is_toggle();
+    let is_picker = |f: crate::app::ProviderFormField| f.is_picker(&provider_name);
 
     // Handle discard confirmation dialog
     if app.pending_discard_confirm {
@@ -383,26 +381,14 @@ pub(super) fn handle_provider_form(
             app.provider_form.sync_cursor_to_end();
         }
         KeyCode::Enter => {
-            let f = app.provider_form.focused_field;
-            if f == crate::app::ProviderFormField::IdentityFile {
-                app.scan_keys();
-                app.ui.show_key_picker = true;
-                app.ui.key_picker_state = ratatui::widgets::ListState::default();
-                if !app.keys.is_empty() {
-                    app.ui.key_picker_state.select(Some(0));
-                }
-            } else if f == crate::app::ProviderFormField::Regions
-                && matches!(
-                    provider_name.as_str(),
-                    "aws" | "scaleway" | "gcp" | "oracle" | "ovh"
-                )
-            {
-                app.ui.show_region_picker = true;
-                app.ui.region_picker_cursor = 0;
-            } else {
-                submit_provider_form(app, events_tx);
-            }
+            // INVARIANT: Enter ALWAYS submits the form, regardless of focused
+            // field. Pickers/toggles are reached via Space (see arms below).
+            // Documented in CLAUDE.md "Keyboard interaction rules".
+            submit_provider_form(app, events_tx);
         }
+        // SPACE GUARDS MUST PRECEDE the generic Char(c) arm.
+        // Order: toggle first, picker second (no overlap, but explicit
+        // ordering protects against future ProviderFormField additions).
         KeyCode::Char(' ')
             if app.provider_form.focused_field == crate::app::ProviderFormField::VerifyTls =>
         {
@@ -413,15 +399,40 @@ pub(super) fn handle_provider_form(
         {
             app.provider_form.auto_sync = !app.provider_form.auto_sync;
         }
-        KeyCode::Char(c) => {
+        // Empty-field gate: same rationale as host_form — once the user
+        // has typed anything, Space inserts a literal space so custom
+        // identity paths (e.g. `~/My Keys/id_rsa`) and free-form region
+        // lists work. On an empty picker field, Space opens the picker.
+        KeyCode::Char(' ')
+            if is_picker(app.provider_form.focused_field)
+                && app.provider_form.focused_value().is_empty() =>
+        {
             let f = app.provider_form.focused_field;
-            if !is_toggle(f) && !is_picker(f) {
+            if f == crate::app::ProviderFormField::IdentityFile {
+                app.scan_keys();
+                app.ui.show_key_picker = true;
+                app.ui.key_picker_state = ratatui::widgets::ListState::default();
+                if !app.keys.is_empty() {
+                    app.ui.key_picker_state.select(Some(0));
+                }
+            } else if f == crate::app::ProviderFormField::Regions {
+                app.ui.show_region_picker = true;
+                app.ui.region_picker_cursor = 0;
+            }
+        }
+        KeyCode::Char(c) => {
+            // Toggle fields (VerifyTls/AutoSync) have no text value to mutate;
+            // every other field — including picker fields — accepts free-text
+            // typing so users can supply custom paths or region values not
+            // surfaced by the picker. Matches the host form's Char arm.
+            let f = app.provider_form.focused_field;
+            if !is_toggle(f) {
                 app.provider_form.insert_char(c);
             }
         }
         KeyCode::Backspace => {
             let f = app.provider_form.focused_field;
-            if !is_toggle(f) && !is_picker(f) {
+            if !is_toggle(f) {
                 app.provider_form.delete_char_before_cursor();
             }
         }

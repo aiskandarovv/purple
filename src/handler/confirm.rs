@@ -2,14 +2,16 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::KeyEvent;
 
 use crate::app::{App, Screen};
 use crate::event::AppEvent;
 
 pub(super) fn handle_confirm_delete(app: &mut App, key: KeyEvent) {
-    match key.code {
-        KeyCode::Char('y') | KeyCode::Char('Y') => {
+    // Use the central confirm-key router so the y/n/Esc contract is uniform
+    // across all confirm dialogs. See CLAUDE.md "Keyboard interaction rules".
+    match super::route_confirm_key(key) {
+        super::ConfirmAction::Yes => {
             if let Screen::ConfirmDelete { ref alias } = app.screen {
                 let alias = alias.clone();
                 if let Some((element, position)) = app.config.delete_host_undoable(&alias) {
@@ -62,25 +64,28 @@ pub(super) fn handle_confirm_delete(app: &mut App, key: KeyEvent) {
             }
             app.screen = Screen::HostList;
         }
-        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+        super::ConfirmAction::No => {
             app.screen = Screen::HostList;
         }
-        _ => {}
+        super::ConfirmAction::Ignored => {}
     }
 }
 
-// TODO: Add a unit test for handle_confirm_vault_sign once handler test
-// infrastructure exists. Existing handler code has no in-tree test scaffold
-// and setting one up is out of scope for this change.
 pub(super) fn handle_confirm_vault_sign(
     app: &mut App,
     key: KeyEvent,
     events_tx: &mpsc::Sender<AppEvent>,
 ) {
-    match key.code {
-        KeyCode::Char('y') | KeyCode::Char('Y') => {
-            // Extract the precomputed signable list, then transition back to the
-            // host list and kick off the background signing loop.
+    // Vault Sign is a destructive/material action: signing N certificates
+    // hits Vault, may take time and is hard to reverse. Stray keys must NOT
+    // cancel — use `route_confirm_key` so only y/Y/n/N/Esc are honored.
+    // History: an earlier `_ => app.screen = Screen::HostList` catch-all
+    // could be triggered by any keypress next to `y` (e.g. fat-fingered
+    // `t` or `u`), silently aborting a bulk sign. Documented in CLAUDE.md.
+    match super::route_confirm_key(key) {
+        super::ConfirmAction::Yes => {
+            // Extract the precomputed signable list, then transition back to
+            // the host list and kick off the background signing loop.
             let signable = if let Screen::ConfirmVaultSign { signable } = &app.screen {
                 signable.clone()
             } else {
@@ -89,9 +94,10 @@ pub(super) fn handle_confirm_vault_sign(
             app.screen = Screen::HostList;
             start_vault_bulk_sign(app, signable, events_tx);
         }
-        _ => {
+        super::ConfirmAction::No => {
             app.screen = Screen::HostList;
         }
+        super::ConfirmAction::Ignored => {}
     }
 }
 
@@ -275,8 +281,10 @@ pub(super) fn remove_in_flight(
 }
 
 pub(super) fn handle_confirm_host_key_reset(app: &mut App, key: KeyEvent) {
-    match key.code {
-        KeyCode::Char('y') | KeyCode::Char('Y') => {
+    // Host key reset wipes the host's known_hosts entry — uniform y/n/Esc
+    // contract via the central router so stray keys cannot trigger it.
+    match super::route_confirm_key(key) {
+        super::ConfirmAction::Yes => {
             if let Screen::ConfirmHostKeyReset {
                 ref alias,
                 ref hostname,
@@ -316,9 +324,9 @@ pub(super) fn handle_confirm_host_key_reset(app: &mut App, key: KeyEvent) {
             }
             app.screen = Screen::HostList;
         }
-        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+        super::ConfirmAction::No => {
             app.screen = Screen::HostList;
         }
-        _ => {}
+        super::ConfirmAction::Ignored => {}
     }
 }

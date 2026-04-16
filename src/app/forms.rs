@@ -68,6 +68,37 @@ impl FormField {
             FormField::Tags => "Tags",
         }
     }
+
+    /// Whether this field opens a picker overlay when activated with Space.
+    ///
+    /// Picker fields: IdentityFile, ProxyJump, AskPass, VaultSsh. All other
+    /// fields are plain text inputs. The handler dispatches Space to a
+    /// picker for these fields and falls through to literal-character
+    /// insertion for the rest.
+    ///
+    /// Note: `VaultSsh` is a picker only when the host's role candidates
+    /// list is non-empty. The handler must consult `App::vault_role_candidates`
+    /// before opening the picker; with no candidates, Space inserts a
+    /// literal space (the user types the role manually).
+    pub fn is_picker(self) -> bool {
+        matches!(
+            self,
+            FormField::IdentityFile
+                | FormField::ProxyJump
+                | FormField::AskPass
+                | FormField::VaultSsh
+        )
+    }
+
+    /// Field kind for [`crate::ui::design::FieldKind`]. Drives dynamic
+    /// footer hints in the host form (`Space pick` vs no hint).
+    pub fn kind(self) -> crate::ui::design::FieldKind {
+        if self.is_picker() {
+            crate::ui::design::FieldKind::Picker
+        } else {
+            crate::ui::design::FieldKind::Text
+        }
+    }
 }
 
 /// Form state for adding/editing a host.
@@ -724,6 +755,42 @@ impl ProviderFormField {
             ProviderFormField::VaultRole => "Vault SSH Role",
             ProviderFormField::VaultAddr => "Vault SSH Address",
             ProviderFormField::AutoSync => "Auto Sync",
+        }
+    }
+
+    /// Whether this field is a boolean toggle (Space flips the value).
+    pub fn is_toggle(self) -> bool {
+        matches!(
+            self,
+            ProviderFormField::VerifyTls | ProviderFormField::AutoSync
+        )
+    }
+
+    /// Whether this field opens a picker overlay when activated with Space.
+    ///
+    /// `IdentityFile` always opens the SSH key picker. `Regions` opens a
+    /// region picker only for providers with structured region lists
+    /// (aws/scaleway/gcp/oracle/ovh). Other providers (azure, proxmox, ...)
+    /// take Regions as free-form text input — Space inserts a literal space.
+    pub fn is_picker(self, provider: &str) -> bool {
+        match self {
+            ProviderFormField::IdentityFile => true,
+            ProviderFormField::Regions => {
+                matches!(provider, "aws" | "scaleway" | "gcp" | "oracle" | "ovh")
+            }
+            _ => false,
+        }
+    }
+
+    /// Field kind for [`crate::ui::design::FieldKind`]. Toggles take precedence
+    /// over pickers (no field is both).
+    pub fn kind(self, provider: &str) -> crate::ui::design::FieldKind {
+        if self.is_toggle() {
+            crate::ui::design::FieldKind::Toggle
+        } else if self.is_picker(provider) {
+            crate::ui::design::FieldKind::Picker
+        } else {
+            crate::ui::design::FieldKind::Text
         }
     }
 }

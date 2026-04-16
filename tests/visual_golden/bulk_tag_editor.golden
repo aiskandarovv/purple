@@ -16,7 +16,7 @@
 │   ● do-ci-runner      │                                                  │                  13h  │
 │   ● pve-web-01        │                                                  │oxmox             14h  │
 │   ● pve-web-02        ╰──────────────────────────────────────────────────╯oxmox             15h  │
-│   ● pve-db-01          Space  cycle    +  new    Enter  ok    Esc  back   al proxmox        16h  │
+│   ● pve-db-01          Space  cycle    +  new    Enter  apply    Esc  backal proxmox        16h  │
 │   ● pve-db-02          192.168.1.31                        database internal proxmox        17h  │
 │   ● pve-redis          192.168.1.40 ⇄                      cache internal proxmox           18h  │
 │   ● pve-mail           192.168.1.50                        mail internal proxmox            19h  │
@@ -1688,16 +1688,19 @@
 (58,18) fg=Reset bg=Reset mod=DIM
 (59,18) fg=Reset bg=Reset mod=DIM
 (60,18) fg=Reset bg=Reset mod=DIM
-(63,18) fg=White bg=DarkGray mod=-
-(64,18) fg=White bg=DarkGray mod=-
-(65,18) fg=White bg=DarkGray mod=-
+(61,18) fg=Reset bg=Reset mod=DIM
+(62,18) fg=Reset bg=Reset mod=DIM
+(63,18) fg=Reset bg=Reset mod=DIM
 (66,18) fg=White bg=DarkGray mod=-
 (67,18) fg=White bg=DarkGray mod=-
-(68,18) fg=Reset bg=Reset mod=DIM
-(69,18) fg=Reset bg=Reset mod=DIM
-(70,18) fg=Reset bg=Reset mod=DIM
+(68,18) fg=White bg=DarkGray mod=-
+(69,18) fg=White bg=DarkGray mod=-
+(70,18) fg=White bg=DarkGray mod=-
 (71,18) fg=Reset bg=Reset mod=DIM
 (72,18) fg=Reset bg=Reset mod=DIM
+(73,18) fg=Reset bg=Reset mod=DIM
+(74,18) fg=Reset bg=Reset mod=DIM
+(75,18) fg=Reset bg=Reset mod=DIM
 (76,18) fg=DarkGray bg=Reset mod=DIM
 (77,18) fg=DarkGray bg=Reset mod=DIM
 (78,18) fg=DarkGray bg=Reset mod=DIM

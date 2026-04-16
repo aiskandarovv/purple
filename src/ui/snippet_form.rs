@@ -60,27 +60,14 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         render_field_content(frame, content_area, field, &app.snippet_form);
     }
 
-    // Footer below the block
+    // Footer below the block. Snippet form has only text fields, so the
+    // dynamic save footer maps to FieldKind::Text (no Space hint).
     let footer_area = design::render_overlay_footer(frame, block_area);
-    let footer = if app.pending_discard_confirm {
-        design::Footer::new()
-            .action("y", " yes ")
-            .action("Esc", " no")
-    } else {
-        design::Footer::new()
-            .primary("Enter", " save ")
-            .action("Tab", " next ")
-            .action("Esc", " cancel")
-    };
     if app.pending_discard_confirm {
-        // Prepend the "Discard changes?" prompt as a raw span so the footer
-        // reads like "[Discard changes?] y yes  Esc no" (the prompt is not a
-        // keycap, it's a question addressed to the user).
-        let mut spans = vec![Span::styled(" Discard changes? ", theme::error())];
-        spans.extend(footer.into_spans());
-        super::render_footer_with_status(frame, footer_area, spans, app);
+        design::render_discard_prompt(frame, footer_area, app);
     } else {
-        footer.render_with_status(frame, footer_area, app);
+        design::form_save_footer(design::FormFooterMode::Expanded(design::FieldKind::Text))
+            .render_with_status(frame, footer_area, app);
     }
 }
 

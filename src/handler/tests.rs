@@ -767,14 +767,16 @@ fn make_ovh_form_app() -> App {
 }
 
 #[test]
-fn test_ovh_enter_on_regions_opens_picker() {
+fn test_ovh_space_on_regions_opens_picker() {
+    // Per CLAUDE.md "Keyboard interaction rules": pickers open on Space,
+    // never on Enter. Enter always submits.
     let mut app = make_ovh_form_app();
     app.provider_form.focused_field = ProviderFormField::Regions;
     let (tx, _rx) = mpsc::channel();
-    let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+    let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
     assert!(
         app.ui.show_region_picker,
-        "Enter on OVH Regions should open picker"
+        "Space on OVH Regions should open picker"
     );
     assert_eq!(app.ui.region_picker_cursor, 0);
 }
@@ -1051,10 +1053,11 @@ fn test_provider_form_backspace_verify_tls_blocked() {
 }
 
 #[test]
-fn test_provider_form_enter_opens_key_picker() {
+fn test_provider_form_space_opens_key_picker() {
+    // Pickers open on Space, never on Enter (CLAUDE.md keyboard rules).
     let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::IdentityFile);
     let (tx, _rx) = mpsc::channel();
-    let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+    let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
     assert!(app.ui.show_key_picker);
 }
 
@@ -1322,11 +1325,12 @@ fn make_form_app() -> App {
 // --- Enter on AskPass opens picker ---
 
 #[test]
-fn test_enter_on_askpass_opens_password_picker() {
+fn test_space_on_askpass_opens_password_picker() {
+    // Pickers open on Space, never on Enter (CLAUDE.md keyboard rules).
     let mut app = make_form_app();
     app.form.focused_field = FormField::AskPass;
     let (tx, _rx) = mpsc::channel();
-    let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+    let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
     assert!(app.ui.show_password_picker);
     assert_eq!(app.ui.password_picker_state.selected(), Some(0));
 }
@@ -1544,9 +1548,10 @@ fn test_password_picker_works_on_edit_host() {
     app.form = crate::app::HostForm::new();
     app.form.focused_field = FormField::AskPass;
     let (tx, _rx) = mpsc::channel();
-    let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+    // Space on empty picker field opens the picker.
+    let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
     assert!(app.ui.show_password_picker);
-    // Select keychain
+    // Inside the picker, Enter selects the highlighted entry (keychain).
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
     assert_eq!(app.form.askpass, "keychain");
 }
@@ -1793,11 +1798,11 @@ fn test_picker_select_op_then_type_rest() {
     let mut app = make_form_app();
     app.form.focused_field = FormField::AskPass;
     let (tx, _rx) = mpsc::channel();
-    // Open picker
-    let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+    // Space on empty picker field opens the picker.
+    let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
     // Navigate to 1Password (index 1)
     let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
-    // Select
+    // Inside the picker, Enter selects.
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
     assert_eq!(app.form.askpass, "op://");
     assert_eq!(app.form.focused_field, FormField::AskPass);
@@ -1813,14 +1818,14 @@ fn test_picker_select_vault_then_type_rest() {
     let mut app = make_form_app();
     app.form.focused_field = FormField::AskPass;
     let (tx, _rx) = mpsc::channel();
-    // Open picker
-    let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+    // Space on empty picker field opens the picker.
+    let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
     // Navigate to Vault (index 4)
     for _ in 0..4 {
         let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
     }
     assert_eq!(app.ui.password_picker_state.selected(), Some(4));
-    // Select
+    // Inside the picker, Enter selects.
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
     assert_eq!(app.form.askpass, "vault:");
     assert_eq!(app.form.focused_field, FormField::AskPass);
@@ -1836,9 +1841,9 @@ fn test_picker_select_keychain_no_further_typing_needed() {
     let mut app = make_form_app();
     app.form.focused_field = FormField::AskPass;
     let (tx, _rx) = mpsc::channel();
-    // Open picker via Enter on AskPass
-    let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
-    // Select keychain (index 0, already selected)
+    // Space on empty picker field opens the picker.
+    let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
+    // Inside the picker, Enter selects keychain (index 0, already selected).
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
     assert_eq!(app.form.askpass, "keychain");
     // focused_field stays on AskPass (picker was opened from AskPass)
@@ -1892,8 +1897,8 @@ fn test_backspace_after_prefix_selection() {
     let mut app = make_form_app();
     app.form.focused_field = FormField::AskPass;
     let (tx, _rx) = mpsc::channel();
-    // Open picker and select 1Password
-    let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+    // Space opens the picker; Enter selects 1Password (after pre-positioning).
+    let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
     app.ui.password_picker_state.select(Some(1));
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
     assert_eq!(app.form.askpass, "op://");
@@ -2016,8 +2021,8 @@ fn test_full_flow_picker_to_typed_value() {
     app.form.focused_field = FormField::AskPass;
     let (tx, _rx) = mpsc::channel();
 
-    // Open picker, select Bitwarden (index 2)
-    let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+    // Space opens picker; pre-position to Bitwarden (index 2); Enter selects.
+    let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
     app.ui.password_picker_state.select(Some(2));
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
 
@@ -2044,8 +2049,8 @@ fn test_full_flow_picker_keychain_then_tab_away() {
     app.form.focused_field = FormField::AskPass;
     let (tx, _rx) = mpsc::channel();
 
-    // Open picker via Enter on AskPass, select keychain
-    let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+    // Space opens picker; Enter selects keychain (index 0, default).
+    let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
 
     assert_eq!(app.form.askpass, "keychain");
@@ -2064,8 +2069,13 @@ fn test_full_flow_clear_askpass_via_picker_none() {
     app.form.askpass = "op://Vault/Item/pw".to_string();
     let (tx, _rx) = mpsc::channel();
 
-    // Open picker, select None (index 6)
-    let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+    // Field has content → Space inserts literal. To re-open the picker,
+    // pre-set the show_password_picker state directly (mirrors the user
+    // backspacing the field clean and pressing Space, but skips the steps
+    // since we are testing the post-picker behavior).
+    app.ui.show_password_picker = true;
+    app.ui.password_picker_state = ratatui::widgets::ListState::default();
+    app.ui.password_picker_state.select(Some(0));
     for _ in 0..6 {
         let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
     }
@@ -2252,26 +2262,46 @@ fn test_askpass_unicode_in_custom_command() {
 // =========================================================================
 
 #[test]
-fn test_enter_on_askpass_field_opens_picker() {
+fn test_space_on_empty_askpass_field_opens_picker() {
+    // CLAUDE.md "Keyboard interaction rules": Space opens the picker on
+    // empty picker fields. On non-empty fields it inserts a literal space
+    // (so custom commands like `my-script %h` keep working).
     let mut app = make_form_app();
     app.form.focused_field = FormField::AskPass;
-    app.form.askpass = "old-val".to_string();
+    // Field is empty (default after make_form_app).
+    assert!(app.form.askpass.is_empty());
     let (tx, _rx) = mpsc::channel();
-    let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+    let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
     assert!(app.ui.show_password_picker);
-    // Old value should still be there (picker hasn't committed yet)
-    assert_eq!(app.form.askpass, "old-val");
 }
 
 #[test]
-fn test_enter_on_askpass_field_select_replaces_value() {
+fn test_space_on_populated_askpass_field_inserts_literal() {
+    // Empty-field gate: once the user has typed anything, Space inserts a
+    // literal space (so multi-word custom commands work).
     let mut app = make_form_app();
     app.form.focused_field = FormField::AskPass;
-    app.form.askpass = "old-val".to_string();
+    app.form.askpass = "my-script".to_string();
+    app.form.cursor_pos = 9;
     let (tx, _rx) = mpsc::channel();
-    // Open picker
-    let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
-    // Select keychain
+    let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
+    assert!(
+        !app.ui.show_password_picker,
+        "Space on a populated picker field must NOT open the picker"
+    );
+    assert_eq!(app.form.askpass, "my-script ");
+}
+
+#[test]
+fn test_picker_open_on_empty_then_enter_selects_keychain() {
+    // Space on empty picker field opens the picker; inside the picker,
+    // Enter is the canonical "select" key.
+    let mut app = make_form_app();
+    app.form.focused_field = FormField::AskPass;
+    assert!(app.form.askpass.is_empty());
+    let (tx, _rx) = mpsc::channel();
+    let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
+    assert!(app.ui.show_password_picker);
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
     assert_eq!(app.form.askpass, "keychain");
     assert!(!app.ui.show_password_picker);
@@ -2356,8 +2386,12 @@ fn test_picker_esc_preserves_existing_askpass() {
     app.form.focused_field = FormField::AskPass;
     app.form.askpass = "vault:secret/ssh#pw".to_string();
     let (tx, _rx) = mpsc::channel();
-    // Open picker
-    let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+    // Field has content → user must clear it to reach the picker. Simulate
+    // by setting the picker open directly (the unit under test is the Esc
+    // behavior, not the open path).
+    app.ui.show_password_picker = true;
+    app.ui.password_picker_state = ratatui::widgets::ListState::default();
+    app.ui.password_picker_state.select(Some(0));
     assert!(app.ui.show_password_picker);
     // Navigate but then Esc
     let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
@@ -6507,13 +6541,67 @@ fn bulk_editor_space_cycles_and_enter_applies() {
 }
 
 #[test]
-fn bulk_editor_esc_cancels_without_mutating() {
+fn bulk_editor_esc_with_dirty_shows_discard_then_confirms() {
+    // Per CLAUDE.md "Keyboard interaction rules": every dirty-checked
+    // surface prompts before discarding work. Esc on a dirty editor opens
+    // the discard prompt; pressing y then closes the editor and clears state.
     let mut app = bulk_make_app();
     let tx = mpsc::channel().0;
     app.multi_select.insert(0);
     handle_key_event(&mut app, key(KeyCode::Char('t')), &tx).unwrap();
     assert_eq!(app.screen, Screen::BulkTagEditor);
-    // Stage a change but cancel before Enter.
+    // Stage a change.
+    let prod_row = app
+        .bulk_tag_editor
+        .rows
+        .iter()
+        .position(|r| r.tag == "prod")
+        .unwrap();
+    app.ui.bulk_tag_editor_state.select(Some(prod_row));
+    handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx).unwrap();
+    assert!(
+        app.bulk_tag_editor.is_dirty(),
+        "Space cycle should mark editor dirty"
+    );
+    // Esc on dirty editor opens the discard prompt; editor stays open.
+    handle_key_event(&mut app, key(KeyCode::Esc), &tx).unwrap();
+    assert!(
+        app.pending_discard_confirm,
+        "Esc on dirty editor must show discard prompt"
+    );
+    assert_eq!(
+        app.screen,
+        Screen::BulkTagEditor,
+        "Discard prompt keeps the editor screen"
+    );
+    // Confirm the discard.
+    handle_key_event(&mut app, key(KeyCode::Char('y')), &tx).unwrap();
+    assert_eq!(app.screen, Screen::HostList);
+    assert!(app.bulk_tag_editor.rows.is_empty());
+    assert!(!app.pending_discard_confirm);
+}
+
+#[test]
+fn bulk_editor_esc_when_clean_closes_immediately() {
+    // Without dirty changes, Esc closes the editor without prompting.
+    let mut app = bulk_make_app();
+    let tx = mpsc::channel().0;
+    app.multi_select.insert(0);
+    handle_key_event(&mut app, key(KeyCode::Char('t')), &tx).unwrap();
+    assert_eq!(app.screen, Screen::BulkTagEditor);
+    handle_key_event(&mut app, key(KeyCode::Esc), &tx).unwrap();
+    assert_eq!(app.screen, Screen::HostList);
+    assert!(!app.pending_discard_confirm);
+}
+
+#[test]
+fn bulk_editor_esc_dirty_then_no_keeps_editor_open() {
+    // Pressing n / Esc on the discard prompt cancels the discard and
+    // returns the user to the editor with their changes intact.
+    let mut app = bulk_make_app();
+    let tx = mpsc::channel().0;
+    app.multi_select.insert(0);
+    handle_key_event(&mut app, key(KeyCode::Char('t')), &tx).unwrap();
     let prod_row = app
         .bulk_tag_editor
         .rows
@@ -6523,9 +6611,11 @@ fn bulk_editor_esc_cancels_without_mutating() {
     app.ui.bulk_tag_editor_state.select(Some(prod_row));
     handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx).unwrap();
     handle_key_event(&mut app, key(KeyCode::Esc), &tx).unwrap();
-    assert_eq!(app.screen, Screen::HostList);
-    // State cleared — no half-open editor lingering.
-    assert!(app.bulk_tag_editor.rows.is_empty());
+    assert!(app.pending_discard_confirm);
+    handle_key_event(&mut app, key(KeyCode::Char('n')), &tx).unwrap();
+    assert!(!app.pending_discard_confirm);
+    assert_eq!(app.screen, Screen::BulkTagEditor);
+    assert!(app.bulk_tag_editor.is_dirty(), "Changes preserved");
 }
 
 #[test]
@@ -6721,4 +6811,387 @@ fn format_apply_status_variants() {
     assert!(s.contains("Updated 1 host"), "{s}");
     assert!(!s.contains("hosts"), "should be singular: {s}");
     assert!(s.contains("skipped 1 in include file"), "{s}");
+}
+
+// ── route_confirm_key (confirm dialog routing) ──────────────────────
+
+#[test]
+fn route_confirm_key_y_lowercase_yes() {
+    assert_eq!(
+        super::route_confirm_key(key(KeyCode::Char('y'))),
+        super::ConfirmAction::Yes
+    );
+}
+
+#[test]
+fn route_confirm_key_y_uppercase_yes() {
+    assert_eq!(
+        super::route_confirm_key(key(KeyCode::Char('Y'))),
+        super::ConfirmAction::Yes
+    );
+}
+
+#[test]
+fn route_confirm_key_n_lowercase_no() {
+    assert_eq!(
+        super::route_confirm_key(key(KeyCode::Char('n'))),
+        super::ConfirmAction::No
+    );
+}
+
+#[test]
+fn route_confirm_key_n_uppercase_no() {
+    assert_eq!(
+        super::route_confirm_key(key(KeyCode::Char('N'))),
+        super::ConfirmAction::No
+    );
+}
+
+#[test]
+fn route_confirm_key_esc_no() {
+    assert_eq!(
+        super::route_confirm_key(key(KeyCode::Esc)),
+        super::ConfirmAction::No
+    );
+}
+
+#[test]
+fn route_confirm_key_other_keys_ignored() {
+    // Critical safety invariant: stray keys must NOT cancel a confirm dialog.
+    // Documented in CLAUDE.md "Keyboard interaction rules".
+    for code in [
+        KeyCode::Char('t'), // adjacent to y
+        KeyCode::Char('u'), // adjacent to y
+        KeyCode::Char('m'), // adjacent to n
+        KeyCode::Char('b'), // adjacent to n
+        KeyCode::Char('q'), // browse-context cancel, not confirm-context
+        KeyCode::Enter,
+        KeyCode::Tab,
+        KeyCode::Char(' '),
+    ] {
+        assert_eq!(
+            super::route_confirm_key(key(code)),
+            super::ConfirmAction::Ignored,
+            "key {:?} must be Ignored, not Yes/No",
+            code
+        );
+    }
+}
+
+// ── End-to-end Vault Sign confirm safety (the original bug) ─────────
+
+/// Build an app stuck on the Vault Sign confirm screen with one signable host.
+fn vault_sign_confirm_app() -> App {
+    let mut app =
+        make_app("Host vaulthost\n  HostName vault.example.com\n  IdentityFile ~/.ssh/id_rsa\n");
+    let path = std::path::PathBuf::from("/tmp/test-cert");
+    let signable = vec![(
+        "vaulthost".to_string(),
+        "ssh-client/sign/role".to_string(),
+        String::new(),
+        path,
+        None,
+    )];
+    app.screen = Screen::ConfirmVaultSign { signable };
+    app
+}
+
+#[test]
+fn vault_sign_confirm_stray_key_does_not_cancel() {
+    // Original bug: a `_ => app.screen = Screen::HostList` catch-all let
+    // any keypress next to `y` (e.g. `t`, `u`) silently abort a bulk sign.
+    // Today the handler routes via `route_confirm_key` and stray keys are
+    // explicitly Ignored. Regression guard.
+    for stray in [
+        KeyCode::Char('t'),
+        KeyCode::Char('u'),
+        KeyCode::Char('q'),
+        KeyCode::Char(' '),
+        KeyCode::Enter,
+        KeyCode::Tab,
+    ] {
+        let mut app = vault_sign_confirm_app();
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(stray), &tx);
+        assert!(
+            matches!(app.screen, Screen::ConfirmVaultSign { .. }),
+            "stray key {:?} must not cancel Vault Sign confirm",
+            stray
+        );
+    }
+}
+
+#[test]
+fn vault_sign_confirm_n_cancels() {
+    let mut app = vault_sign_confirm_app();
+    let (tx, _rx) = mpsc::channel();
+    let _ = handle_key_event(&mut app, key(KeyCode::Char('n')), &tx);
+    assert_eq!(app.screen, Screen::HostList);
+}
+
+#[test]
+fn vault_sign_confirm_esc_cancels() {
+    let mut app = vault_sign_confirm_app();
+    let (tx, _rx) = mpsc::channel();
+    let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+    assert_eq!(app.screen, Screen::HostList);
+}
+
+// ── Picker-field parity (Enter submits, Space-on-empty opens, Space-on-populated literal) ──
+
+#[test]
+fn enter_on_identity_file_field_does_not_open_key_picker() {
+    // CLAUDE.md invariant 1: Enter never opens a picker.
+    let mut app = make_form_app();
+    app.form.focused_field = FormField::IdentityFile;
+    let (tx, _rx) = mpsc::channel();
+    let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+    assert!(
+        !app.ui.show_key_picker,
+        "Enter on IdentityFile must NOT open the key picker (use Space)"
+    );
+}
+
+#[test]
+fn space_on_empty_identity_file_opens_key_picker() {
+    let mut app = make_form_app();
+    app.form.focused_field = FormField::IdentityFile;
+    assert!(app.form.identity_file.is_empty());
+    let (tx, _rx) = mpsc::channel();
+    let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
+    assert!(app.ui.show_key_picker);
+}
+
+#[test]
+fn space_on_populated_identity_file_inserts_literal() {
+    let mut app = make_form_app();
+    app.form.focused_field = FormField::IdentityFile;
+    app.form.identity_file = "/home/me/keys/id".to_string();
+    app.form.cursor_pos = app.form.identity_file.chars().count();
+    let (tx, _rx) = mpsc::channel();
+    let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
+    assert!(
+        !app.ui.show_key_picker,
+        "Space on populated IdentityFile must NOT open picker"
+    );
+    assert_eq!(app.form.identity_file, "/home/me/keys/id ");
+}
+
+#[test]
+fn enter_on_proxy_jump_field_does_not_open_picker() {
+    let mut app = make_form_app();
+    app.form.focused_field = FormField::ProxyJump;
+    let (tx, _rx) = mpsc::channel();
+    let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+    assert!(!app.ui.show_proxyjump_picker);
+}
+
+#[test]
+fn space_on_empty_proxy_jump_opens_picker() {
+    let mut app = make_form_app();
+    app.form.focused_field = FormField::ProxyJump;
+    let (tx, _rx) = mpsc::channel();
+    let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
+    assert!(app.ui.show_proxyjump_picker);
+}
+
+#[test]
+fn space_on_populated_proxy_jump_inserts_literal() {
+    let mut app = make_form_app();
+    app.form.focused_field = FormField::ProxyJump;
+    app.form.proxy_jump = "bastion".to_string();
+    app.form.cursor_pos = 7;
+    let (tx, _rx) = mpsc::channel();
+    let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
+    assert!(!app.ui.show_proxyjump_picker);
+    assert_eq!(app.form.proxy_jump, "bastion ");
+}
+
+#[test]
+fn space_on_empty_vault_ssh_with_no_candidates_inserts_literal() {
+    // VaultSsh is `is_picker == true` but the picker only opens when there
+    // are role candidates. With none configured, Space on empty VaultSsh
+    // degrades to literal-space insert so the user can type the role.
+    let mut app = make_form_app();
+    app.form.focused_field = FormField::VaultSsh;
+    assert!(app.vault_role_candidates().is_empty());
+    let (tx, _rx) = mpsc::channel();
+    let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
+    assert!(
+        !app.ui.show_vault_role_picker,
+        "no candidates → no picker, even on empty field"
+    );
+    assert_eq!(
+        app.form.vault_ssh, " ",
+        "Space falls through to literal-space insert"
+    );
+}
+
+// ── Provider form picker-field parity ───────────────────────────────
+
+#[test]
+fn enter_on_provider_identity_file_does_not_open_picker() {
+    let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::IdentityFile);
+    let (tx, _rx) = mpsc::channel();
+    let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+    assert!(!app.ui.show_key_picker);
+}
+
+#[test]
+fn space_on_populated_provider_identity_file_inserts_literal() {
+    let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::IdentityFile);
+    app.provider_form.identity_file = "/path".to_string();
+    app.provider_form.cursor_pos = 5;
+    let (tx, _rx) = mpsc::channel();
+    let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
+    assert!(!app.ui.show_key_picker);
+    assert_eq!(app.provider_form.identity_file, "/path ");
+}
+
+#[test]
+fn space_on_populated_ovh_regions_inserts_literal() {
+    let mut app = make_ovh_form_app();
+    app.provider_form.focused_field = ProviderFormField::Regions;
+    app.provider_form.regions = "eu".to_string();
+    app.provider_form.cursor_pos = 2;
+    let (tx, _rx) = mpsc::channel();
+    let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
+    assert!(
+        !app.ui.show_region_picker,
+        "Space on populated Regions must NOT open picker"
+    );
+    assert_eq!(app.provider_form.regions, "eu ");
+}
+
+// ── Container confirm n/N cancels ───────────────────────────────────
+
+fn container_confirm_app() -> App {
+    let mut app = make_app("Host srv\n  HostName srv.example.com\n");
+    app.screen = Screen::Containers {
+        alias: "srv".to_string(),
+    };
+    app.container_state = Some(crate::app::ContainerState {
+        alias: "srv".to_string(),
+        askpass: None,
+        runtime: Some(crate::containers::ContainerRuntime::Docker),
+        containers: vec![crate::containers::ContainerInfo {
+            id: "abc123".to_string(),
+            names: "demo".to_string(),
+            image: "nginx".to_string(),
+            state: "running".to_string(),
+            status: "Up".to_string(),
+            ports: String::new(),
+        }],
+        list_state: ratatui::widgets::ListState::default(),
+        loading: false,
+        error: None,
+        action_in_progress: None,
+        confirm_action: Some((
+            crate::containers::ContainerAction::Stop,
+            "demo".to_string(),
+            "abc123".to_string(),
+        )),
+    });
+    app.container_state
+        .as_mut()
+        .unwrap()
+        .list_state
+        .select(Some(0));
+    app
+}
+
+#[test]
+fn container_confirm_n_cancels_pending_action() {
+    let mut app = container_confirm_app();
+    let (tx, _rx) = mpsc::channel();
+    let _ = handle_key_event(&mut app, key(KeyCode::Char('n')), &tx);
+    let state = app.container_state.as_ref().unwrap();
+    assert!(
+        state.confirm_action.is_none(),
+        "n must cancel the pending container action"
+    );
+    assert!(matches!(app.screen, Screen::Containers { .. }));
+}
+
+#[test]
+fn container_confirm_capital_n_cancels_pending_action() {
+    let mut app = container_confirm_app();
+    let (tx, _rx) = mpsc::channel();
+    let _ = handle_key_event(&mut app, key(KeyCode::Char('N')), &tx);
+    assert!(
+        app.container_state
+            .as_ref()
+            .unwrap()
+            .confirm_action
+            .is_none()
+    );
+}
+
+#[test]
+fn container_confirm_stray_key_ignored() {
+    let mut app = container_confirm_app();
+    let (tx, _rx) = mpsc::channel();
+    let _ = handle_key_event(&mut app, key(KeyCode::Char('t')), &tx);
+    assert!(
+        app.container_state
+            .as_ref()
+            .unwrap()
+            .confirm_action
+            .is_some(),
+        "stray key must not cancel the pending container action"
+    );
+}
+
+// ── BulkTagEditorState::is_dirty added-rows branch ──────────────────
+
+#[test]
+fn bulk_editor_is_dirty_detects_added_row() {
+    use crate::app::{BulkTagAction, BulkTagEditorState, BulkTagRow};
+    let mut state = BulkTagEditorState {
+        rows: vec![BulkTagRow {
+            tag: "prod".into(),
+            initial_count: 0,
+            action: BulkTagAction::Leave,
+        }],
+        aliases: Vec::new(),
+        skipped_included: Vec::new(),
+        new_tag_input: None,
+        new_tag_cursor: 0,
+        initial_actions: vec![BulkTagAction::Leave],
+    };
+    assert!(!state.is_dirty(), "baseline state must be clean");
+
+    // Append a new tag row (simulates the `+ new tag` flow). New rows
+    // default to AddToAll, so they count as dirty immediately.
+    state.rows.push(BulkTagRow {
+        tag: "newtag".into(),
+        initial_count: 0,
+        action: BulkTagAction::AddToAll,
+    });
+    assert!(state.is_dirty(), "added row with non-Leave action is dirty");
+}
+
+#[test]
+fn bulk_editor_is_dirty_added_leave_row_still_clean() {
+    // Edge case: an appended row that happens to still be Leave is not
+    // semantically dirty (nothing will change on apply).
+    use crate::app::{BulkTagAction, BulkTagEditorState, BulkTagRow};
+    let mut state = BulkTagEditorState {
+        rows: vec![BulkTagRow {
+            tag: "prod".into(),
+            initial_count: 0,
+            action: BulkTagAction::Leave,
+        }],
+        aliases: Vec::new(),
+        skipped_included: Vec::new(),
+        new_tag_input: None,
+        new_tag_cursor: 0,
+        initial_actions: vec![BulkTagAction::Leave],
+    };
+    state.rows.push(BulkTagRow {
+        tag: "noop".into(),
+        initial_count: 0,
+        action: BulkTagAction::Leave,
+    });
+    assert!(!state.is_dirty(), "appended Leave row is not dirty");
 }

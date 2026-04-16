@@ -490,12 +490,17 @@ impl App {
             })
             .collect();
 
+        // Snapshot baseline actions for the dirty-check on Esc. Every row
+        // starts at `Leave`; the snapshot is the same length as `rows` so
+        // `is_dirty` short-circuits before scanning when nothing has changed.
+        let initial_actions: Vec<BulkTagAction> = rows.iter().map(|r| r.action).collect();
         self.bulk_tag_editor = BulkTagEditorState {
             rows,
             aliases,
             skipped_included: skipped,
             new_tag_input: None,
             new_tag_cursor: 0,
+            initial_actions,
         };
         self.ui.bulk_tag_editor_state = ListState::default();
         if !self.bulk_tag_editor.rows.is_empty() {

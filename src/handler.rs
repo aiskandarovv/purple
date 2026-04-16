@@ -46,6 +46,38 @@ pub(super) fn vault_addr_missing(
     host_addrs.iter().all(|a| a.is_none())
 }
 
+/// Result of routing a confirm-dialog key event.
+///
+/// Confirm dialogs accept exactly three classes of keys:
+/// - `Yes`: y / Y
+/// - `No`: n / N / Esc
+/// - `Ignored`: anything else (must NOT change app state)
+///
+/// **Critical safety invariant**: a `_ =>` catch-all in a confirm handler
+/// that transitions screen state is forbidden. A misplaced keypress (e.g. a
+/// fat-fingered key next to `y` like `t` or `u`) must not silently cancel a
+/// destructive operation. Use [`route_confirm_key`] in every confirm handler
+/// to enforce the contract. The CI script enforces this via grep.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfirmAction {
+    Yes,
+    No,
+    Ignored,
+}
+
+/// Single source of truth for confirm-dialog key routing.
+///
+/// Maps key events to [`ConfirmAction`]. Use this in every confirm handler
+/// instead of writing ad-hoc match arms. Other key codes are explicitly
+/// `Ignored`, never silently cancel.
+pub fn route_confirm_key(key: KeyEvent) -> ConfirmAction {
+    match key.code {
+        KeyCode::Char('y') | KeyCode::Char('Y') => ConfirmAction::Yes,
+        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => ConfirmAction::No,
+        _ => ConfirmAction::Ignored,
+    }
+}
+
 /// Handle a key event based on the current screen.
 pub fn handle_key_event(
     app: &mut App,
@@ -110,35 +142,32 @@ pub fn handle_key_event(
         Screen::SnippetParamForm { .. } => snippet::handle_snippet_param_form(app, key, events_tx),
         Screen::ConfirmHostKeyReset { .. } => confirm::handle_confirm_host_key_reset(app, key),
         Screen::ConfirmVaultSign { .. } => confirm::handle_confirm_vault_sign(app, key, events_tx),
-        Screen::ConfirmImport { .. } => {
-            if key.code == KeyCode::Char('y') || key.code == KeyCode::Char('Y') {
+        Screen::ConfirmImport { .. } => match route_confirm_key(key) {
+            ConfirmAction::Yes => {
                 app.screen = Screen::HostList;
                 execute_known_hosts_import(app);
-            } else if key.code == KeyCode::Esc
-                || key.code == KeyCode::Char('n')
-                || key.code == KeyCode::Char('N')
-            {
+            }
+            ConfirmAction::No => {
                 app.screen = Screen::HostList;
             }
-        }
+            ConfirmAction::Ignored => {}
+        },
         Screen::ConfirmPurgeStale { provider: p, .. } => {
             let provider = p.clone();
-            if key.code == KeyCode::Char('y') || key.code == KeyCode::Char('Y') {
-                execute_purge_stale(app, provider.as_deref());
-                if provider.is_some() {
-                    app.screen = Screen::Providers;
-                } else {
-                    app.screen = Screen::HostList;
+            let return_screen = if provider.is_some() {
+                Screen::Providers
+            } else {
+                Screen::HostList
+            };
+            match route_confirm_key(key) {
+                ConfirmAction::Yes => {
+                    execute_purge_stale(app, provider.as_deref());
+                    app.screen = return_screen;
                 }
-            } else if key.code == KeyCode::Esc
-                || key.code == KeyCode::Char('n')
-                || key.code == KeyCode::Char('N')
-            {
-                if provider.is_some() {
-                    app.screen = Screen::Providers;
-                } else {
-                    app.screen = Screen::HostList;
+                ConfirmAction::No => {
+                    app.screen = return_screen;
                 }
+                ConfirmAction::Ignored => {}
             }
         }
         Screen::FileBrowser { .. } => file_browser::handle_file_browser(app, key, events_tx),

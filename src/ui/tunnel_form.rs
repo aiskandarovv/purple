@@ -70,36 +70,24 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         render_field_content(frame, content_area, field, &app.tunnel_form);
     }
 
-    // Footer below the block
+    // Footer below the block. Tunnel form has a single Toggle field (Type)
+    // and three text fields (BindPort/RemoteHost/RemotePort), so the dynamic
+    // footer maps Type -> Toggle and the rest -> Text. Single source of
+    // truth via design::form_save_footer.
     let footer_area = design::render_overlay_footer(frame, block_area);
     if app.pending_discard_confirm {
-        let footer = design::Footer::new()
-            .action("y", " yes ")
-            .action("Esc", " no");
-        let mut spans = vec![Span::styled(" Discard changes? ", theme::error())];
-        spans.extend(footer.into_spans());
-        super::render_footer_with_status(frame, footer_area, spans, app);
+        design::render_discard_prompt(frame, footer_area, app);
     } else {
-        // Note: the Space keycap sits adjacent to " Tab  next " without a
-        // FOOTER_GAP in the original layout. We replicate that by using
-        // into_spans + manual concat so the pairing stays visually tight.
-        let tab_and_space: Vec<Span<'static>> = {
-            let mut v: Vec<Span<'static>> = Vec::new();
-            let tab = design::Footer::new().action("Tab", " next ").into_spans();
-            v.extend(tab);
-            let space = design::Footer::new().action("Space", " type ").into_spans();
-            v.extend(space);
-            v
+        let kind = if app.tunnel_form.focused_field == TunnelFormField::Type {
+            design::FieldKind::Toggle
+        } else {
+            design::FieldKind::Text
         };
-        let mut spans = design::Footer::new()
-            .primary("Enter", " save ")
-            .into_spans();
-        spans.push(Span::raw(design::FOOTER_GAP));
-        spans.extend(tab_and_space);
-        spans.push(Span::raw(design::FOOTER_GAP));
-        let esc = design::Footer::new().action("Esc", " cancel").into_spans();
-        spans.extend(esc);
-        super::render_footer_with_status(frame, footer_area, spans, app);
+        design::form_save_footer(design::FormFooterMode::Expanded(kind)).render_with_status(
+            frame,
+            footer_area,
+            app,
+        );
     }
 }
 

@@ -30,11 +30,10 @@ pub fn render(frame: &mut Frame, _app: &App, alias: &str) {
     let paragraph = Paragraph::new(text).block(block);
     frame.render_widget(paragraph, area);
 
+    // Stakes test: deleting a host is destructive (config write, undo only
+    // briefly via stack). Action verbs both sides per CLAUDE.md.
     let footer_area = design::render_overlay_footer(frame, area);
-    let footer = design::Footer::new()
-        .action("y", " yes ")
-        .action("Esc", " no")
-        .to_line();
+    let footer = design::confirm_footer_destructive("delete", "keep").to_line();
     frame.render_widget(Paragraph::new(footer), footer_area);
 }
 
@@ -65,11 +64,9 @@ pub fn render_host_key_reset(frame: &mut Frame, _app: &App, hostname: &str) {
     let paragraph = Paragraph::new(text).block(block);
     frame.render_widget(paragraph, area);
 
+    // Stakes test: removing the host key invalidates trust. Use action verbs.
     let footer_area = design::render_overlay_footer(frame, area);
-    let footer = design::Footer::new()
-        .action("y", " yes ")
-        .action("Esc", " no")
-        .to_line();
+    let footer = design::confirm_footer_destructive("reset", "keep").to_line();
     frame.render_widget(Paragraph::new(footer), footer_area);
 }
 
@@ -95,11 +92,10 @@ pub fn render_confirm_import(frame: &mut Frame, _app: &App, count: usize) {
     let paragraph = Paragraph::new(text).block(block);
     frame.render_widget(paragraph, area);
 
+    // Stakes test: importing is benign-but-material — adds hosts to config.
+    // Action verbs make the choice clearer than generic yes/no.
     let footer_area = design::render_overlay_footer(frame, area);
-    let footer = design::Footer::new()
-        .action("y", " yes ")
-        .action("Esc", " no")
-        .to_line();
+    let footer = design::confirm_footer_destructive("import", "skip").to_line();
     frame.render_widget(Paragraph::new(footer), footer_area);
 }
 
@@ -167,11 +163,10 @@ pub fn render_confirm_purge_stale(
     let paragraph = Paragraph::new(text).block(block);
     frame.render_widget(paragraph, area);
 
+    // Stakes test: purge is destructive — removes stale hosts from config
+    // (only undoable through the per-session undo stack). Action verbs.
     let footer_area = design::render_overlay_footer(frame, area);
-    let footer = design::Footer::new()
-        .action("y", " yes ")
-        .action("Esc", " no")
-        .to_line();
+    let footer = design::confirm_footer_destructive("purge", "keep").to_line();
     frame.render_widget(Paragraph::new(footer), footer_area);
 }
 
@@ -223,11 +218,11 @@ pub fn render_confirm_vault_sign(frame: &mut Frame, _app: &App, signable: &[Stri
     let paragraph = Paragraph::new(text).block(block);
     frame.render_widget(paragraph, area);
 
+    // Stakes test: bulk vault signing hits HashiCorp Vault, may take time
+    // and is the canonical destructive/material confirm in purple. Use
+    // action verbs (sign/skip) per CLAUDE.md "Keyboard interaction rules".
     let footer_area = design::render_overlay_footer(frame, area);
-    let footer = design::Footer::new()
-        .action("y", " confirm ")
-        .action("Esc", " cancel")
-        .to_line();
+    let footer = design::confirm_footer_destructive("sign", "skip").to_line();
     frame.render_widget(Paragraph::new(footer), footer_area);
 }
 

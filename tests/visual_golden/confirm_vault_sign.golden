@@ -17,7 +17,7 @@
 │   ● pve-web-│  Hosts with a still-valid certificate are skipped.                   │        14h  │
 │   ● pve-web-│                                                                      │        15h  │
 │   ● pve-db-0╰──────────────────────────────────────────────────────────────────────╯        16h  │
-│   ● pve-db-0 y  confirm    Esc  cancel                                                      17h  │
+│   ● pve-db-0 y  sign    n/Esc  skip                                                         17h  │
 │   ● pve-redis          192.168.1.40 ⇄                      cache internal proxmox           18h  │
 │   ● pve-mail           192.168.1.50                        mail internal proxmox            19h  │
 │   ● pve-monitor        192.168.1.60 ⇄                      monitoring internal proxmox      20h  │
@@ -1572,21 +1572,18 @@
 (20,19) fg=Reset bg=Reset mod=DIM
 (21,19) fg=Reset bg=Reset mod=DIM
 (22,19) fg=Reset bg=Reset mod=DIM
-(23,19) fg=Reset bg=Reset mod=DIM
-(24,19) fg=Reset bg=Reset mod=DIM
-(25,19) fg=Reset bg=Reset mod=DIM
+(25,19) fg=White bg=DarkGray mod=-
+(26,19) fg=White bg=DarkGray mod=-
+(27,19) fg=White bg=DarkGray mod=-
 (28,19) fg=White bg=DarkGray mod=-
 (29,19) fg=White bg=DarkGray mod=-
 (30,19) fg=White bg=DarkGray mod=-
 (31,19) fg=White bg=DarkGray mod=-
-(32,19) fg=White bg=DarkGray mod=-
+(32,19) fg=Reset bg=Reset mod=DIM
 (33,19) fg=Reset bg=Reset mod=DIM
 (34,19) fg=Reset bg=Reset mod=DIM
 (35,19) fg=Reset bg=Reset mod=DIM
 (36,19) fg=Reset bg=Reset mod=DIM
-(37,19) fg=Reset bg=Reset mod=DIM
-(38,19) fg=Reset bg=Reset mod=DIM
-(39,19) fg=Reset bg=Reset mod=DIM
 (86,19) fg=DarkGray bg=Reset mod=DIM
 (87,19) fg=DarkGray bg=Reset mod=DIM
 (88,19) fg=DarkGray bg=Reset mod=DIM

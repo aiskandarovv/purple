@@ -117,45 +117,38 @@ pub(super) fn handle_form(app: &mut App, key: KeyEvent) {
         KeyCode::End => {
             app.form.sync_cursor_to_end();
         }
-        KeyCode::Enter => match app.form.focused_field {
-            FormField::IdentityFile => {
-                app.scan_keys();
-                app.ui.show_key_picker = true;
-                app.ui.key_picker_state = ratatui::widgets::ListState::default();
-                if !app.keys.is_empty() {
-                    app.ui.key_picker_state.select(Some(0));
-                }
-            }
-            FormField::ProxyJump => {
-                app.ui.show_proxyjump_picker = true;
-                app.ui.proxyjump_picker_state = ratatui::widgets::ListState::default();
-                if let Some(idx) = app.proxyjump_first_host_index() {
-                    app.ui.proxyjump_picker_state.select(Some(idx));
-                }
-            }
-            FormField::VaultSsh => {
-                let candidates = app.vault_role_candidates();
-                if candidates.is_empty() {
-                    submit_form(app);
-                } else {
-                    app.ui.show_vault_role_picker = true;
-                    app.ui.vault_role_picker_state = ratatui::widgets::ListState::default();
-                    app.ui.vault_role_picker_state.select(Some(0));
-                }
-            }
-            FormField::AskPass => {
-                app.ui.show_password_picker = true;
-                app.ui.password_picker_state = ratatui::widgets::ListState::default();
-                app.ui.password_picker_state.select(Some(0));
-            }
-            FormField::Alias => {
+        KeyCode::Enter => {
+            // INVARIANT: Enter ALWAYS submits the form, regardless of focused
+            // field. Pickers are reached via Space (see Char(' ') arm below).
+            // Documented in CLAUDE.md "Keyboard interaction rules".
+            // Smart-paste detection runs before submit on the Alias field so
+            // pasted user@host:port targets get split into the right fields.
+            if app.form.focused_field == FormField::Alias {
                 maybe_smart_paste(app);
-                submit_form(app);
             }
-            _ => {
-                submit_form(app);
-            }
-        },
+            submit_form(app);
+        }
+        // SPACE GUARD MUST PRECEDE the generic Char(c) arm.
+        // Rust matches arms top-to-bottom; reordering this arm below the
+        // generic insert-char would let Space fall through as a literal
+        // character and break picker activation. Documented in CLAUDE.md.
+        //
+        // The "empty-field" gate preserves free-text editing: once the
+        // user has typed anything, Space inserts a literal space (so paths
+        // like `/home/me/My Keys/id_rsa` and custom askpass commands like
+        // `my-script %h` work). On an empty picker field, Space opens the
+        // picker — that is the affordance that makes pickers discoverable.
+        //
+        // Edge case: `VaultSsh` is `is_picker() == true` even when no role
+        // candidates are configured (the role list is provider-derived).
+        // In that case `open_picker_for_focused_field` short-circuits and
+        // inserts a literal space — Space on empty VaultSsh with no
+        // candidates degrades cleanly to "type the role yourself".
+        KeyCode::Char(' ')
+            if app.form.focused_field.is_picker() && app.form.focused_value().is_empty() =>
+        {
+            open_picker_for_focused_field(app);
+        }
         KeyCode::Char(c) => {
             app.form.insert_char(c);
             app.form.update_hint();
@@ -225,6 +218,65 @@ fn maybe_smart_paste(app: &mut App) {
         app.form.hostname = trimmed.to_string();
         app.notify(crate::messages::LOOKS_LIKE_ADDRESS);
         log::debug!("host_form: auto-suggest hostname={trimmed}");
+    }
+}
+
+/// Open the picker overlay appropriate for the currently focused field.
+///
+/// Space activates picker fields. `VaultSsh` is special: when the host has
+/// no role candidates (no provider configured a role) Space still inserts a
+/// literal space so the user can type the role manually. Other picker
+/// fields always open their picker.
+fn open_picker_for_focused_field(app: &mut App) {
+    use ratatui::widgets::ListState;
+    match app.form.focused_field {
+        FormField::IdentityFile => {
+            app.scan_keys();
+            app.ui.show_key_picker = true;
+            app.ui.key_picker_state = ListState::default();
+            if !app.keys.is_empty() {
+                app.ui.key_picker_state.select(Some(0));
+            }
+        }
+        FormField::ProxyJump => {
+            app.ui.show_proxyjump_picker = true;
+            app.ui.proxyjump_picker_state = ListState::default();
+            if let Some(idx) = app.proxyjump_first_host_index() {
+                app.ui.proxyjump_picker_state.select(Some(idx));
+            }
+        }
+        FormField::VaultSsh => {
+            let candidates = app.vault_role_candidates();
+            if candidates.is_empty() {
+                // No candidates → fall through to literal-space insert so
+                // the user can type the role manually. Picker opens only
+                // when there is something to pick.
+                app.form.insert_char(' ');
+                app.form.update_hint();
+            } else {
+                app.ui.show_vault_role_picker = true;
+                app.ui.vault_role_picker_state = ListState::default();
+                app.ui.vault_role_picker_state.select(Some(0));
+            }
+        }
+        FormField::AskPass => {
+            app.ui.show_password_picker = true;
+            app.ui.password_picker_state = ListState::default();
+            app.ui.password_picker_state.select(Some(0));
+        }
+        // Defensive: only reached if `FormField::is_picker()` grows a new
+        // variant without a matching arm here. Insert a literal space so
+        // typing keeps working while the gap is fixed; debug builds panic
+        // to surface the drift.
+        other => {
+            debug_assert!(
+                false,
+                "open_picker_for_focused_field has no arm for picker field {:?}",
+                other
+            );
+            app.form.insert_char(' ');
+            app.form.update_hint();
+        }
     }
 }
 

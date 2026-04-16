@@ -11,29 +11,44 @@ pub(super) fn handle_containers(
     key: KeyEvent,
     events_tx: &mpsc::Sender<AppEvent>,
 ) -> Result<()> {
-    // Block all keys except y/Y and Esc/q when a confirmation is pending
+    // Block all keys except the confirm-dialog contract (y/Y/n/N/Esc) and
+    // `?` (help) when a confirmation is pending. Uniform with all other
+    // confirm dialogs in purple — documented in CLAUDE.md "Keyboard
+    // interaction rules". `q` is intentionally NOT in the allowlist: it
+    // belongs to browse-context cancel, not confirm-context.
     if let Some(ref state) = app.container_state {
         if state.confirm_action.is_some() {
             match key.code {
                 KeyCode::Char('y')
                 | KeyCode::Char('Y')
+                | KeyCode::Char('n')
+                | KeyCode::Char('N')
                 | KeyCode::Esc
-                | KeyCode::Char('q')
                 | KeyCode::Char('?') => {}
                 _ => return Ok(()),
             }
         }
     }
 
+    // When a confirm is pending, n/N/Esc all cancel it (uniform with other
+    // confirm dialogs). `q` was deliberately removed from the confirm-context
+    // allowlist above, so it can never reach this point during a confirm.
+    if let Some(ref mut state) = app.container_state {
+        if state.confirm_action.is_some()
+            && matches!(
+                key.code,
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc
+            )
+        {
+            state.confirm_action = None;
+            return Ok(());
+        }
+    }
+
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') => {
-            if let Some(ref mut state) = app.container_state {
-                if state.confirm_action.is_some() {
-                    // Cancel pending confirmation, stay in overlay
-                    state.confirm_action = None;
-                    return Ok(());
-                }
-            }
+            // No confirm pending (the early-return above handles that case):
+            // close the overlay.
             app.container_state = None;
             app.screen = Screen::HostList;
         }

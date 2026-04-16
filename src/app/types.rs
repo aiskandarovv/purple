@@ -759,6 +759,58 @@ pub struct BulkTagEditorState {
     /// with `action = AddToAll`.
     pub new_tag_input: Option<String>,
     pub new_tag_cursor: usize,
+    /// Snapshot of `rows[i].action` at editor open time. Used by `is_dirty`
+    /// to detect pending changes on Esc and prompt the user before
+    /// discarding. Captured by the opener (e.g. `App::open_bulk_tag_editor`)
+    /// after `rows` is populated.
+    ///
+    /// Length-mismatch semantics: any extra row beyond the baseline length
+    /// (i.e. a newly added tag via `+`) counts as dirty if its action is
+    /// non-Leave. This matches the user's intuition that "I typed a new tag,
+    /// closing now should warn me".
+    pub initial_actions: Vec<BulkTagAction>,
+}
+
+impl BulkTagEditorState {
+    /// Returns true if any row's action differs from the open-time baseline,
+    /// or if rows have been added since open.
+    ///
+    /// Single source of truth for the dirty check. The handler consults this
+    /// on Esc to decide between immediate exit and discard confirmation. See
+    /// CLAUDE.md "Keyboard interaction rules" — every editable surface gets
+    /// a dirty-check.
+    ///
+    /// **Invariant**: rows is append-only after `open_bulk_tag_editor`
+    /// captures the baseline. The `+ new tag` flow only appends to `rows`;
+    /// no code path removes rows during the editor session. If a future
+    /// change introduces row removal, the length-mismatch branch below will
+    /// silently treat the missing baseline rows as clean (because `zip`
+    /// stops at the shorter slice). At that point this method needs an
+    /// explicit shrink branch; the assertion below guards the assumption.
+    pub fn is_dirty(&self) -> bool {
+        debug_assert!(
+            self.rows.len() >= self.initial_actions.len(),
+            "rows must be append-only after baseline capture; \
+             shorter rows breaks the dirty-check"
+        );
+        if self.rows.len() != self.initial_actions.len() {
+            // Tags added since open. New rows count as dirty unless still Leave.
+            return self
+                .rows
+                .iter()
+                .skip(self.initial_actions.len())
+                .any(|r| r.action != BulkTagAction::Leave)
+                || self
+                    .rows
+                    .iter()
+                    .zip(self.initial_actions.iter())
+                    .any(|(r, baseline)| r.action != *baseline);
+        }
+        self.rows
+            .iter()
+            .zip(self.initial_actions.iter())
+            .any(|(r, baseline)| r.action != *baseline)
+    }
 }
 
 /// Outcome of applying a bulk tag edit.

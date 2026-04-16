@@ -78,12 +78,9 @@ pub fn render(frame: &mut Frame, app: &mut App, alias: &str) {
     let footer_area = design::render_overlay_footer(frame, area);
     if app.pending_tunnel_delete.is_some() {
         let mut spans = vec![Span::styled(" Remove tunnel? ", theme::bold())];
-        spans.extend(
-            design::Footer::new()
-                .action("y", " yes ")
-                .action("Esc", " no")
-                .into_spans(),
-        );
+        // Stakes test: deleting a tunnel rule rewrites the SSH config
+        // (destructive). Action verbs.
+        spans.extend(design::confirm_footer_destructive("delete", "keep").into_spans());
         super::render_footer_with_status(frame, footer_area, spans, app);
     } else {
         let mut f = design::Footer::new();
