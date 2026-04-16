@@ -9,30 +9,27 @@ use super::theme;
 use crate::app::{App, FormField, Screen};
 
 fn placeholder_for(field: FormField, is_pattern: bool) -> String {
+    use crate::messages::hints;
     match field {
         FormField::AskPass => {
             if let Some(default) = crate::preferences::load_askpass_default() {
-                format!("default: {}", default)
+                hints::askpass_default(&default)
             } else {
-                "Enter to pick a source".to_string()
+                hints::HOST_ASKPASS_PICK.to_string()
             }
         }
-        FormField::Alias if is_pattern => "10.0.0.* or *.example.com".to_string(),
-        FormField::Alias => "e.g. prod or db-01".to_string(),
-        FormField::Hostname => "192.168.1.1 or example.com".to_string(),
-        FormField::User => "root".to_string(),
-        FormField::Port => "22".to_string(),
-        FormField::IdentityFile => "Enter to pick a key".to_string(),
-        FormField::ProxyJump => "Enter to pick a host".to_string(),
+        FormField::Alias if is_pattern => hints::HOST_ALIAS_PATTERN.to_string(),
+        FormField::Alias => hints::HOST_ALIAS.to_string(),
+        FormField::Hostname => hints::HOST_HOSTNAME.to_string(),
+        FormField::User => hints::DEFAULT_SSH_USER.to_string(),
+        FormField::Port => hints::HOST_PORT.to_string(),
+        FormField::IdentityFile => hints::IDENTITY_FILE_PICK.to_string(),
+        FormField::ProxyJump => hints::HOST_PROXY_JUMP.to_string(),
         // SSH secrets engine role (signs SSH certificates). Distinct from
         // Vault KV used in Password Source (vault:path/to/secret).
-        FormField::VaultSsh => {
-            "e.g. ssh-client-signer/sign/my-role (auth via vault login)".to_string()
-        }
-        FormField::VaultAddr => {
-            "e.g. http://127.0.0.1:8200 (inherits from provider or env when empty)".to_string()
-        }
-        FormField::Tags => "e.g. prod, staging, us-east (comma-separated)".to_string(),
+        FormField::VaultSsh => hints::HOST_VAULT_SSH.to_string(),
+        FormField::VaultAddr => hints::HOST_VAULT_ADDR.to_string(),
+        FormField::Tags => hints::HOST_TAGS.to_string(),
     }
 }
 
@@ -485,6 +482,7 @@ fn render_field_content(
     vault_addr_provider_hint: Option<&(String, String)>,
     has_vault_roles: bool,
 ) {
+    use crate::messages::hints;
     let is_focused = form.focused_field == field;
 
     let value = match field {
@@ -548,12 +546,12 @@ fn render_field_content(
     } else if let (true, FormField::VaultSsh, Some((role, prov))) =
         (value.is_empty(), field, vault_provider_hint)
     {
-        let hint = format!("inherits {} from {}", role, prov);
+        let hint = hints::inherits_from(role, prov);
         Line::from(Span::styled(hint, theme::muted()))
     } else if let (true, FormField::VaultAddr, Some((addr, prov))) =
         (value.is_empty(), field, vault_addr_provider_hint)
     {
-        let hint = format!("inherits {} from {}", addr, prov);
+        let hint = hints::inherits_from(addr, prov);
         Line::from(Span::styled(hint, theme::muted()))
     } else if value.is_empty() && is_focused && !is_picker {
         let ph = placeholder_for(field, form.is_pattern);
@@ -563,7 +561,7 @@ fn render_field_content(
         let arrow_pos = inner_width.saturating_sub(1);
         let (display, display_style) = if value.is_empty() {
             let ph = if field == FormField::VaultSsh {
-                "Enter to pick a role or type one".to_string()
+                hints::HOST_VAULT_SSH_PICKER.to_string()
             } else {
                 placeholder_for(field, form.is_pattern)
             };

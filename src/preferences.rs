@@ -1,5 +1,6 @@
 use std::io;
 use std::path::PathBuf;
+#[cfg(test)]
 use std::sync::Mutex;
 
 use log::debug;
@@ -7,38 +8,46 @@ use log::debug;
 use crate::app::{SortMode, ViewMode};
 use crate::fs_util;
 
-static PATH_OVERRIDE: Mutex<Option<PathBuf>> = Mutex::new(None);
+// In test mode the override is thread-local: cargo runs each test on its own
+// thread, so every test gets an isolated preferences path even when multiple
+// suites call `set_path_override` concurrently. This prevents the classic race
+// where a handler test's `App::new()` reset the override while a preferences
+// test was midway through a two-step write (e.g. save_value + remove_value).
+#[cfg(test)]
+thread_local! {
+    static PATH_OVERRIDE: std::cell::RefCell<Option<PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
 
-/// Cross-suite test lock for any test that touches `PATH_OVERRIDE` or the
-/// `demo_flag` global. Both `preferences::tests::with_temp_prefs` and
-/// `visual_regression_tests::setup` acquire this so they cannot run
-/// concurrently. Without this, a visual test's `build_demo_app()` flips the
-/// demo flag, causing concurrent `preferences::tests` `save_value` calls to
-/// return early and break their roundtrips.
+/// Cross-suite test lock for the `demo_flag` global. `with_temp_prefs` and
+/// `visual_regression_tests::setup` both acquire it so they cannot run
+/// concurrently: a visual test's `build_demo_app()` flips the demo flag,
+/// which would cause a parallel `preferences::tests` `save_value` call to
+/// short-circuit. The path override is thread-local and no longer needs
+/// this lock.
 #[cfg(test)]
 pub(crate) static GLOBAL_TEST_IO_LOCK: Mutex<()> = Mutex::new(());
 
 /// Override the preferences file path (used in tests to avoid writing to ~/.purple).
+/// Scoped to the calling thread only.
 #[cfg(test)]
 pub fn set_path_override(path: PathBuf) {
-    *PATH_OVERRIDE.lock().unwrap_or_else(|e| e.into_inner()) = Some(path);
+    PATH_OVERRIDE.with(|p| *p.borrow_mut() = Some(path));
 }
 
 /// Clear the path override so `path()` falls back to the real ~/.purple/preferences.
-/// This avoids a race where other test threads (e.g. App::new() calling load_auto_ping())
-/// read a stale override left behind by a preferences IO test.
+/// Scoped to the calling thread only.
 #[cfg(test)]
 fn clear_path_override() {
-    *PATH_OVERRIDE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    PATH_OVERRIDE.with(|p| *p.borrow_mut() = None);
 }
 
 fn path() -> Option<PathBuf> {
-    if let Some(p) = PATH_OVERRIDE
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone()
+    #[cfg(test)]
     {
-        return Some(p);
+        if let Some(p) = PATH_OVERRIDE.with(|p| p.borrow().clone()) {
+            return Some(p);
+        }
     }
     dirs::home_dir().map(|h| h.join(".purple/preferences"))
 }
@@ -845,11 +854,11 @@ mod tests {
         assert!(!auto_ping);
     }
 
-    // Verifies the poison-recovery pattern used by `path()` and `set_path_override()`.
-    // Uses a local Mutex to avoid poisoning the global PATH_OVERRIDE permanently
-    // (a poisoned Mutex cannot be un-poisoned, which would contaminate other tests).
-    // The production code uses the same `.lock().unwrap_or_else(|e| e.into_inner())`
-    // pattern, so this test proves the pattern survives a poisoned lock.
+    // Verifies the poison-recovery pattern used by `GLOBAL_TEST_IO_LOCK` callers
+    // (`with_temp_prefs` and `visual_regression_tests::setup`). Uses a local Mutex
+    // to avoid poisoning the real lock permanently. The same
+    // `.lock().unwrap_or_else(|e| e.into_inner())` pattern is used wherever a
+    // shared Mutex guards cross-test state.
     #[test]
     fn recovered_lock_survives_poison() {
         let lock: std::sync::Arc<std::sync::Mutex<Option<PathBuf>>> =

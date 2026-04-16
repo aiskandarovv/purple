@@ -1,3 +1,11 @@
+## 2.41.1
+
+- Picker hints now say Space, matching the actual key
+- Form placeholder hints in the Password Source, ProxyJump, SSH Key, Vault SSH Role and provider Regions/Endpoint fields said "Enter to pick..." while the design system (2.41.0) moved those pickers to Space. The text now matches the keystroke you actually press
+- Every user-facing form hint is now centralized in `src/messages::hints` next to the rest of the message copy, so future edits happen in one place and cannot drift between forms
+- Documentation caught up: `llms.txt`, the landing page, the wiki pages for Password Management, Vault SSH Certificates, Host Patterns and Cloud Providers now instruct "Space" for picker opens
+- Eliminated a flaky test caused by a cross-suite race on the preferences path override. The override is now thread-local in test builds, so handler tests and preferences tests can set and read it independently without colliding on a shared mutex
+
 ## 2.41.0
 
 - One consistent look, feel and keyboard everywhere

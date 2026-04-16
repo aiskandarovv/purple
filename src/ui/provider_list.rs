@@ -273,31 +273,34 @@ pub fn render_provider_form(frame: &mut Frame, app: &mut App, provider_name: &st
 }
 
 fn placeholder_for(field: ProviderFormField, provider_name: &str) -> &'static str {
+    use crate::messages::hints;
     match field {
-        ProviderFormField::Url => "https://pve.example.com:8006",
+        ProviderFormField::Url => hints::PROVIDER_URL,
         ProviderFormField::Token => match provider_name {
-            "proxmox" => "user@pam!token=secret",
-            "aws" => "AccessKeyId:Secret (or use Profile)",
-            "gcp" => "/path/to/service-account.json (or access token)",
-            "azure" => "/path/to/service-principal.json (or access token)",
-            "tailscale" => "API key (leave empty for local CLI)",
-            "oracle" => "~/.oci/config",
-            "ovh" => "app_key:app_secret:consumer_key",
-            _ => "your-api-token",
+            "proxmox" => hints::PROVIDER_TOKEN_PROXMOX,
+            "aws" => hints::PROVIDER_TOKEN_AWS,
+            "gcp" => hints::PROVIDER_TOKEN_GCP,
+            "azure" => hints::PROVIDER_TOKEN_AZURE,
+            "tailscale" => hints::PROVIDER_TOKEN_TAILSCALE,
+            "oracle" => hints::PROVIDER_TOKEN_ORACLE,
+            "ovh" => hints::PROVIDER_TOKEN_OVH,
+            _ => hints::PROVIDER_TOKEN_DEFAULT,
         },
-        ProviderFormField::Profile => "Name from ~/.aws/credentials (or use Token)",
+        ProviderFormField::Profile => hints::PROVIDER_PROFILE,
         ProviderFormField::Project => match provider_name {
-            "ovh" => "Public Cloud project ID",
-            _ => "my-gcp-project-id",
+            "ovh" => hints::PROVIDER_PROJECT_OVH,
+            _ => hints::PROVIDER_PROJECT_DEFAULT,
         },
-        ProviderFormField::Compartment => "ocid1.compartment.oc1..aaaa...",
+        ProviderFormField::Compartment => hints::PROVIDER_COMPARTMENT,
         ProviderFormField::Regions => match provider_name {
-            "gcp" => "Enter to select zones (empty = all)",
-            "scaleway" => "Enter to select zones",
-            "azure" => "comma-separated subscription IDs",
-            "ovh" => "Enter to select endpoint (default: EU)",
-            _ => "Enter to select regions",
+            "gcp" => hints::PROVIDER_REGIONS_GCP,
+            "scaleway" => hints::PROVIDER_REGIONS_SCALEWAY,
+            "azure" => hints::PROVIDER_REGIONS_AZURE,
+            "ovh" => hints::PROVIDER_REGIONS_OVH,
+            _ => hints::PROVIDER_REGIONS_DEFAULT,
         },
+        // Alias prefix suggestions are provider short labels (identifiers),
+        // not translatable copy, so they stay inline.
         ProviderFormField::AliasPrefix => match provider_name {
             "digitalocean" => "do",
             "vultr" => "vultr",
@@ -312,21 +315,19 @@ fn placeholder_for(field: ProviderFormField, provider_name: &str) -> &'static st
             "tailscale" => "ts",
             "oracle" => "oci",
             "ovh" => "ovh",
-            _ => "prefix",
+            _ => hints::PROVIDER_ALIAS_PREFIX_DEFAULT,
         },
         ProviderFormField::User => match provider_name {
-            "aws" => "ec2-user",
-            "gcp" => "ubuntu",
-            "azure" => "azureuser",
-            "oracle" => "opc",
-            "ovh" => "ubuntu",
-            _ => "root",
+            "aws" => hints::PROVIDER_USER_AWS,
+            "gcp" => hints::PROVIDER_USER_GCP,
+            "azure" => hints::PROVIDER_USER_AZURE,
+            "oracle" => hints::PROVIDER_USER_ORACLE,
+            "ovh" => hints::PROVIDER_USER_OVH,
+            _ => hints::DEFAULT_SSH_USER,
         },
-        ProviderFormField::IdentityFile => "Enter to pick a key",
-        ProviderFormField::VaultRole => {
-            "e.g. ssh-client-signer/sign/my-role (vault login; inherited)"
-        }
-        ProviderFormField::VaultAddr => "e.g. http://127.0.0.1:8200 (inherited by all hosts)",
+        ProviderFormField::IdentityFile => hints::IDENTITY_FILE_PICK,
+        ProviderFormField::VaultRole => hints::PROVIDER_VAULT_ROLE,
+        ProviderFormField::VaultAddr => hints::PROVIDER_VAULT_ADDR,
         ProviderFormField::VerifyTls | ProviderFormField::AutoSync => "",
     }
 }

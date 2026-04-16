@@ -1984,10 +1984,12 @@ fn test_search_enter_carries_askpass_op_uri() {
 #[test]
 fn test_askpass_placeholder_text() {
     let placeholder = crate::ui::host_form::placeholder_text(FormField::AskPass);
-    // When no global default is set, shows guidance text
+    // When no global default is set, shows the "Space to pick..." guidance.
+    // When a default exists, shows "default: <name>". Per the keyboard
+    // invariants (CLAUDE.md), pickers open on Space, never Enter.
     assert!(
-        placeholder.contains("Enter") || placeholder.contains("default:"),
-        "Should show guidance or default: {}",
+        placeholder.contains("Space") || placeholder.contains("default:"),
+        "Should show Space guidance or default prefix: {}",
         placeholder
     );
 }

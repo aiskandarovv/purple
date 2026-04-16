@@ -836,3 +836,123 @@ pub mod logging {
 
     pub const SSH_VERSION_FAILED: &str = "[purple] Failed to detect SSH version. Is ssh installed?";
 }
+
+// ── Form field hints / placeholders ─────────────────────────────────
+//
+// Dimmed placeholder text shown in empty form fields. Centralized here
+// so every user-visible string lives in one place and is auditable.
+
+pub mod hints {
+    // ── Shared ──────────────────────────────────────────────────────
+    // Picker hints mention "Space" because per the design system keyboard
+    // invariants (CLAUDE.md), Enter always submits a form; pickers open on
+    // Space. Keep these strings in sync with scripts/check-keybindings.sh.
+    pub const IDENTITY_FILE_PICK: &str = "Space to pick a key";
+    pub const DEFAULT_SSH_USER: &str = "root";
+
+    // ── Host form ───────────────────────────────────────────────────
+    pub const HOST_ALIAS: &str = "e.g. prod or db-01";
+    pub const HOST_ALIAS_PATTERN: &str = "10.0.0.* or *.example.com";
+    pub const HOST_HOSTNAME: &str = "192.168.1.1 or example.com";
+    pub const HOST_PORT: &str = "22";
+    pub const HOST_PROXY_JUMP: &str = "Space to pick a host";
+    pub const HOST_VAULT_SSH: &str = "e.g. ssh-client-signer/sign/my-role (auth via vault login)";
+    pub const HOST_VAULT_SSH_PICKER: &str = "Space to pick a role or type one";
+    pub const HOST_VAULT_ADDR: &str =
+        "e.g. http://127.0.0.1:8200 (inherits from provider or env when empty)";
+    pub const HOST_TAGS: &str = "e.g. prod, staging, us-east (comma-separated)";
+    pub const HOST_ASKPASS_PICK: &str = "Space to pick a source";
+
+    pub fn askpass_default(default: &str) -> String {
+        format!("default: {}", default)
+    }
+
+    pub fn inherits_from(value: &str, provider: &str) -> String {
+        format!("inherits {} from {}", value, provider)
+    }
+
+    // ── Tunnel form ─────────────────────────────────────────────────
+    pub const TUNNEL_BIND_PORT: &str = "8080";
+    pub const TUNNEL_REMOTE_HOST: &str = "localhost";
+    pub const TUNNEL_REMOTE_PORT: &str = "80";
+
+    // ── Snippet form ────────────────────────────────────────────────
+    pub const SNIPPET_NAME: &str = "check-disk";
+    pub const SNIPPET_COMMAND: &str = "df -h";
+    pub const SNIPPET_OPTIONAL: &str = "(optional)";
+
+    // ── Provider form ───────────────────────────────────────────────
+    pub const PROVIDER_URL: &str = "https://pve.example.com:8006";
+    pub const PROVIDER_TOKEN_DEFAULT: &str = "your-api-token";
+    pub const PROVIDER_TOKEN_PROXMOX: &str = "user@pam!token=secret";
+    pub const PROVIDER_TOKEN_AWS: &str = "AccessKeyId:Secret (or use Profile)";
+    pub const PROVIDER_TOKEN_GCP: &str = "/path/to/service-account.json (or access token)";
+    pub const PROVIDER_TOKEN_AZURE: &str = "/path/to/service-principal.json (or access token)";
+    pub const PROVIDER_TOKEN_TAILSCALE: &str = "API key (leave empty for local CLI)";
+    pub const PROVIDER_TOKEN_ORACLE: &str = "~/.oci/config";
+    pub const PROVIDER_TOKEN_OVH: &str = "app_key:app_secret:consumer_key";
+    pub const PROVIDER_PROFILE: &str = "Name from ~/.aws/credentials (or use Token)";
+    pub const PROVIDER_PROJECT_DEFAULT: &str = "my-gcp-project-id";
+    pub const PROVIDER_PROJECT_OVH: &str = "Public Cloud project ID";
+    pub const PROVIDER_COMPARTMENT: &str = "ocid1.compartment.oc1..aaaa...";
+    pub const PROVIDER_REGIONS_DEFAULT: &str = "Space to select regions";
+    pub const PROVIDER_REGIONS_GCP: &str = "Space to select zones (empty = all)";
+    pub const PROVIDER_REGIONS_SCALEWAY: &str = "Space to select zones";
+    // Azure regions is a text input (not a picker), so no key is mentioned.
+    pub const PROVIDER_REGIONS_AZURE: &str = "comma-separated subscription IDs";
+    pub const PROVIDER_REGIONS_OVH: &str = "Space to select endpoint (default: EU)";
+    pub const PROVIDER_USER_AWS: &str = "ec2-user";
+    pub const PROVIDER_USER_GCP: &str = "ubuntu";
+    pub const PROVIDER_USER_AZURE: &str = "azureuser";
+    pub const PROVIDER_USER_ORACLE: &str = "opc";
+    pub const PROVIDER_USER_OVH: &str = "ubuntu";
+    pub const PROVIDER_VAULT_ROLE: &str =
+        "e.g. ssh-client-signer/sign/my-role (vault login; inherited)";
+    pub const PROVIDER_VAULT_ADDR: &str = "e.g. http://127.0.0.1:8200 (inherited by all hosts)";
+    pub const PROVIDER_ALIAS_PREFIX_DEFAULT: &str = "prefix";
+}
+
+#[cfg(test)]
+mod hints_tests {
+    use super::hints;
+
+    #[test]
+    fn askpass_default_formats() {
+        assert_eq!(hints::askpass_default("keychain"), "default: keychain");
+    }
+
+    #[test]
+    fn askpass_default_formats_empty() {
+        assert_eq!(hints::askpass_default(""), "default: ");
+    }
+
+    #[test]
+    fn inherits_from_formats() {
+        assert_eq!(
+            hints::inherits_from("role/x", "aws"),
+            "inherits role/x from aws"
+        );
+    }
+
+    #[test]
+    fn picker_hints_mention_space_not_enter() {
+        // Per the keyboard invariants (CLAUDE.md), pickers open on Space.
+        // If these assertions fail, audit scripts/check-keybindings.sh too.
+        for s in [
+            hints::IDENTITY_FILE_PICK,
+            hints::HOST_PROXY_JUMP,
+            hints::HOST_VAULT_SSH_PICKER,
+            hints::HOST_ASKPASS_PICK,
+            hints::PROVIDER_REGIONS_DEFAULT,
+            hints::PROVIDER_REGIONS_GCP,
+            hints::PROVIDER_REGIONS_SCALEWAY,
+            hints::PROVIDER_REGIONS_OVH,
+        ] {
+            assert!(
+                s.starts_with("Space "),
+                "picker hint must mention Space: {s}"
+            );
+            assert!(!s.contains("Enter "), "picker hint must not say Enter: {s}");
+        }
+    }
+}

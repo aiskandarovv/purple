@@ -80,8 +80,8 @@ fn render_field_content(
     let is_focused = form.focused_field == field;
 
     let placeholder = match field {
-        SnippetFormField::Name => "check-disk",
-        SnippetFormField::Command => "df -h",
+        SnippetFormField::Name => crate::messages::hints::SNIPPET_NAME,
+        SnippetFormField::Command => crate::messages::hints::SNIPPET_COMMAND,
         SnippetFormField::Description => "",
     };
 
@@ -93,7 +93,10 @@ fn render_field_content(
 
     let content = if field_value.is_empty() && is_focused {
         if placeholder.is_empty() {
-            Line::from(Span::styled("(optional)", theme::muted()))
+            Line::from(Span::styled(
+                crate::messages::hints::SNIPPET_OPTIONAL,
+                theme::muted(),
+            ))
         } else {
             Line::from(Span::styled(placeholder, theme::muted()))
         }

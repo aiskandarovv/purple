@@ -131,9 +131,9 @@ fn render_field_content(
     };
 
     let placeholder = match field {
-        TunnelFormField::BindPort => "8080",
-        TunnelFormField::RemoteHost => "localhost",
-        TunnelFormField::RemotePort => "80",
+        TunnelFormField::BindPort => crate::messages::hints::TUNNEL_BIND_PORT,
+        TunnelFormField::RemoteHost => crate::messages::hints::TUNNEL_REMOTE_HOST,
+        TunnelFormField::RemotePort => crate::messages::hints::TUNNEL_REMOTE_PORT,
         TunnelFormField::Type => {
             debug_assert!(
                 false,

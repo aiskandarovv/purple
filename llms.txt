@@ -337,7 +337,7 @@ Q: Does purple send my SSH config anywhere?
 A: No. Your config never leaves your machine. Provider sync calls cloud APIs to fetch server lists. The TUI checks GitHub for new releases on startup (cached for 24 hours). No config data is transmitted.
 
 Q: How does password management work?
-A: In the TUI, edit a host (e key) and press Enter on the Password Source field to pick a source from the overlay. Press Ctrl+D to set a global default. When you connect, purple acts as SSH_ASKPASS and retrieves the password automatically. Supported sources: OS Keychain, 1Password, Bitwarden, pass, HashiCorp Vault KV secrets engine and custom commands. For SSH certificate signing, see the Vault SSH signed certificates section (a separate engine). The CLI alternative is purple password set myserver for keychain entries.
+A: In the TUI, edit a host (e key) and press Space on the Password Source field to pick a source from the overlay. Press Ctrl+D to set a global default. When you connect, purple acts as SSH_ASKPASS and retrieves the password automatically. Supported sources: OS Keychain, 1Password, Bitwarden, pass, HashiCorp Vault KV secrets engine and custom commands. For SSH certificate signing, see the Vault SSH signed certificates section (a separate engine). The CLI alternative is purple password set myserver for keychain entries.
 
 Q: Can I use purple with Include files?
 A: Yes. Hosts from Include files are displayed in the TUI but never modified.
@@ -404,7 +404,7 @@ A: Press m in the host list to open the theme picker with live preview. 11 built
 
 ## Status
 
-- Current version: 2.41.0 (April 2026)
+- Current version: 2.41.1 (April 2026)
 - Release cadence: approximately bi-weekly
 - Test suite: 6200+ tests (unit, integration, property-based and HTTP mocking)
 - CI: fmt, clippy, test on macOS and Linux, cargo-deny, MSRV 1.86 check

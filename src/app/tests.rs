@@ -3734,13 +3734,14 @@ Host 10.30.0.*
 #[test]
 fn pattern_placeholder_text() {
     use crate::app::FormField;
+    use crate::messages::hints;
     use crate::ui::host_form::{placeholder_text, placeholder_text_pattern};
     // Regular host placeholder
-    assert_eq!(placeholder_text(FormField::Alias), "e.g. prod or db-01");
+    assert_eq!(placeholder_text(FormField::Alias), hints::HOST_ALIAS);
     // Pattern placeholder
     assert_eq!(
         placeholder_text_pattern(FormField::Alias),
-        "10.0.0.* or *.example.com"
+        hints::HOST_ALIAS_PATTERN
     );
     // Non-alias fields should be the same regardless of is_pattern
     assert_eq!(
