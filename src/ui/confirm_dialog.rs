@@ -31,7 +31,8 @@ pub fn render(frame: &mut Frame, _app: &App, alias: &str) {
     frame.render_widget(paragraph, area);
 
     // Stakes test: deleting a host is destructive (config write, undo only
-    // briefly via stack). Action verbs both sides per CLAUDE.md.
+    // briefly via stack). Use action verbs both sides instead of generic
+    // yes/no.
     let footer_area = design::render_overlay_footer(frame, area);
     let footer = design::confirm_footer_destructive("delete", "keep").to_line();
     frame.render_widget(Paragraph::new(footer), footer_area);
@@ -220,7 +221,7 @@ pub fn render_confirm_vault_sign(frame: &mut Frame, _app: &App, signable: &[Stri
 
     // Stakes test: bulk vault signing hits HashiCorp Vault, may take time
     // and is the canonical destructive/material confirm in purple. Use
-    // action verbs (sign/skip) per CLAUDE.md "Keyboard interaction rules".
+    // action verbs (sign/skip) instead of generic yes/no.
     let footer_area = design::render_overlay_footer(frame, area);
     let footer = design::confirm_footer_destructive("sign", "skip").to_line();
     frame.render_widget(Paragraph::new(footer), footer_area);

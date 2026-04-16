@@ -1,10 +1,19 @@
 use super::*;
 use std::path::PathBuf;
 
+/// Unique scratch path per call so parallel `cargo test` threads cannot
+/// race on the same config file during `SshConfigFile::write()`.
+fn test_config_path() -> PathBuf {
+    tempfile::tempdir()
+        .expect("tempdir")
+        .keep()
+        .join("test_config")
+}
+
 fn empty_config() -> SshConfigFile {
     SshConfigFile {
         elements: Vec::new(),
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     }
@@ -293,7 +302,7 @@ Host do-web-1-copy
 ";
     let mut config = SshConfigFile {
         elements: SshConfigFile::parse_content(content),
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     };
@@ -622,11 +631,11 @@ fn config_with_include_provider_host() -> SshConfigFile {
             raw_line: "Include conf.d/*".to_string(),
             pattern: "conf.d/*".to_string(),
             resolved_files: vec![IncludedFile {
-                path: PathBuf::from("/tmp/included.conf"),
+                path: test_config_path(),
                 elements: included_elements,
             }],
         })],
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     }
@@ -767,7 +776,7 @@ fn test_sync_deduplicates_alias() {
     let content = "Host do-web-1\n  HostName 10.0.0.1\n";
     let mut config = SshConfigFile {
         elements: SshConfigFile::parse_content(content),
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     };
@@ -974,7 +983,7 @@ fn test_sync_manual_comment_survives_cleanup() {
     let content = "# DigitalOcean\nHost do-web\n  HostName 1.2.3.4\n  User root\n  # purple:provider digitalocean:123\n";
     let mut config = SshConfigFile {
         elements: SshConfigFile::parse_content(content),
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     };
@@ -3217,7 +3226,7 @@ Host do-web
 ";
     let mut config = SshConfigFile {
         elements: SshConfigFile::parse_content(content),
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     };
@@ -3421,11 +3430,11 @@ fn test_find_hosts_by_provider_in_includes() {
             raw_line: "Include conf.d/*".to_string(),
             pattern: "conf.d/*".to_string(),
             resolved_files: vec![IncludedFile {
-                path: PathBuf::from("/tmp/included.conf"),
+                path: test_config_path(),
                 elements: included_elements,
             }],
         })],
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     };
@@ -3453,14 +3462,14 @@ fn test_find_hosts_by_provider_mixed_includes_and_toplevel() {
         raw_line: "Include conf.d/*".to_string(),
         pattern: "conf.d/*".to_string(),
         resolved_files: vec![IncludedFile {
-            path: PathBuf::from("/tmp/included.conf"),
+            path: test_config_path(),
             elements: inc_elements,
         }],
     }));
 
     let config = SshConfigFile {
         elements,
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     };
@@ -3478,11 +3487,11 @@ fn test_find_hosts_by_provider_empty_includes() {
             raw_line: "Include conf.d/*".to_string(),
             pattern: "conf.d/*".to_string(),
             resolved_files: vec![IncludedFile {
-                path: PathBuf::from("/tmp/empty.conf"),
+                path: test_config_path(),
                 elements: vec![],
             }],
         })],
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     };
@@ -3496,7 +3505,7 @@ fn test_find_hosts_by_provider_wrong_provider_name() {
     let content = "Host do-web\n  HostName 1.2.3.4\n  # purple:provider digitalocean:1\n";
     let config = SshConfigFile {
         elements: SshConfigFile::parse_content(content),
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     };
@@ -3515,7 +3524,7 @@ fn test_deduplicate_alias_excluding_self() {
     let content = "Host do-web\n  HostName 1.2.3.4\n";
     let config = SshConfigFile {
         elements: SshConfigFile::parse_content(content),
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     };
@@ -3530,7 +3539,7 @@ fn test_deduplicate_alias_excluding_other() {
     let content = "Host do-web\n  HostName 1.2.3.4\n";
     let config = SshConfigFile {
         elements: SshConfigFile::parse_content(content),
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     };
@@ -3545,7 +3554,7 @@ fn test_deduplicate_alias_excluding_chain() {
     let content = "Host do-web\n  HostName 1.1.1.1\n\nHost do-web-2\n  HostName 2.2.2.2\n";
     let config = SshConfigFile {
         elements: SshConfigFile::parse_content(content),
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     };
@@ -3560,7 +3569,7 @@ fn test_deduplicate_alias_excluding_none() {
     let content = "Host do-web\n  HostName 1.2.3.4\n";
     let config = SshConfigFile {
         elements: SshConfigFile::parse_content(content),
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     };
@@ -3579,7 +3588,7 @@ fn test_set_host_tags_empty_clears_tags() {
     let content = "Host do-web\n  HostName 1.2.3.4\n  # purple:tags prod,staging\n";
     let mut config = SshConfigFile {
         elements: SshConfigFile::parse_content(content),
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     };
@@ -3594,7 +3603,7 @@ fn test_set_host_provider_updates_existing() {
     let content = "Host do-web\n  HostName 1.2.3.4\n  # purple:provider digitalocean:old-id\n";
     let mut config = SshConfigFile {
         elements: SshConfigFile::parse_content(content),
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     };
@@ -3621,11 +3630,11 @@ fn test_sync_recognizes_include_hosts_prevents_duplicate_add() {
             raw_line: "Include conf.d/*".to_string(),
             pattern: "conf.d/*".to_string(),
             resolved_files: vec![IncludedFile {
-                path: PathBuf::from("/tmp/included.conf"),
+                path: test_config_path(),
                 elements: included_elements,
             }],
         })],
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     };
@@ -3810,11 +3819,11 @@ fn test_sync_dry_run_remove_excludes_included_hosts() {
             raw_line: "Include conf.d/*".to_string(),
             pattern: "conf.d/*".to_string(),
             resolved_files: vec![IncludedFile {
-                path: PathBuf::from("/tmp/included.conf"),
+                path: test_config_path(),
                 elements: included_elements,
             }],
         })],
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     };
@@ -4468,7 +4477,7 @@ Host do-web-1
 ";
     let mut config = SshConfigFile {
         elements: SshConfigFile::parse_content(content),
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     };
@@ -4571,7 +4580,7 @@ Host do-web-1
 ";
     let mut config = SshConfigFile {
         elements: SshConfigFile::parse_content(content),
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     };
@@ -4606,7 +4615,7 @@ Host do-web-1
 ";
     let mut config = SshConfigFile {
         elements: SshConfigFile::parse_content(content),
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     };
@@ -4639,7 +4648,7 @@ Host do-web-1
 ";
     let config = SshConfigFile {
         elements: SshConfigFile::parse_content(content),
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     };
@@ -4655,7 +4664,7 @@ Host do-web-1
     let serialized = config.serialize();
     let config2 = SshConfigFile {
         elements: SshConfigFile::parse_content(&serialized),
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     };
@@ -4674,7 +4683,7 @@ fn test_sync_first_migration_empty_remote_writes_sentinel() {
         elements: SshConfigFile::parse_content(
             "Host do-web-1\n  HostName 1.2.3.4\n  # purple:provider digitalocean:123\n  # purple:tags prod\n",
         ),
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     };
@@ -5024,7 +5033,7 @@ Host do-web
 ";
     let mut config = SshConfigFile {
         elements: SshConfigFile::parse_content(config_str),
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     };
@@ -5393,7 +5402,7 @@ Host manual
 ";
     let mut config = SshConfigFile {
         elements: SshConfigFile::parse_content(config_str),
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     };
@@ -5449,7 +5458,7 @@ Host manual
 ";
     let mut config = SshConfigFile {
         elements: SshConfigFile::parse_content(config_str),
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     };
@@ -5577,7 +5586,7 @@ Host hz-build
 ";
     let mut config = SshConfigFile {
         elements: SshConfigFile::parse_content(config_str),
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     };
@@ -5636,7 +5645,7 @@ Host pve-testvm
 ";
     let mut config = SshConfigFile {
         elements: SshConfigFile::parse_content(config_str),
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     };

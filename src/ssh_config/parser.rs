@@ -442,12 +442,16 @@ fn strip_inline_comment(value: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
     use std::path::PathBuf;
 
     fn parse_str(content: &str) -> SshConfigFile {
         SshConfigFile {
             elements: SshConfigFile::parse_content(content),
-            path: PathBuf::from("/tmp/test_config"),
+            path: tempfile::tempdir()
+                .expect("tempdir")
+                .keep()
+                .join("test_config"),
             crlf: content.contains("\r\n"),
             bom: false,
         }

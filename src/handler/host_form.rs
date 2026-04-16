@@ -120,7 +120,6 @@ pub(super) fn handle_form(app: &mut App, key: KeyEvent) {
         KeyCode::Enter => {
             // INVARIANT: Enter ALWAYS submits the form, regardless of focused
             // field. Pickers are reached via Space (see Char(' ') arm below).
-            // Documented in CLAUDE.md "Keyboard interaction rules".
             // Smart-paste detection runs before submit on the Alias field so
             // pasted user@host:port targets get split into the right fields.
             if app.form.focused_field == FormField::Alias {
@@ -131,7 +130,7 @@ pub(super) fn handle_form(app: &mut App, key: KeyEvent) {
         // SPACE GUARD MUST PRECEDE the generic Char(c) arm.
         // Rust matches arms top-to-bottom; reordering this arm below the
         // generic insert-char would let Space fall through as a literal
-        // character and break picker activation. Documented in CLAUDE.md.
+        // character and break picker activation.
         //
         // The "empty-field" gate preserves free-text editing: once the
         // user has typed anything, Space inserts a literal space (so paths

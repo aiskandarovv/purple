@@ -100,7 +100,10 @@ mod tests {
     fn test_app() -> App {
         let config = crate::ssh_config::model::SshConfigFile {
             elements: Vec::new(),
-            path: std::path::PathBuf::from("/tmp/purple_palette_test"),
+            path: tempfile::tempdir()
+                .expect("tempdir")
+                .keep()
+                .join("purple_palette_test"),
             crlf: false,
             bom: false,
         };

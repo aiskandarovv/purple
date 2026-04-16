@@ -36,7 +36,7 @@ pub(super) fn handle_bulk_tag_editor_screen(app: &mut App, key: KeyEvent) {
         KeyCode::Esc | KeyCode::Char('q') => {
             // Stakes test: tag edits are non-trivial work (typing new tags,
             // deciding add/remove per row across N hosts). Warn before
-            // discarding. Documented in CLAUDE.md "Keyboard interaction rules".
+            // discarding.
             if app.bulk_tag_editor.is_dirty() {
                 app.pending_discard_confirm = true;
             } else {

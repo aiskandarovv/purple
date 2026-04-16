@@ -776,9 +776,9 @@ impl BulkTagEditorState {
     /// or if rows have been added since open.
     ///
     /// Single source of truth for the dirty check. The handler consults this
-    /// on Esc to decide between immediate exit and discard confirmation. See
-    /// CLAUDE.md "Keyboard interaction rules" — every editable surface gets
-    /// a dirty-check.
+    /// on Esc to decide between immediate exit and discard confirmation.
+    /// Every editable surface gets a dirty-check so Esc never drops unsaved
+    /// work.
     ///
     /// **Invariant**: rows is append-only after `open_bulk_tag_editor`
     /// captures the baseline. The `+ new tag` flow only appends to `rows`;

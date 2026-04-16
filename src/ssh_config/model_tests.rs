@@ -1,9 +1,18 @@
 use super::*;
 
+/// Unique scratch path per call so parallel `cargo test` threads cannot
+/// race on the same config file during `SshConfigFile::write()`.
+fn test_config_path() -> PathBuf {
+    tempfile::tempdir()
+        .expect("tempdir")
+        .keep()
+        .join("test_config")
+}
+
 fn parse_str(content: &str) -> SshConfigFile {
     SshConfigFile {
         elements: SshConfigFile::parse_content(content),
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     }
@@ -976,7 +985,7 @@ fn repair_absorbed_group_comment() {
                 },
             ],
         })],
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     };
@@ -1025,7 +1034,7 @@ fn repair_strips_trailing_blanks_before_group() {
                 },
             ],
         })],
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     };
@@ -1098,7 +1107,7 @@ fn repair_roundtrip_serializes_correctly() {
                 }],
             }),
         ],
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     };
@@ -2097,7 +2106,7 @@ fn stale_with_crlf_preserves_line_endings() {
     let config_str = "Host web\r\n  HostName 1.2.3.4\r\n";
     let config = SshConfigFile {
         elements: SshConfigFile::parse_content(config_str),
-        path: std::path::PathBuf::from("/tmp/test"),
+        path: test_config_path(),
         crlf: true,
         bom: false,
     };
@@ -2635,7 +2644,7 @@ fn inheritance_across_include_boundary() {
     ];
     let config = SshConfigFile {
         elements: main_elements,
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     };
@@ -2667,7 +2676,7 @@ fn inheritance_host_in_include_pattern_in_main() {
     }));
     let config = SshConfigFile {
         elements: main_elements,
-        path: PathBuf::from("/tmp/test_config"),
+        path: test_config_path(),
         crlf: false,
         bom: false,
     };

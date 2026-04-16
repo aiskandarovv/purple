@@ -396,7 +396,10 @@ fn password_sources_order_matches_routing() {
 fn parse_config(content: &str) -> SshConfigFile {
     SshConfigFile {
         elements: SshConfigFile::parse_content(content),
-        path: std::path::PathBuf::from("/tmp/test_askpass_config"),
+        path: tempfile::tempdir()
+            .expect("tempdir")
+            .keep()
+            .join("test_askpass_config"),
         crlf: false,
         bom: false,
     }

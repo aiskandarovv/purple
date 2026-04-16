@@ -12,10 +12,9 @@ pub(super) fn handle_containers(
     events_tx: &mpsc::Sender<AppEvent>,
 ) -> Result<()> {
     // Block all keys except the confirm-dialog contract (y/Y/n/N/Esc) and
-    // `?` (help) when a confirmation is pending. Uniform with all other
-    // confirm dialogs in purple — documented in CLAUDE.md "Keyboard
-    // interaction rules". `q` is intentionally NOT in the allowlist: it
-    // belongs to browse-context cancel, not confirm-context.
+    // `?` (help) when a confirmation is pending. Uniform with every other
+    // confirm dialog in purple. `q` is intentionally NOT in the allowlist:
+    // it belongs to browse-context cancel, not confirm-context.
     if let Some(ref state) = app.container_state {
         if state.confirm_action.is_some() {
             match key.code {

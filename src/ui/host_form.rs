@@ -603,12 +603,14 @@ mod tests {
     use super::*;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
-    use std::path::PathBuf;
 
     fn make_app() -> App {
         let config = crate::ssh_config::model::SshConfigFile {
             elements: crate::ssh_config::model::SshConfigFile::parse_content(""),
-            path: PathBuf::from("/tmp/test_config"),
+            path: tempfile::tempdir()
+                .expect("tempdir")
+                .keep()
+                .join("test_config"),
             crlf: false,
             bom: false,
         };
@@ -705,7 +707,10 @@ mod tests {
     fn proxyjump_picker_fixture(config_text: &str, editing_alias: &str) -> App {
         let cfg = crate::ssh_config::model::SshConfigFile {
             elements: crate::ssh_config::model::SshConfigFile::parse_content(config_text),
-            path: PathBuf::from("/tmp/test"),
+            path: tempfile::tempdir()
+                .expect("tempdir")
+                .keep()
+                .join("test_config"),
             crlf: false,
             bom: false,
         };

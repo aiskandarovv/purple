@@ -581,7 +581,10 @@ use crate::ssh_config::model::SshConfigFile;
 fn parse_config(s: &str) -> SshConfigFile {
     SshConfigFile {
         elements: SshConfigFile::parse_content(s),
-        path: std::path::PathBuf::from("/tmp/test"),
+        path: tempfile::tempdir()
+            .expect("tempdir")
+            .keep()
+            .join("test_config"),
         crlf: false,
         bom: false,
     }

@@ -430,7 +430,7 @@ pub fn empty_line(message: &str) -> Line<'static> {
 // These helpers are the single source of truth for keyboard interaction
 // patterns in purple. The CI script `scripts/check-keybindings.sh` enforces
 // that handler and screen code uses these helpers instead of building footers
-// or routing keys ad hoc. See CLAUDE.md "Keyboard interaction rules".
+// or routing keys ad hoc.
 
 /// Field kind for dynamic form footer hints.
 ///
@@ -440,8 +440,8 @@ pub fn empty_line(message: &str) -> Line<'static> {
 /// - `Picker`: Space opens a selection picker. Footer shows "Space pick".
 ///
 /// **Invariant**: Enter ALWAYS submits the form regardless of `FieldKind`.
-/// Pickers and toggles are reached via Space only, never via Enter. This
-/// invariant is documented in CLAUDE.md and enforced by the CI script.
+/// Pickers and toggles are reached via Space only, never via Enter.
+/// `scripts/check-keybindings.sh` enforces this.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FieldKind {
     /// Text input field. Space inserts a literal character.
@@ -498,10 +498,10 @@ pub fn form_save_footer(mode: FormFooterMode) -> Footer {
 
 /// Footer for a destructive confirmation. Action-specific verbs both sides.
 ///
-/// Stakes test (per CLAUDE.md "Keyboard interaction rules"): if cancelling
-/// by mistake loses irrecoverable work, use action verbs (e.g. `delete/keep`,
-/// `sign/skip`, `purge/keep`). The asymmetry helps users read the dialog as a
-/// choice between two outcomes, not "did I press the right key?".
+/// Stakes test: if cancelling by mistake loses irrecoverable work, use
+/// action verbs (e.g. `delete/keep`, `sign/skip`, `purge/keep`). The
+/// asymmetry helps users read the dialog as a choice between two outcomes,
+/// not "did I press the right key?".
 ///
 /// Both `n` and `Esc` cancel (the contract enforced by
 /// `handler::route_confirm_key`); the footer advertises them as `n/Esc` so

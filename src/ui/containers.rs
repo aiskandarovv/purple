@@ -219,7 +219,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             frame.render_widget(paragraph, dialog_area);
 
             // Stakes test: stop/restart take effect on the remote
-            // immediately. Use the action verb (stop/restart) per CLAUDE.md.
+            // immediately, so use destructive action verbs (stop/restart
+            // vs keep) instead of generic yes/no.
             let footer_area = design::render_overlay_footer(frame, dialog_area);
             let footer = design::confirm_footer_destructive(verb, "keep").to_line();
             frame.render_widget(Paragraph::new(footer), footer_area);
@@ -236,12 +237,14 @@ mod tests {
     use super::design;
     use crate::SshConfigFile;
     use crate::app::{App, ContainerState};
-    use std::path::PathBuf;
 
     fn make_app() -> App {
         let config = SshConfigFile {
             elements: SshConfigFile::parse_content(""),
-            path: PathBuf::from("/tmp/test_containers_config"),
+            path: tempfile::tempdir()
+                .expect("tempdir")
+                .keep()
+                .join("test_containers_config"),
             crlf: false,
             bom: false,
         };

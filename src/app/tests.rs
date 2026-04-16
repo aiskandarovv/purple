@@ -5,9 +5,16 @@ use crate::tunnel::TunnelType;
 use std::path::PathBuf;
 
 fn make_app(content: &str) -> App {
+    // Every test gets a unique tempdir so parallel `cargo test` threads
+    // cannot race on the same config path when `app.config.write()` runs.
+    // `into_path()` leaks cleanup to the OS — fine for test scratch files.
+    let path = tempfile::tempdir()
+        .expect("tempdir")
+        .keep()
+        .join("test_config");
     let config = SshConfigFile {
         elements: SshConfigFile::parse_content(content),
-        path: PathBuf::from("/tmp/test_config"),
+        path,
         crlf: false,
         bom: false,
     };

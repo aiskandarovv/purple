@@ -383,7 +383,6 @@ pub(super) fn handle_provider_form(
         KeyCode::Enter => {
             // INVARIANT: Enter ALWAYS submits the form, regardless of focused
             // field. Pickers/toggles are reached via Space (see arms below).
-            // Documented in CLAUDE.md "Keyboard interaction rules".
             submit_provider_form(app, events_tx);
         }
         // SPACE GUARDS MUST PRECEDE the generic Char(c) arm.

@@ -778,10 +778,12 @@ mod tests {
     use super::*;
 
     fn make_app() -> App {
-        use std::path::PathBuf;
         let config = crate::ssh_config::model::SshConfigFile {
             elements: crate::ssh_config::model::SshConfigFile::parse_content(""),
-            path: PathBuf::from("/tmp/test_config"),
+            path: tempfile::tempdir()
+                .expect("tempdir")
+                .keep()
+                .join("test_config"),
             crlf: false,
             bom: false,
         };

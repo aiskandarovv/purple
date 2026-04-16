@@ -111,9 +111,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         frame.render_widget(Paragraph::new(Line::from(spans)), chunks[spacer_idx]);
     }
 
-    // Footer below the block. Discard prompt takes precedence — uniform
-    // with all other editable surfaces. CLAUDE.md "Keyboard interaction
-    // rules": every dirty-checked surface uses `render_discard_prompt`.
+    // Footer below the block. Discard prompt takes precedence — every
+    // dirty-checked surface routes through `render_discard_prompt` for
+    // uniform confirm behavior.
     let footer_area = design::render_overlay_footer(frame, area);
     if app.pending_discard_confirm {
         design::render_discard_prompt(frame, footer_area, app);

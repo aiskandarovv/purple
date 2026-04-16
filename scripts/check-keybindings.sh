@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Keyboard interaction enforcement.
 #
-# Codifies the four invariants from CLAUDE.md "Keyboard interaction rules"
-# as commit-time checks so future contributions cannot regress them:
+# Codifies the four keyboard interaction invariants as commit-time checks
+# so future contributions cannot regress them:
 #
 #   1. Enter ALWAYS submits a form (never opens pickers).
 #   2. Space activates the focused field (picker/toggle/literal).
@@ -31,7 +31,7 @@ ENTER_HITS=$(grep -rn 'show_key_picker\|show_proxyjump_picker\|show_vault_role_p
 if [ -n "$ENTER_HITS" ]; then
     echo "ERROR: Enter dispatches to picker open in a form handler."
     echo "       Enter must always submit; pickers open on Space."
-    echo "       See CLAUDE.md 'Keyboard interaction rules' invariant 1."
+    echo "       Invariant 1: Enter always submits a form, never opens a picker."
     echo "$ENTER_HITS"
     FAIL=1
 fi
@@ -69,7 +69,7 @@ for file in $CONFIRM_FILES; do
         echo "       Use handler::route_confirm_key(key) and match"
         echo "       ConfirmAction::{Yes, No, Ignored} explicitly. Stray keys"
         echo "       must not silently cancel destructive operations."
-        echo "       See CLAUDE.md 'Keyboard interaction rules' invariant 3."
+        echo "       Invariant 3: confirm dialogs accept y/n/Esc only."
         cat /tmp/keybindings_check_hits.$$
         rm -f /tmp/keybindings_check_hits.$$
         FAIL=1
@@ -96,7 +96,7 @@ for file in $CONFIRM_FILES; do
         echo "       Confirm dialogs must accept n/N as cancel (uniform with"
         echo "       Esc). Either add an explicit Char('n') | Char('N') arm,"
         echo "       or migrate to handler::route_confirm_key(key)."
-        echo "       See CLAUDE.md 'Keyboard interaction rules' invariant 3."
+        echo "       Invariant 3: confirm dialogs accept y/n/Esc only."
         FAIL=1
     fi
 done
@@ -113,9 +113,8 @@ RAW_CONFIRM=$(grep -rn '\.action("y", " yes "\|\.action("y", " confirm "' \
 if [ -n "$RAW_CONFIRM" ]; then
     echo "ERROR: Raw y/yes or y/confirm footer construction outside design.rs."
     echo "       Use design::confirm_footer_destructive(yes_verb, no_verb) for"
-    echo "       destructive confirms (delete, sign, purge) or"
-    echo "       design::confirm_footer_benign() for re-enterable yes/no."
-    echo "       See CLAUDE.md 'Keyboard interaction rules' invariant 4."
+    echo "       destructive confirms (delete, sign, purge)."
+    echo "       Invariant 4: confirm footer labels follow the stakes test."
     echo "$RAW_CONFIRM"
     FAIL=1
 fi

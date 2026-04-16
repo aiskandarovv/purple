@@ -9,7 +9,7 @@ use crate::event::AppEvent;
 
 pub(super) fn handle_confirm_delete(app: &mut App, key: KeyEvent) {
     // Use the central confirm-key router so the y/n/Esc contract is uniform
-    // across all confirm dialogs. See CLAUDE.md "Keyboard interaction rules".
+    // across all confirm dialogs.
     match super::route_confirm_key(key) {
         super::ConfirmAction::Yes => {
             if let Screen::ConfirmDelete { ref alias } = app.screen {
@@ -81,7 +81,7 @@ pub(super) fn handle_confirm_vault_sign(
     // cancel — use `route_confirm_key` so only y/Y/n/N/Esc are honored.
     // History: an earlier `_ => app.screen = Screen::HostList` catch-all
     // could be triggered by any keypress next to `y` (e.g. fat-fingered
-    // `t` or `u`), silently aborting a bulk sign. Documented in CLAUDE.md.
+    // `t` or `u`), silently aborting a bulk sign.
     match super::route_confirm_key(key) {
         super::ConfirmAction::Yes => {
             // Extract the precomputed signable list, then transition back to

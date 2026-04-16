@@ -9,23 +9,30 @@ use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
 
 fn test_provider_config() -> ProviderConfig {
+    // Unique tempdir per call so parallel tests do not race on the same
+    // provider-config file when `path_override` gets written.
+    let dir = tempfile::tempdir().expect("tempdir").keep();
     ProviderConfig {
-        path_override: Some(PathBuf::from("/tmp/purple_test_providers")),
+        path_override: Some(dir.join("providers")),
         ..Default::default()
     }
 }
 
 fn make_app(content: &str) -> App {
+    // Unique tempdir per call — parallel `cargo test` threads must not
+    // share a config path when `app.config.write()` or preferences-write
+    // runs.
+    let scratch = tempfile::tempdir().expect("tempdir").keep();
     let config = SshConfigFile {
         elements: SshConfigFile::parse_content(content),
-        path: PathBuf::from("/tmp/test_config"),
+        path: scratch.join("test_config"),
         crlf: false,
         bom: false,
     };
     let mut app = App::new(config);
     // Never write to the real ~/.purple during tests
     app.provider_config = test_provider_config();
-    crate::preferences::set_path_override(PathBuf::from("/tmp/purple_test_preferences"));
+    crate::preferences::set_path_override(scratch.join("preferences"));
     app
 }
 
@@ -768,8 +775,7 @@ fn make_ovh_form_app() -> App {
 
 #[test]
 fn test_ovh_space_on_regions_opens_picker() {
-    // Per CLAUDE.md "Keyboard interaction rules": pickers open on Space,
-    // never on Enter. Enter always submits.
+    // Pickers open on Space, never on Enter. Enter always submits.
     let mut app = make_ovh_form_app();
     app.provider_form.focused_field = ProviderFormField::Regions;
     let (tx, _rx) = mpsc::channel();
@@ -1054,7 +1060,7 @@ fn test_provider_form_backspace_verify_tls_blocked() {
 
 #[test]
 fn test_provider_form_space_opens_key_picker() {
-    // Pickers open on Space, never on Enter (CLAUDE.md keyboard rules).
+    // Pickers open on Space, never on Enter.
     let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::IdentityFile);
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
@@ -1326,7 +1332,7 @@ fn make_form_app() -> App {
 
 #[test]
 fn test_space_on_askpass_opens_password_picker() {
-    // Pickers open on Space, never on Enter (CLAUDE.md keyboard rules).
+    // Pickers open on Space, never on Enter.
     let mut app = make_form_app();
     app.form.focused_field = FormField::AskPass;
     let (tx, _rx) = mpsc::channel();
@@ -2263,8 +2269,8 @@ fn test_askpass_unicode_in_custom_command() {
 
 #[test]
 fn test_space_on_empty_askpass_field_opens_picker() {
-    // CLAUDE.md "Keyboard interaction rules": Space opens the picker on
-    // empty picker fields. On non-empty fields it inserts a literal space
+    // Space opens the picker on empty picker fields. On non-empty fields
+    // it inserts a literal space
     // (so custom commands like `my-script %h` keep working).
     let mut app = make_form_app();
     app.form.focused_field = FormField::AskPass;
@@ -3704,13 +3710,8 @@ fn test_tunnel_list_d_n_cancels_delete() {
 
 #[test]
 fn test_host_form_baseline_cleared_after_submit() {
-    // Use a unique temp file to avoid race conditions with parallel tests
-    // that share /tmp/test_config.
-    let unique = format!(
-        "/tmp/purple_test_baseline_{:?}",
-        std::thread::current().id()
-    );
-    let config_path = PathBuf::from(&unique);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config_path = dir.path().join("test_config");
     std::fs::write(&config_path, "Host test\n  HostName test.com\n").unwrap();
     let config = SshConfigFile {
         elements: SshConfigFile::parse_content("Host test\n  HostName test.com\n"),
@@ -3720,7 +3721,7 @@ fn test_host_form_baseline_cleared_after_submit() {
     };
     let mut app = App::new(config);
     app.provider_config = test_provider_config();
-    crate::preferences::set_path_override(PathBuf::from(format!("{}_prefs", unique)));
+    crate::preferences::set_path_override(dir.path().join("preferences"));
     app.form = crate::app::HostForm::new();
     app.form.alias = "newhost".to_string();
     app.form.hostname = "new.example.com".to_string();
@@ -3730,9 +3731,6 @@ fn test_host_form_baseline_cleared_after_submit() {
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
     assert!(app.form_baseline.is_none());
-    // Cleanup
-    let _ = std::fs::remove_file(&unique);
-    let _ = std::fs::remove_file(format!("{}_prefs", unique));
 }
 
 // --- Edge case: uppercase Y in discard confirms ---
@@ -5558,9 +5556,10 @@ fn host_form_new_starts_collapsed() {
 
 #[test]
 fn host_form_from_entry_starts_expanded() {
+    let dir = tempfile::tempdir().expect("tempdir");
     let config = SshConfigFile {
         elements: SshConfigFile::parse_content("Host test\n  HostName test.com\n"),
-        path: PathBuf::from("/tmp/test_config"),
+        path: dir.path().join("test_config"),
         crlf: false,
         bom: false,
     };
@@ -6542,8 +6541,8 @@ fn bulk_editor_space_cycles_and_enter_applies() {
 
 #[test]
 fn bulk_editor_esc_with_dirty_shows_discard_then_confirms() {
-    // Per CLAUDE.md "Keyboard interaction rules": every dirty-checked
-    // surface prompts before discarding work. Esc on a dirty editor opens
+    // Every dirty-checked surface prompts before discarding work.
+    // Esc on a dirty editor opens
     // the discard prompt; pressing y then closes the editor and clears state.
     let mut app = bulk_make_app();
     let tx = mpsc::channel().0;
@@ -6858,7 +6857,6 @@ fn route_confirm_key_esc_no() {
 #[test]
 fn route_confirm_key_other_keys_ignored() {
     // Critical safety invariant: stray keys must NOT cancel a confirm dialog.
-    // Documented in CLAUDE.md "Keyboard interaction rules".
     for code in [
         KeyCode::Char('t'), // adjacent to y
         KeyCode::Char('u'), // adjacent to y
@@ -6884,7 +6882,10 @@ fn route_confirm_key_other_keys_ignored() {
 fn vault_sign_confirm_app() -> App {
     let mut app =
         make_app("Host vaulthost\n  HostName vault.example.com\n  IdentityFile ~/.ssh/id_rsa\n");
-    let path = std::path::PathBuf::from("/tmp/test-cert");
+    let path = tempfile::tempdir()
+        .expect("tempdir")
+        .keep()
+        .join("test-cert");
     let signable = vec![(
         "vaulthost".to_string(),
         "ssh-client/sign/role".to_string(),
@@ -6941,7 +6942,7 @@ fn vault_sign_confirm_esc_cancels() {
 
 #[test]
 fn enter_on_identity_file_field_does_not_open_key_picker() {
-    // CLAUDE.md invariant 1: Enter never opens a picker.
+    // Invariant 1: Enter never opens a picker.
     let mut app = make_form_app();
     app.form.focused_field = FormField::IdentityFile;
     let (tx, _rx) = mpsc::channel();
