@@ -135,9 +135,27 @@ hash_line() {
 
 fetch_content() {
     local url="$1"
-    curl -sL --max-time 30 --retry 2 --retry-delay 5 \
-        -H "User-Agent: purple-changelog-monitor/1.0" \
-        "$url" 2>/dev/null || true
+    # Use a browser-like User-Agent so sites with bot detection (e.g. Vultr)
+    # do not serve a stub page that looks like a JS-SPA. Capture HTTP status
+    # so geo-blocks and rate limits surface as explicit errors instead of
+    # being mistaken for JS-rendered pages.
+    local tmp http_code
+    tmp="$(mktemp)"
+    http_code="$(
+        curl -sL --max-time 30 --retry 2 --retry-delay 5 \
+            -H "User-Agent: Mozilla/5.0 (compatible; purple-changelog-monitor/1.0; +https://github.com/erickochen/purple)" \
+            -H "Accept: text/html,application/xhtml+xml,application/xml,application/json,text/plain,*/*" \
+            -w "%{http_code}" \
+            -o "$tmp" \
+            "$url" 2>/dev/null || echo "000"
+    )"
+    if [[ "$http_code" != "200" ]]; then
+        echo "  http $http_code for $url" >&2
+        rm -f "$tmp"
+        return
+    fi
+    cat "$tmp"
+    rm -f "$tmp"
 }
 
 # Fetch Scaleway changelogs from GitHub API directory listing.
