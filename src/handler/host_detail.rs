@@ -35,10 +35,8 @@ pub(super) fn handle_tag_input(app: &mut App, key: KeyEvent) {
             app.tags.input = None;
             app.tags.cursor = 0;
         }
-        KeyCode::Left => {
-            if app.tags.cursor > 0 {
-                app.tags.cursor -= 1;
-            }
+        KeyCode::Left if app.tags.cursor > 0 => {
+            app.tags.cursor -= 1;
         }
         KeyCode::Right => {
             if let Some(ref input) = app.tags.input {
@@ -62,14 +60,12 @@ pub(super) fn handle_tag_input(app: &mut App, key: KeyEvent) {
                 app.tags.cursor += 1;
             }
         }
-        KeyCode::Backspace => {
-            if app.tags.cursor > 0 {
-                if let Some(ref mut input) = app.tags.input {
-                    let byte_pos = crate::app::char_to_byte_pos(input, app.tags.cursor);
-                    let prev = crate::app::char_to_byte_pos(input, app.tags.cursor - 1);
-                    input.drain(prev..byte_pos);
-                    app.tags.cursor -= 1;
-                }
+        KeyCode::Backspace if app.tags.cursor > 0 => {
+            if let Some(ref mut input) = app.tags.input {
+                let byte_pos = crate::app::char_to_byte_pos(input, app.tags.cursor);
+                let prev = crate::app::char_to_byte_pos(input, app.tags.cursor - 1);
+                input.drain(prev..byte_pos);
+                app.tags.cursor -= 1;
             }
         }
         _ => {}

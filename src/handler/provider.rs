@@ -363,10 +363,8 @@ pub(super) fn handle_provider_form(
             }
             app.provider_form.sync_cursor_to_end();
         }
-        KeyCode::Left => {
-            if app.provider_form.cursor_pos > 0 {
-                app.provider_form.cursor_pos -= 1;
-            }
+        KeyCode::Left if app.provider_form.cursor_pos > 0 => {
+            app.provider_form.cursor_pos -= 1;
         }
         KeyCode::Right => {
             let len = app.provider_form.focused_value().chars().count();

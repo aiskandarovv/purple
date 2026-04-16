@@ -500,29 +500,23 @@ pub(super) fn handle_snippet_param_form(
                 app.screen = Screen::SnippetPicker { target_aliases };
             }
         }
-        KeyCode::Tab | KeyCode::Down => {
-            if form.focused_index + 1 < form.params.len() {
-                form.focused_index += 1;
-                form.cursor_pos = form.values[form.focused_index].chars().count();
-                let vis = form.visible_count.max(1);
-                if form.focused_index >= form.scroll_offset + vis {
-                    form.scroll_offset = form.focused_index.saturating_sub(vis - 1);
-                }
+        KeyCode::Tab | KeyCode::Down if form.focused_index + 1 < form.params.len() => {
+            form.focused_index += 1;
+            form.cursor_pos = form.values[form.focused_index].chars().count();
+            let vis = form.visible_count.max(1);
+            if form.focused_index >= form.scroll_offset + vis {
+                form.scroll_offset = form.focused_index.saturating_sub(vis - 1);
             }
         }
-        KeyCode::BackTab | KeyCode::Up => {
-            if form.focused_index > 0 {
-                form.focused_index -= 1;
-                form.cursor_pos = form.values[form.focused_index].chars().count();
-                if form.focused_index < form.scroll_offset {
-                    form.scroll_offset = form.focused_index;
-                }
+        KeyCode::BackTab | KeyCode::Up if form.focused_index > 0 => {
+            form.focused_index -= 1;
+            form.cursor_pos = form.values[form.focused_index].chars().count();
+            if form.focused_index < form.scroll_offset {
+                form.scroll_offset = form.focused_index;
             }
         }
-        KeyCode::Left => {
-            if form.cursor_pos > 0 {
-                form.cursor_pos -= 1;
-            }
+        KeyCode::Left if form.cursor_pos > 0 => {
+            form.cursor_pos -= 1;
         }
         KeyCode::Right => {
             let len = form.values[form.focused_index].chars().count();
@@ -607,10 +601,8 @@ pub(super) fn handle_snippet_form(app: &mut App, key: KeyEvent) {
             app.snippet_form.focused_field = app.snippet_form.focused_field.prev();
             app.snippet_form.sync_cursor_to_end();
         }
-        KeyCode::Left => {
-            if app.snippet_form.cursor_pos > 0 {
-                app.snippet_form.cursor_pos -= 1;
-            }
+        KeyCode::Left if app.snippet_form.cursor_pos > 0 => {
+            app.snippet_form.cursor_pos -= 1;
         }
         KeyCode::Right => {
             let len = app.snippet_form.focused_value().chars().count();

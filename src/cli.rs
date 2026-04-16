@@ -775,10 +775,8 @@ pub(super) fn prompt_hidden_input(prompt: &str) -> Result<Option<String>> {
                     input.push(c);
                     eprint!("*");
                 }
-                crossterm::event::KeyCode::Backspace => {
-                    if input.pop().is_some() {
-                        eprint!("\x08 \x08");
-                    }
+                crossterm::event::KeyCode::Backspace if input.pop().is_some() => {
+                    eprint!("\x08 \x08");
                 }
                 crossterm::event::KeyCode::Esc => {
                     crossterm::terminal::disable_raw_mode()?;

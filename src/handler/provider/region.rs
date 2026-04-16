@@ -119,15 +119,11 @@ pub(crate) fn handle_region_picker(app: &mut App, key: KeyEvent) {
                 app.notify(crate::messages::regions_selected_count(count, zone_label));
             }
         }
-        KeyCode::Down | KeyCode::Char('j') => {
-            if app.ui.region_picker_cursor + 1 < total {
-                app.ui.region_picker_cursor += 1;
-            }
+        KeyCode::Down | KeyCode::Char('j') if app.ui.region_picker_cursor + 1 < total => {
+            app.ui.region_picker_cursor += 1;
         }
-        KeyCode::Up | KeyCode::Char('k') => {
-            if app.ui.region_picker_cursor > 0 {
-                app.ui.region_picker_cursor -= 1;
-            }
+        KeyCode::Up | KeyCode::Char('k') if app.ui.region_picker_cursor > 0 => {
+            app.ui.region_picker_cursor -= 1;
         }
         KeyCode::Char(' ') => {
             let cursor = app.ui.region_picker_cursor;

@@ -126,10 +126,8 @@ fn handle_new_tag_input(app: &mut App, key: KeyEvent) {
             app.bulk_tag_editor.new_tag_input = None;
             app.bulk_tag_editor.new_tag_cursor = 0;
         }
-        KeyCode::Left => {
-            if app.bulk_tag_editor.new_tag_cursor > 0 {
-                app.bulk_tag_editor.new_tag_cursor -= 1;
-            }
+        KeyCode::Left if app.bulk_tag_editor.new_tag_cursor > 0 => {
+            app.bulk_tag_editor.new_tag_cursor -= 1;
         }
         KeyCode::Right => {
             if let Some(ref input) = app.bulk_tag_editor.new_tag_input {
@@ -146,16 +144,14 @@ fn handle_new_tag_input(app: &mut App, key: KeyEvent) {
                 app.bulk_tag_editor.new_tag_cursor = input.chars().count();
             }
         }
-        KeyCode::Backspace => {
-            if app.bulk_tag_editor.new_tag_cursor > 0 {
-                if let Some(ref mut input) = app.bulk_tag_editor.new_tag_input {
-                    let byte_pos =
-                        crate::app::char_to_byte_pos(input, app.bulk_tag_editor.new_tag_cursor);
-                    let prev =
-                        crate::app::char_to_byte_pos(input, app.bulk_tag_editor.new_tag_cursor - 1);
-                    input.drain(prev..byte_pos);
-                    app.bulk_tag_editor.new_tag_cursor -= 1;
-                }
+        KeyCode::Backspace if app.bulk_tag_editor.new_tag_cursor > 0 => {
+            if let Some(ref mut input) = app.bulk_tag_editor.new_tag_input {
+                let byte_pos =
+                    crate::app::char_to_byte_pos(input, app.bulk_tag_editor.new_tag_cursor);
+                let prev =
+                    crate::app::char_to_byte_pos(input, app.bulk_tag_editor.new_tag_cursor - 1);
+                input.drain(prev..byte_pos);
+                app.bulk_tag_editor.new_tag_cursor -= 1;
             }
         }
         KeyCode::Char(c) => {

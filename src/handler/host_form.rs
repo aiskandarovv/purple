@@ -100,10 +100,8 @@ pub(super) fn handle_form(app: &mut App, key: KeyEvent) {
             app.form.sync_cursor_to_end();
             app.form.update_hint();
         }
-        KeyCode::Left => {
-            if app.form.cursor_pos > 0 {
-                app.form.cursor_pos -= 1;
-            }
+        KeyCode::Left if app.form.cursor_pos > 0 => {
+            app.form.cursor_pos -= 1;
         }
         KeyCode::Right => {
             let len = app.form.focused_value().chars().count();

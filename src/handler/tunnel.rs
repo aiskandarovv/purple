@@ -221,10 +221,8 @@ pub(super) fn handle_tunnel_form(app: &mut App, key: KeyEvent) {
                 .prev(app.tunnel_form.tunnel_type);
             app.tunnel_form.sync_cursor_to_end();
         }
-        KeyCode::Left => {
-            if app.tunnel_form.cursor_pos > 0 {
-                app.tunnel_form.cursor_pos -= 1;
-            }
+        KeyCode::Left if app.tunnel_form.cursor_pos > 0 => {
+            app.tunnel_form.cursor_pos -= 1;
         }
         KeyCode::Right => {
             let len = app
