@@ -1,3 +1,14 @@
+## 2.41.0
+
+- One consistent look, feel and keyboard everywhere
+- Every screen now shares the same borders, spacing, colors and layout. Pickers, forms, confirm dialogs and detail panels feel like one coherent product instead of 22 pages that drifted apart over time. Future releases cannot regress visually because the rules are locked in at commit time
+- Keyboard shortcuts work the same across every form, picker and confirm. Enter always submits. Space activates the focused field: flip a toggle, open a picker or insert a literal space. No more guessing which key does what on which screen
+- Destructive actions are harder to trigger by accident. A stray keypress next to `y` no longer silently cancels a delete, a Vault SSH bulk sign or a host purge. Confirm dialogs accept only `y`, `n` or Esc, and their labels spell out the stakes (`y delete | Esc keep`, `y sign | Esc skip`) so you know what each choice does before you commit
+- Forms tell you what Space does on the field you're editing. Toggles say `Space toggle`, picker fields say `Space pick`, text fields say `Space insert space`. You learn the shortcuts without opening the help screen
+- Smarter notifications. A shrinking purple bar under each toast shows how much time you have to read it. Errors stay until you acknowledge them so you never miss one. Warnings auto-expire. The queue caps at three so the screen never clutters when things go sideways
+- Unsaved work is protected. Closing the bulk tag editor with pending changes now asks before discarding them
+- Closes [#27](https://github.com/erickochen/purple/issues/27)
+
 ## 2.40.0
 
 - Provider API verification pipeline ([#28](https://github.com/erickochen/purple/issues/28))
