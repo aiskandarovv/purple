@@ -871,10 +871,8 @@ impl HostBlock {
                 "hostname" => entry.hostname = d.value.clone(),
                 "user" => entry.user = d.value.clone(),
                 "port" => entry.port = d.value.parse().unwrap_or(22),
-                "identityfile" => {
-                    if entry.identity_file.is_empty() {
-                        entry.identity_file = d.value.clone();
-                    }
+                "identityfile" if entry.identity_file.is_empty() => {
+                    entry.identity_file = d.value.clone();
                 }
                 "proxyjump" => entry.proxy_jump = d.value.clone(),
                 _ => {}

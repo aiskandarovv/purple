@@ -148,16 +148,17 @@ impl EventHandler {
                     Ok(true) => {
                         if let Ok(evt) = event::read() {
                             match evt {
-                                CrosstermEvent::Key(key) if key.kind == KeyEventKind::Press => {
-                                    if event_tx.send(AppEvent::Key(key)).is_err() {
-                                        return;
-                                    }
+                                CrosstermEvent::Key(key)
+                                    if key.kind == KeyEventKind::Press
+                                        && event_tx.send(AppEvent::Key(key)).is_err() =>
+                                {
+                                    return;
                                 }
-                                CrosstermEvent::Resize(..) => {
-                                    // Trigger immediate redraw on terminal resize
-                                    if event_tx.send(AppEvent::Tick).is_err() {
-                                        return;
-                                    }
+                                // Trigger immediate redraw on terminal resize.
+                                CrosstermEvent::Resize(..)
+                                    if event_tx.send(AppEvent::Tick).is_err() =>
+                                {
+                                    return;
                                 }
                                 _ => {}
                             }
