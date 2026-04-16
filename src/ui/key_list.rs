@@ -15,10 +15,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         format!("SSH Keys {}/{}", pos, app.keys.len())
     };
 
-    // Overlay: percentage-based width, height fits content
+    // Overlay: percentage-based width, height fits content. Reserve 1 row
+    // below the block for the external footer.
     let item_count = app.keys.len().max(1);
-    let height = (item_count as u16 + 7).min(frame.area().height.saturating_sub(4));
-    let area = design::overlay_area(frame, 70, 80, height);
+    let height = (item_count as u16 + 5).min(frame.area().height.saturating_sub(5));
+    let area = design::overlay_area(frame, design::OVERLAY_W, design::OVERLAY_H, height);
     frame.render_widget(Clear, area);
 
     let block = design::overlay_block(&title);
@@ -27,9 +28,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     frame.render_widget(block, area);
 
     if app.keys.is_empty() {
-        let msg = Paragraph::new("  No keys found in ~/.ssh/. Try ssh-keygen to forge one.")
-            .style(theme::muted());
-        frame.render_widget(msg, inner);
+        design::render_empty(
+            frame,
+            inner,
+            "No keys found in ~/.ssh/. Try ssh-keygen to forge one.",
+        );
         return;
     }
 
@@ -38,12 +41,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // Flex gap (absorbs surplus)
     // Right cluster: COMMENT
     let usable = inner.width.saturating_sub(2) as usize; // 1 highlight + 1 right margin
-    let gap: usize = 2;
+    let gap: usize = design::COL_GAP as usize;
 
-    // ~110% of content width (same formula as containers.rs)
-    let padded = |w: usize| -> usize { if w == 0 { 0 } else { w + w / 10 + 1 } };
-
-    let name_w = padded(
+    let name_w = design::padded_usize(
         app.keys
             .iter()
             .map(|k| k.name.len())
@@ -51,7 +51,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             .unwrap_or(4)
             .max(4),
     );
-    let type_w = padded(
+    let type_w = design::padded_usize(
         app.keys
             .iter()
             .map(|k| k.type_display().len())
@@ -59,7 +59,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             .unwrap_or(4)
             .max(4),
     );
-    let hosts_w = padded(
+    let hosts_w = design::padded_usize(
         app.keys
             .iter()
             .map(|k| {
@@ -80,15 +80,18 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let comment_w = usable.saturating_sub(left + gap);
     let flex_gap = if comment_w > 0 { gap } else { 0 };
 
-    let gap_str = " ".repeat(gap);
+    let gap_str = design::COL_GAP_STR;
     let flex_str = " ".repeat(flex_gap);
 
     // Column header
     let mut header_spans = vec![
-        Span::styled(format!("   {:<name_w$}", "NAME"), theme::bold()),
-        Span::raw(gap_str.clone()),
+        Span::styled(
+            format!("{}{:<name_w$}", design::COLUMN_HEADER_PREFIX, "NAME"),
+            theme::bold(),
+        ),
+        Span::raw(gap_str),
         Span::styled(format!("{:<type_w$}", "TYPE"), theme::bold()),
-        Span::raw(gap_str.clone()),
+        Span::raw(gap_str),
         Span::styled(format!("{:<hosts_w$}", "HOSTS"), theme::bold()),
     ];
     if comment_w > 0 {
@@ -117,11 +120,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
             let line = Line::from(vec![
                 Span::styled(format!(" {:<name_w$}", key.name), theme::bold()),
-                Span::raw(&gap_str),
+                Span::raw(gap_str),
                 Span::styled(format!("{:<type_w$}", type_display), theme::muted()),
-                Span::raw(&gap_str),
+                Span::raw(gap_str),
                 Span::styled(format!("{:<hosts_w$}", host_label), theme::muted()),
-                Span::raw(&flex_str),
+                Span::raw(flex_str.clone()),
                 Span::styled(comment_display, theme::muted()),
             ]);
             ListItem::new(line)
@@ -131,8 +134,6 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let inner_chunks = Layout::vertical([
         Constraint::Length(1), // Column header
         Constraint::Min(0),    // List
-        Constraint::Length(1), // Spacer
-        Constraint::Length(1), // Footer
     ])
     .split(inner);
 
@@ -144,32 +145,25 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     frame.render_stateful_widget(list, inner_chunks[1], &mut app.ui.key_list_state);
 
-    // Footer
+    // Footer below the block
+    let footer_area = design::render_overlay_footer(frame, area);
     design::Footer::new()
         .primary("Enter", " details ")
         .action("Esc", " back")
-        .render_with_status(frame, inner_chunks[3], app);
+        .render_with_status(frame, footer_area, app);
 }
 
 #[cfg(test)]
 mod tests {
-    use ratatui::layout::{Constraint, Layout, Rect};
+    use ratatui::layout::Rect;
+
+    use super::design;
 
     #[test]
-    fn layout_has_spacer_between_list_and_footer() {
+    fn footer_sits_directly_below_block() {
         let area = Rect::new(0, 0, 60, 20);
-        let chunks = Layout::vertical([
-            Constraint::Length(1), // header
-            Constraint::Min(0),    // list
-            Constraint::Length(1), // spacer
-            Constraint::Length(1), // footer
-        ])
-        .split(area);
-        assert_eq!(chunks[2].height, 1, "spacer row should be 1 tall");
-        assert_eq!(chunks[3].height, 1, "footer row should be 1 tall");
-        assert!(
-            chunks[3].y > chunks[1].y + chunks[1].height,
-            "footer should be below list end"
-        );
+        let footer = design::form_footer(area, area.height);
+        assert_eq!(footer.height, 1);
+        assert_eq!(footer.y, area.y + area.height);
     }
 }

@@ -58,12 +58,13 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     };
 
     // chrome = non-content rows the overlay consumes regardless of content.
-    // Host list: 2 borders + top + 2 above info + 2 info + 2 above footer
-    // + footer + 1 bottom = 11.
-    // Others:   2 borders + top + spacer + footer = 5.
-    let chrome = if is_host_list { 11 } else { 5 };
+    // Host list: 2 borders + top + 2 above info + 2 info + 1 bottom = 8.
+    // Others:   2 borders + top + 1 bottom breathing = 4.
+    // Footer renders BELOW the block via `design::form_footer`, so the
+    // overlay reserves 1 row of vertical margin for it (saturating_sub(3)).
+    let chrome = if is_host_list { 8 } else { 4 };
     let max_body = frame.area().height.saturating_sub(chrome);
-    let height = (total_lines + chrome).min(frame.area().height.saturating_sub(2));
+    let height = (total_lines + chrome).min(frame.area().height.saturating_sub(3));
     let area = super::centered_rect_fixed(overlay_width, height, frame.area());
 
     frame.render_widget(Clear, area);
@@ -85,21 +86,18 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     let rows = if is_host_list {
         Layout::vertical([
-            Constraint::Length(1), // top breathing (tighter, was 2)
+            Constraint::Length(1), // top breathing
             Constraint::Min(0),    // content cols
             Constraint::Length(2), // breathing above info
             Constraint::Length(2), // wiki + issues info rows
-            Constraint::Length(2), // breathing above footer
-            Constraint::Length(1), // footer
-            Constraint::Length(1), // bottom breathing (tighter, was 2)
+            Constraint::Length(1), // bottom breathing
         ])
         .split(inner)
     } else {
         Layout::vertical([
             Constraint::Length(1), // top breathing
             Constraint::Min(0),    // content
-            Constraint::Length(1), // spacer
-            Constraint::Length(1), // footer
+            Constraint::Length(1), // bottom breathing
         ])
         .split(inner)
     };
@@ -172,7 +170,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 
     let can_scroll = total_lines > max_body;
-    let footer_row = if is_host_list { rows[5] } else { rows[3] };
+    // Footer below the block
+    let footer_area = design::render_overlay_footer(frame, area);
     if can_scroll {
         let mut spans = design::Footer::new().action("j/k", " scroll ").into_spans();
         let position = app.ui.help_scroll.saturating_add(1);
@@ -183,11 +182,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         ));
         spans.push(Span::raw(design::FOOTER_GAP));
         spans.extend(design::Footer::new().action("Esc", " close").into_spans());
-        super::render_footer_with_status(frame, footer_row, spans, app);
+        super::render_footer_with_status(frame, footer_area, spans, app);
     } else {
         design::Footer::new()
             .action("Esc", " close")
-            .render_with_status(frame, footer_row, app);
+            .render_with_status(frame, footer_area, app);
     }
 }
 
@@ -565,39 +564,45 @@ mod tests {
     }
 
     #[test]
-    fn host_list_layout_breathing_content_info_footer() {
-        // Host list: top(1) + content + breathing(2) + 2 info rows
-        // + breathing(2) + footer + bottom(1).
+    fn host_list_layout_breathing_content_info_bottom() {
+        // Host list: top(1) + content + breathing(2) + 2 info rows + bottom(1).
+        // Footer renders BELOW the block via design::form_footer (no row in
+        // the inner layout).
         let area = Rect::new(0, 0, 80, 40);
         let rows = ratatui::layout::Layout::vertical([
             ratatui::layout::Constraint::Length(1),
             ratatui::layout::Constraint::Min(0),
             ratatui::layout::Constraint::Length(2),
             ratatui::layout::Constraint::Length(2),
-            ratatui::layout::Constraint::Length(2),
-            ratatui::layout::Constraint::Length(1),
             ratatui::layout::Constraint::Length(1),
         ])
         .split(area);
         assert_eq!(rows[0].height, 1, "top breathing");
         assert_eq!(rows[3].height, 2, "info rows");
-        assert_eq!(rows[5].height, 1, "footer");
-        assert_eq!(rows[6].height, 1, "bottom breathing");
+        assert_eq!(rows[4].height, 1, "bottom breathing");
     }
 
     #[test]
-    fn compact_layout_breathing_content_footer() {
-        // Sub-screens: top(1) + content + spacer(1) + footer.
+    fn compact_layout_breathing_content_bottom() {
+        // Sub-screens: top(1) + content + bottom breathing(1).
+        // Footer renders BELOW the block via design::form_footer.
         let area = Rect::new(0, 0, 80, 30);
         let rows = ratatui::layout::Layout::vertical([
             ratatui::layout::Constraint::Length(1),
             ratatui::layout::Constraint::Min(0),
             ratatui::layout::Constraint::Length(1),
-            ratatui::layout::Constraint::Length(1),
         ])
         .split(area);
         assert_eq!(rows[0].height, 1, "top breathing");
-        assert_eq!(rows[3].height, 1, "footer");
+        assert_eq!(rows[2].height, 1, "bottom breathing");
+    }
+
+    #[test]
+    fn footer_sits_directly_below_block() {
+        let area = Rect::new(0, 0, 80, 30);
+        let footer = design::form_footer(area, area.height);
+        assert_eq!(footer.height, 1);
+        assert_eq!(footer.y, area.y + area.height);
     }
 
     // --- Content completeness tests ---

@@ -9,6 +9,15 @@ use crate::fs_util;
 
 static PATH_OVERRIDE: Mutex<Option<PathBuf>> = Mutex::new(None);
 
+/// Cross-suite test lock for any test that touches `PATH_OVERRIDE` or the
+/// `demo_flag` global. Both `preferences::tests::with_temp_prefs` and
+/// `visual_regression_tests::setup` acquire this so they cannot run
+/// concurrently. Without this, a visual test's `build_demo_app()` flips the
+/// demo flag, causing concurrent `preferences::tests` `save_value` calls to
+/// return early and break their roundtrips.
+#[cfg(test)]
+pub(crate) static GLOBAL_TEST_IO_LOCK: Mutex<()> = Mutex::new(());
+
 /// Override the preferences file path (used in tests to avoid writing to ~/.purple).
 #[cfg(test)]
 pub fn set_path_override(path: PathBuf) {
@@ -497,15 +506,16 @@ mod tests {
     // --- Real file I/O tests using set_path_override ---
     //
     // PATH_OVERRIDE is a global Mutex<Option<PathBuf>>, so these tests must
-    // not run concurrently. We use a module-level Mutex (IO_TEST_LOCK) as a
-    // guard: holding it serialises access to PATH_OVERRIDE for the duration
-    // of each test body.
+    // not run concurrently. They acquire the crate-level GLOBAL_TEST_IO_LOCK,
+    // which is also held by visual_regression_tests::setup() so the two
+    // suites cannot race on PATH_OVERRIDE or on demo_flag::DEMO_MODE.
 
-    static IO_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     static TEST_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
     fn with_temp_prefs<F: FnOnce(&std::path::Path)>(label: &str, f: F) {
-        let _guard = IO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = super::GLOBAL_TEST_IO_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let id = TEST_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!(
             "purple_prefs_{}_{}_{id}",
@@ -588,7 +598,9 @@ mod tests {
 
     #[test]
     fn load_group_by_missing_file_defaults_to_provider() {
-        let _guard = IO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = super::GLOBAL_TEST_IO_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let path =
             std::env::temp_dir().join(format!("purple_prefs_missing_{}", std::process::id()));
         // Ensure it does not exist

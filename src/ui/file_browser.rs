@@ -27,7 +27,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         return;
     }
 
-    let overlay = design::overlay_area(frame, 90, 85, area.height);
+    // Reserve 1 row below the block for the external footer.
+    let overlay = design::overlay_area(frame, 90, 85, area.height.saturating_sub(1));
     frame.render_widget(Clear, overlay);
 
     let block = design::overlay_block(&format!("Files: {}", fb.alias));
@@ -35,13 +36,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let inner = block.inner(overlay);
     frame.render_widget(block, overlay);
 
-    // Layout: path headers + divider + file lists + spacer + footer
+    // Layout inside the block. Footer renders BELOW the block.
     let rows = Layout::vertical([
         Constraint::Length(1), // path headers
         Constraint::Length(1), // divider
         Constraint::Min(0),    // file lists
-        Constraint::Length(1), // spacer
-        Constraint::Length(1), // footer
     ])
     .split(inner);
 
@@ -170,7 +169,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         ));
     }
 
-    super::render_footer_with_status(frame, rows[4], footer_spans, app);
+    let footer_area = design::render_overlay_footer(frame, overlay);
+    super::render_footer_with_status(frame, footer_area, footer_spans, app);
 }
 
 fn render_local_pane(frame: &mut Frame, fb: &mut FileBrowserState, area: Rect) {
@@ -200,12 +200,11 @@ fn render_local_pane(frame: &mut Frame, fb: &mut FileBrowserState, area: Rect) {
 fn render_remote_pane(frame: &mut Frame, fb: &mut FileBrowserState, area: Rect) {
     if fb.remote_loading {
         let path = if fb.remote_path.is_empty() {
-            "~".to_string()
+            "~"
         } else {
-            fb.remote_path.clone()
+            &fb.remote_path
         };
-        let msg = format!(" Loading {} ...", path);
-        frame.render_widget(Paragraph::new(Span::styled(msg, theme::muted())), area);
+        design::render_loading(frame, area, &format!("Loading {} ...", path));
         return;
     }
 
@@ -384,29 +383,22 @@ fn render_confirm_dialog(
     }
     lines.push(Line::from(""));
 
-    let height = (lines.len() + 3) as u16;
+    // Footer renders below the block.
+    let height = (lines.len() + 2) as u16;
     let dialog_area = super::centered_rect_fixed(width, height, area);
 
     frame.render_widget(Clear, dialog_area);
 
     let block = design::overlay_block("Confirm");
-    let inner = block.inner(dialog_area);
-    frame.render_widget(block, dialog_area);
+    let paragraph = Paragraph::new(lines).block(block);
+    frame.render_widget(paragraph, dialog_area);
 
-    let rows = Layout::vertical([
-        Constraint::Min(0),
-        Constraint::Length(1),
-        Constraint::Length(1),
-    ])
-    .split(inner);
-
-    frame.render_widget(Paragraph::new(lines), rows[0]);
-
+    let footer_area = design::render_overlay_footer(frame, dialog_area);
     let footer_line = design::Footer::new()
         .action("y", " confirm ")
         .action("Esc", " cancel")
         .to_line();
-    frame.render_widget(Paragraph::new(footer_line), rows[2]);
+    frame.render_widget(Paragraph::new(footer_line), footer_area);
 }
 
 fn render_transfer_dialog(frame: &mut Frame, label: &str, area: Rect) {
@@ -456,26 +448,19 @@ fn render_error_dialog(frame: &mut Frame, message: &str, area: Rect) {
     }
     lines.push(Line::from(""));
 
-    let height = ((lines.len() + 3) as u16).min(area.height.saturating_sub(4));
+    // Footer renders below the block.
+    let height = ((lines.len() + 2) as u16).min(area.height.saturating_sub(5));
     let dialog_area = super::centered_rect_fixed(width, height, area);
 
     frame.render_widget(Clear, dialog_area);
 
     let block = design::danger_block("Error");
-    let inner = block.inner(dialog_area);
-    frame.render_widget(block, dialog_area);
+    let paragraph = Paragraph::new(lines).block(block);
+    frame.render_widget(paragraph, dialog_area);
 
-    let rows = Layout::vertical([
-        Constraint::Min(0),
-        Constraint::Length(1),
-        Constraint::Length(1),
-    ])
-    .split(inner);
-
-    frame.render_widget(Paragraph::new(lines), rows[0]);
-
+    let footer_area = design::render_overlay_footer(frame, dialog_area);
     let footer_line = design::Footer::new().action("Esc", " dismiss").to_line();
-    frame.render_widget(Paragraph::new(footer_line), rows[2]);
+    frame.render_widget(Paragraph::new(footer_line), footer_area);
 }
 
 /// Truncate a string from the LEFT, prefixing with `\u{2026}` if truncated.
@@ -507,48 +492,15 @@ pub(crate) fn truncate_left(s: &str, max_cols: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use ratatui::layout::{Constraint, Layout, Rect};
+    use ratatui::layout::Rect;
+
+    use super::design;
 
     #[test]
-    fn main_layout_has_spacer_between_filelist_and_footer() {
+    fn footer_sits_directly_below_block() {
         let area = Rect::new(0, 0, 80, 30);
-        let rows = Layout::vertical([
-            Constraint::Length(1), // path headers
-            Constraint::Length(1), // divider
-            Constraint::Min(0),    // file lists
-            Constraint::Length(1), // spacer
-            Constraint::Length(1), // footer
-        ])
-        .split(area);
-        assert_eq!(rows[3].height, 1);
-        assert_eq!(rows[4].height, 1);
-        assert!(
-            rows[4].y > rows[2].y + rows[2].height,
-            "footer should be below file list end"
-        );
-    }
-
-    #[test]
-    fn confirm_dialog_layout_has_spacer() {
-        let area = Rect::new(0, 0, 50, 10);
-        let rows = Layout::vertical([
-            Constraint::Min(0),
-            Constraint::Length(1),
-            Constraint::Length(1),
-        ])
-        .split(area);
-        assert!(rows[2].y > rows[0].y + rows[0].height);
-    }
-
-    #[test]
-    fn error_dialog_layout_has_spacer() {
-        let area = Rect::new(0, 0, 40, 10);
-        let rows = Layout::vertical([
-            Constraint::Min(0),
-            Constraint::Length(1),
-            Constraint::Length(1),
-        ])
-        .split(area);
-        assert!(rows[2].y > rows[0].y + rows[0].height);
+        let footer = design::form_footer(area, area.height);
+        assert_eq!(footer.height, 1);
+        assert_eq!(footer.y, area.y + area.height);
     }
 }

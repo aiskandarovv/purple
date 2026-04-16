@@ -33,15 +33,12 @@ pub(super) fn handle_provider_list(
                     app.provider_config.remove_section(name.as_str());
                     if let Err(e) = app.provider_config.save() {
                         app.provider_config.set_section(old_section);
-                        app.notify_error(format!("Failed to save: {}", e));
+                        app.notify_error(crate::messages::failed_to_save(&e));
                     } else {
                         app.sync_history.remove(name.as_str());
                         crate::app::SyncRecord::save_all(&app.sync_history);
                         let display_name = crate::providers::provider_display_name(name.as_str());
-                        app.notify(format!(
-                            "Removed {} configuration. Synced hosts remain in your SSH config.",
-                            display_name
-                        ));
+                        app.notify(crate::messages::provider_removed(display_name));
                     }
                 }
             }
@@ -142,7 +139,7 @@ pub(super) fn handle_provider_list(
         }
         KeyCode::Char('s') => {
             if app.demo_mode {
-                app.notify("Demo mode. Sync disabled.".to_string());
+                app.notify(crate::messages::DEMO_SYNC_DISABLED);
                 return;
             }
             if let Some(index) = app.ui.provider_list_state.selected() {
@@ -154,15 +151,12 @@ pub(super) fn handle_provider_list(
                             app.syncing_providers.insert(name.clone(), cancel.clone());
                             let display_name =
                                 crate::providers::provider_display_name(name.as_str());
-                            app.notify_info(format!("Syncing {}...", display_name));
+                            app.notify_info(crate::messages::syncing_provider(display_name));
                             super::sync::spawn_provider_sync(&section, events_tx.clone(), cancel);
                         }
                     } else {
                         let display_name = crate::providers::provider_display_name(name.as_str());
-                        app.notify_error(format!(
-                            "Configure {} first. Press Enter to set up.",
-                            display_name
-                        ));
+                        app.notify_error(crate::messages::provider_configure_first(display_name));
                     }
                 }
             }
@@ -175,10 +169,7 @@ pub(super) fn handle_provider_list(
                         app.pending_provider_delete = Some(name.clone());
                     } else {
                         let display_name = crate::providers::provider_display_name(name.as_str());
-                        app.notify(format!(
-                            "{} is not configured. Nothing to remove.",
-                            display_name
-                        ));
+                        app.notify(crate::messages::provider_not_configured(display_name));
                     }
                 }
             }
@@ -204,7 +195,7 @@ pub(super) fn handle_provider_list(
                         .collect();
                     if provider_stale.is_empty() {
                         let display = crate::providers::provider_display_name(name);
-                        app.notify_error(format!("No stale hosts for {}.", display));
+                        app.notify_warning(crate::messages::no_stale_hosts_for(display));
                     } else {
                         let aliases: Vec<String> =
                             provider_stale.into_iter().map(|(a, _)| a.clone()).collect();
@@ -233,7 +224,7 @@ fn warn_aws_token_format(app: &mut App, provider_name: &str) {
         return;
     }
     if !token.contains(':') {
-        app.notify_error("Token format: AccessKeyId:SecretAccessKey");
+        app.notify_warning(crate::messages::TOKEN_FORMAT_AWS);
     }
 }
 
@@ -440,7 +431,7 @@ pub(super) fn handle_provider_form(
 
 fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
     if app.demo_mode {
-        app.notify("Demo mode. Provider config changes disabled.".to_string());
+        app.notify(crate::messages::DEMO_PROVIDER_CHANGES_DISABLED);
         app.screen = Screen::Providers;
         return;
     }
@@ -470,7 +461,7 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
     ];
     for (value, name) in &pf_fields {
         if value.chars().any(|c| c.is_control()) {
-            app.notify_error(format!("{} contains control characters.", name));
+            app.notify_warning(crate::messages::contains_control_chars(name));
             return;
         }
     }
@@ -479,7 +470,7 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
     if provider_name == "proxmox" {
         let url = app.provider_form.url.trim();
         if url.is_empty() {
-            app.notify_error("URL is required for Proxmox VE.");
+            app.notify_warning(crate::messages::URL_REQUIRED_PROXMOX);
             return;
         }
         if !url.to_ascii_lowercase().starts_with("https://") {
@@ -514,29 +505,29 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
 
     // GCP requires a project ID
     if provider_name == "gcp" && app.provider_form.project.trim().is_empty() {
-        app.notify_error("Project ID can't be empty. Set your GCP project ID.");
+        app.notify_warning(crate::messages::PROJECT_REQUIRED_GCP);
         return;
     }
 
     // Oracle requires a compartment OCID
     if provider_name == "oracle" && app.provider_form.compartment.trim().is_empty() {
-        app.notify_error("Compartment can't be empty. Set your OCI compartment OCID.");
+        app.notify_warning(crate::messages::COMPARTMENT_REQUIRED_OCI);
         return;
     }
 
     // AWS/Scaleway require at least one region/zone
     if provider_name == "aws" && app.provider_form.regions.trim().is_empty() {
-        app.notify_error("Select at least one AWS region.");
+        app.notify_warning(crate::messages::REGIONS_REQUIRED_AWS);
         return;
     }
     if provider_name == "scaleway" && app.provider_form.regions.trim().is_empty() {
-        app.notify_error("Select at least one Scaleway zone.");
+        app.notify_warning(crate::messages::ZONES_REQUIRED_SCALEWAY);
         return;
     }
     if provider_name == "azure" {
         let subs = app.provider_form.regions.trim();
         if subs.is_empty() {
-            app.notify_error("Enter at least one Azure subscription ID.");
+            app.notify_warning(crate::messages::SUBSCRIPTIONS_REQUIRED_AZURE);
             return;
         }
         for sub in subs.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
@@ -551,7 +542,7 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
     let token = app.provider_form.token.trim().to_string();
     let alias_prefix = app.provider_form.alias_prefix.trim().to_string();
     if crate::ssh_config::model::is_host_pattern(&alias_prefix) {
-        app.notify_error("Alias prefix can't contain spaces or pattern characters (*, ?, [, !).");
+        app.notify_warning(crate::messages::ALIAS_PREFIX_INVALID);
         return;
     }
 
@@ -564,13 +555,13 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
         }
     };
     if user.contains(char::is_whitespace) {
-        app.notify_error("User can't contain whitespace.");
+        app.notify_warning(crate::messages::USER_NO_WHITESPACE);
         return;
     }
 
     let vault_role_trimmed = app.provider_form.vault_role.trim();
     if !vault_role_trimmed.is_empty() && !crate::vault_ssh::is_valid_role(vault_role_trimmed) {
-        app.notify_error("Vault SSH role must be in the form <mount>/sign/<role>.");
+        app.notify_warning(crate::messages::VAULT_ROLE_FORMAT);
         return;
     }
 
@@ -599,7 +590,7 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
             Some(old) => app.provider_config.set_section(old),
             None => app.provider_config.remove_section(&provider_name),
         }
-        app.notify_error(format!("Failed to save: {}", e));
+        app.notify_error(crate::messages::failed_to_save(&e));
         return;
     }
 
@@ -611,11 +602,11 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
             let cancel = Arc::new(AtomicBool::new(false));
             app.syncing_providers
                 .insert(provider_name.clone(), cancel.clone());
-            app.notify(format!("Saved {} configuration. Syncing...", display_name));
+            app.notify(crate::messages::provider_saved_syncing(display_name));
             super::sync::spawn_provider_sync(&sync_section, events_tx.clone(), cancel);
         }
     } else {
-        app.notify(format!("Saved {} configuration.", display_name));
+        app.notify(crate::messages::provider_saved(display_name));
     }
     app.clear_form_mtime();
     app.provider_form_baseline = None;

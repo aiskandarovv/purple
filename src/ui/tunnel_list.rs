@@ -1,6 +1,6 @@
 use ratatui::Frame;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, List, ListItem, Paragraph};
+use ratatui::widgets::{Clear, List, ListItem};
 
 use super::design;
 use super::theme;
@@ -13,10 +13,11 @@ pub fn render(frame: &mut Frame, app: &mut App, alias: &str) {
         .iter()
         .any(|h| h.alias == alias && h.source_file.is_some());
 
-    // Overlay: percentage-based width, height fits content
+    // Overlay: percentage-based width, height fits content. Reserve 1 row
+    // below the block for the external footer.
     let item_count = app.tunnel_list.len().max(1);
-    let height = (item_count as u16 + 6).min(frame.area().height.saturating_sub(4));
-    let area = design::overlay_area(frame, 70, 80, height);
+    let height = (item_count as u16 + 4).min(frame.area().height.saturating_sub(5));
+    let area = design::overlay_area(frame, design::OVERLAY_W, design::OVERLAY_H, height);
     frame.render_widget(Clear, area);
 
     let mut block = design::overlay_block(&format!("Tunnels for {}", alias));
@@ -27,15 +28,12 @@ pub fn render(frame: &mut Frame, app: &mut App, alias: &str) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let (content, footer) = design::content_and_footer(inner);
-
     if app.tunnel_list.is_empty() {
-        let msg = if is_readonly {
-            "  Read-only (included file)."
+        if is_readonly {
+            design::render_empty(frame, inner, "Read-only (included file).");
         } else {
-            "  No tunnels. Press 'a' to add one."
-        };
-        frame.render_widget(Paragraph::new(msg).style(theme::muted()), content);
+            design::render_empty_with_hint(frame, inner, "No tunnels.", "a", "add one");
+        }
     } else {
         let items: Vec<ListItem> = app
             .tunnel_list
@@ -73,10 +71,11 @@ pub fn render(frame: &mut Frame, app: &mut App, alias: &str) {
             .highlight_style(theme::selected_row())
             .highlight_symbol(design::LIST_HIGHLIGHT);
 
-        frame.render_stateful_widget(list, content, &mut app.ui.tunnel_list_state);
+        frame.render_stateful_widget(list, inner, &mut app.ui.tunnel_list_state);
     }
 
-    // Footer
+    // Footer below the block
+    let footer_area = design::render_overlay_footer(frame, area);
     if app.pending_tunnel_delete.is_some() {
         let mut spans = vec![Span::styled(" Remove tunnel? ", theme::bold())];
         spans.extend(
@@ -85,7 +84,7 @@ pub fn render(frame: &mut Frame, app: &mut App, alias: &str) {
                 .action("Esc", " no")
                 .into_spans(),
         );
-        super::render_footer_with_status(frame, footer, spans, app);
+        super::render_footer_with_status(frame, footer_area, spans, app);
     } else {
         let mut f = design::Footer::new();
         if is_active {
@@ -100,31 +99,23 @@ pub fn render(frame: &mut Frame, app: &mut App, alias: &str) {
             }
         }
         f = f.action("Esc", " back");
-        f.render_with_status(frame, footer, app);
+        f.render_with_status(frame, footer_area, app);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use ratatui::layout::{Constraint, Layout, Rect};
+    use ratatui::layout::Rect;
+
+    use super::design;
 
     #[test]
-    fn layout_has_spacer_between_content_and_footer() {
+    fn footer_sits_directly_below_block() {
         let area = Rect::new(0, 0, 60, 20);
-        let chunks = Layout::vertical([
-            Constraint::Min(0),
-            Constraint::Length(1),
-            Constraint::Length(1),
-        ])
-        .split(area);
-        // chunks[0] = content, chunks[1] = spacer, chunks[2] = footer
-        assert_eq!(chunks[1].height, 1, "spacer row should be 1 tall");
-        assert_eq!(chunks[2].height, 1, "footer row should be 1 tall");
-        assert!(
-            chunks[2].y > chunks[0].y + chunks[0].height,
-            "footer (y={}) should be below content end (y={})",
-            chunks[2].y,
-            chunks[0].y + chunks[0].height
-        );
+        let footer = design::form_footer(area, area.height);
+        assert_eq!(footer.height, 1);
+        assert_eq!(footer.y, area.y + area.height);
+        assert_eq!(footer.x, area.x);
+        assert_eq!(footer.width, area.width);
     }
 }

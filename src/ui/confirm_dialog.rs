@@ -13,17 +13,11 @@ use crate::app::App;
 // once the user closes the dialog and returns to the parent screen.
 
 pub fn render(frame: &mut Frame, _app: &App, alias: &str) {
-    let area = super::centered_rect_fixed(52, 7, frame.area());
+    let area = super::centered_rect_fixed(52, 5, frame.area());
 
-    // Clear background
     frame.render_widget(Clear, area);
 
     let block = design::danger_block("Confirm Delete");
-
-    let buttons = design::Footer::new()
-        .action("y", " yes ")
-        .action("Esc", " no")
-        .to_line();
 
     let text = vec![
         Line::from(""),
@@ -31,26 +25,26 @@ pub fn render(frame: &mut Frame, _app: &App, alias: &str) {
             format!("  Delete \"{}\"?", alias),
             theme::bold(),
         )),
-        Line::from(""),
-        buttons,
     ];
 
     let paragraph = Paragraph::new(text).block(block);
     frame.render_widget(paragraph, area);
+
+    let footer_area = design::render_overlay_footer(frame, area);
+    let footer = design::Footer::new()
+        .action("y", " yes ")
+        .action("Esc", " no")
+        .to_line();
+    frame.render_widget(Paragraph::new(footer), footer_area);
 }
 
 pub fn render_host_key_reset(frame: &mut Frame, _app: &App, hostname: &str) {
     let display = super::truncate(hostname, 40);
-    let area = super::centered_rect_fixed(52, 9, frame.area());
+    let area = super::centered_rect_fixed(52, 7, frame.area());
 
     frame.render_widget(Clear, area);
 
     let block = design::danger_block("Host Key Changed");
-
-    let buttons = design::Footer::new()
-        .action("y", " yes ")
-        .action("Esc", " no")
-        .to_line();
 
     let text = vec![
         Line::from(""),
@@ -66,25 +60,25 @@ pub fn render_host_key_reset(frame: &mut Frame, _app: &App, hostname: &str) {
             "  Remove old key and reconnect?",
             theme::muted(),
         )),
-        Line::from(""),
-        buttons,
     ];
 
     let paragraph = Paragraph::new(text).block(block);
     frame.render_widget(paragraph, area);
+
+    let footer_area = design::render_overlay_footer(frame, area);
+    let footer = design::Footer::new()
+        .action("y", " yes ")
+        .action("Esc", " no")
+        .to_line();
+    frame.render_widget(Paragraph::new(footer), footer_area);
 }
 
 pub fn render_confirm_import(frame: &mut Frame, _app: &App, count: usize) {
-    let area = super::centered_rect_fixed(52, 7, frame.area());
+    let area = super::centered_rect_fixed(52, 5, frame.area());
 
     frame.render_widget(Clear, area);
 
     let block = design::overlay_block("Import");
-
-    let buttons = design::Footer::new()
-        .action("y", " yes ")
-        .action("Esc", " no")
-        .to_line();
 
     let text = vec![
         Line::from(""),
@@ -96,12 +90,17 @@ pub fn render_confirm_import(frame: &mut Frame, _app: &App, count: usize) {
             ),
             theme::bold(),
         )),
-        Line::from(""),
-        buttons,
     ];
 
     let paragraph = Paragraph::new(text).block(block);
     frame.render_widget(paragraph, area);
+
+    let footer_area = design::render_overlay_footer(frame, area);
+    let footer = design::Footer::new()
+        .action("y", " yes ")
+        .action("Esc", " no")
+        .to_line();
+    frame.render_widget(Paragraph::new(footer), footer_area);
 }
 
 pub fn render_confirm_purge_stale(
@@ -133,8 +132,9 @@ pub fn render_confirm_purge_stale(
         )));
     }
 
-    // height: 2 border + 1 blank + 1 question + host_lines + 1 blank + 1 footer
-    let inner_height = 4 + host_lines.len();
+    // height: 2 border + 1 blank + 1 question + host_lines.
+    // Footer renders below the block.
+    let inner_height = 2 + host_lines.len();
     let height = (inner_height + 2) as u16;
     let area = super::centered_rect_fixed(52, height, frame.area());
 
@@ -163,16 +163,16 @@ pub fn render_confirm_purge_stale(
         Line::from(Span::styled(main_line, theme::bold())),
     ];
     text.extend(host_lines);
-    text.push(Line::from(""));
-    text.push(
-        design::Footer::new()
-            .action("y", " yes ")
-            .action("Esc", " no")
-            .to_line(),
-    );
 
     let paragraph = Paragraph::new(text).block(block);
     frame.render_widget(paragraph, area);
+
+    let footer_area = design::render_overlay_footer(frame, area);
+    let footer = design::Footer::new()
+        .action("y", " yes ")
+        .action("Esc", " no")
+        .to_line();
+    frame.render_widget(Paragraph::new(footer), footer_area);
 }
 
 pub fn render_confirm_vault_sign(frame: &mut Frame, _app: &App, signable: &[String]) {
@@ -192,18 +192,14 @@ pub fn render_confirm_vault_sign(frame: &mut Frame, _app: &App, signable: &[Stri
         String::new()
     };
 
-    // Height: top + main + blank + preview + blank + note + spacer + footer + bottom = 11
-    let height = 11u16;
+    // Height: border(2) + blank + question + blank + preview + blank + note = 9.
+    // Footer renders below the block.
+    let height = 9u16;
     let area = super::centered_rect_fixed(72, height, frame.area());
 
     frame.render_widget(Clear, area);
 
     let block = design::overlay_block("Sign Vault SSH Certificates");
-
-    let buttons = design::Footer::new()
-        .action("y", " confirm ")
-        .action("Esc", " cancel")
-        .to_line();
 
     let text = vec![
         Line::from(""),
@@ -222,12 +218,17 @@ pub fn render_confirm_vault_sign(frame: &mut Frame, _app: &App, signable: &[Stri
             "  Hosts with a still-valid certificate are skipped.".to_string(),
             theme::muted(),
         )),
-        Line::from(""),
-        buttons,
     ];
 
     let paragraph = Paragraph::new(text).block(block);
     frame.render_widget(paragraph, area);
+
+    let footer_area = design::render_overlay_footer(frame, area);
+    let footer = design::Footer::new()
+        .action("y", " confirm ")
+        .action("Esc", " cancel")
+        .to_line();
+    frame.render_widget(Paragraph::new(footer), footer_area);
 }
 
 /// Block-art logo for the welcome screen (6 lines, ANSI Shadow style).

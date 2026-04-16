@@ -6263,30 +6263,36 @@ fn tick_status_sticky_never_expires() {
 }
 
 #[test]
-fn tick_toast_non_sticky_error_expires() {
+fn tick_toast_warning_expires_after_timeout_ms() {
+    use std::time::{Duration, Instant};
+    // "failed connection" = 2 words → max(4000, 1500) = 4000ms.
     let mut app = make_app("");
-    app.notify_error("failed");
-    assert!(app.toast.is_some(), "error should route to toast");
-    for _ in 0..=20 {
-        app.tick_toast();
+    app.notify_warning("failed connection");
+    assert!(app.toast.is_some(), "warning should route to toast");
+    if let Some(toast) = app.toast.as_mut() {
+        toast.created_at = Instant::now() - Duration::from_millis(4100);
     }
+    app.tick_toast();
     assert!(
         app.toast.is_none(),
-        "non-sticky error toast must expire after 20 ticks"
+        "warning toast must expire after timeout_ms"
     );
 }
 
 #[test]
 fn tick_toast_non_sticky_success_expires() {
+    use std::time::{Duration, Instant};
+    // "done" = 1 word → max(2500, 750) = 2500ms.
     let mut app = make_app("");
     app.notify("done");
-    assert!(app.toast.is_some(), "confirmation should route to toast");
-    for _ in 0..=16 {
-        app.tick_toast();
+    assert!(app.toast.is_some(), "success should route to toast");
+    if let Some(toast) = app.toast.as_mut() {
+        toast.created_at = Instant::now() - Duration::from_millis(2600);
     }
+    app.tick_toast();
     assert!(
         app.toast.is_none(),
-        "non-sticky confirmation toast must expire after 16 ticks"
+        "success toast must expire after timeout_ms"
     );
 }
 
@@ -6492,49 +6498,92 @@ fn confirmation_clears_alert_queue() {
 }
 
 #[test]
-fn alert_queue_sequential_display() {
+fn error_toasts_are_sticky_and_queued_in_order() {
     let mut app = make_app("");
     app.notify_error("err1");
     app.notify_error("err2");
     app.notify_error("err3");
+    // First error is shown; the rest queue up. Errors are sticky-by-default
+    // so ticking does NOT advance the queue.
     assert_eq!(app.toast.as_ref().unwrap().text, "err1");
+    assert!(
+        app.toast.as_ref().unwrap().sticky,
+        "errors must be sticky by default"
+    );
     assert_eq!(app.toast_queue.len(), 2);
-    for _ in 0..=20 {
+    for _ in 0..=100 {
         app.tick_toast();
     }
-    assert_eq!(app.toast.as_ref().unwrap().text, "err2");
+    assert_eq!(
+        app.toast.as_ref().unwrap().text,
+        "err1",
+        "sticky error must NOT auto-expire"
+    );
+    assert_eq!(app.toast_queue.len(), 2);
+}
+
+#[test]
+fn error_queue_caps_at_max() {
+    let mut app = make_app("");
+    let cap = crate::ui::design::TOAST_QUEUE_MAX;
+    // Push cap + active + 2 extras to exercise the drop-oldest path.
+    let total = cap + 3;
+    for i in 0..total {
+        app.notify_error(format!("err{i}"));
+    }
+    // First push becomes active, the next `cap` queue, the rest evict the
+    // oldest queue entry. Active toast stays "err0"; queue holds the most
+    // recent `cap` errors.
+    assert_eq!(app.toast.as_ref().unwrap().text, "err0");
+    assert_eq!(app.toast_queue.len(), cap);
+    assert_eq!(
+        app.toast_queue.back().unwrap().text,
+        format!("err{}", total - 1)
+    );
+}
+
+#[test]
+fn success_toast_dismisses_sticky_error() {
+    // A Success toast (last-write-wins) replaces an active error and
+    // clears the queue, providing the user the explicit acknowledgement
+    // path: continue working, errors get dismissed.
+    let mut app = make_app("");
+    app.notify_error("a");
+    app.notify_error("b");
+    assert!(app.toast.is_some());
     assert_eq!(app.toast_queue.len(), 1);
-    for _ in 0..=20 {
-        app.tick_toast();
-    }
-    assert_eq!(app.toast.as_ref().unwrap().text, "err3");
+    app.notify("done");
+    assert_eq!(app.toast.as_ref().unwrap().text, "done");
     assert!(app.toast_queue.is_empty());
 }
 
 #[test]
-fn alert_queue_max_five() {
+fn warning_toasts_queue_rather_than_replace() {
     let mut app = make_app("");
-    for i in 0..8 {
-        app.notify_error(format!("err{i}"));
-    }
-    assert_eq!(app.toast.as_ref().unwrap().text, "err0");
-    assert_eq!(app.toast_queue.len(), 5);
-    assert_eq!(app.toast_queue.front().unwrap().text, "err3");
-    assert_eq!(app.toast_queue.back().unwrap().text, "err7");
+    app.notify_warning("first warning");
+    app.notify_warning("second warning");
+    app.notify_warning("third warning");
+    // Warnings (like Errors) queue. Unlike Errors, they are NOT sticky
+    // and will auto-expire via tick_toast.
+    assert_eq!(app.toast.as_ref().unwrap().text, "first warning");
+    assert!(
+        !app.toast.as_ref().unwrap().sticky,
+        "warnings must NOT be sticky (only errors are)"
+    );
+    assert_eq!(app.toast_queue.len(), 2);
 }
 
 #[test]
-fn alert_queue_drains_fully() {
+fn success_clears_warning_queue() {
+    // Mirrors success_toast_dismisses_sticky_error but with warnings:
+    // a Success toast should clear ANY queued non-sticky toast, not just
+    // queued errors.
     let mut app = make_app("");
-    app.notify_error("a");
-    app.notify_error("b");
-    for _ in 0..=20 {
-        app.tick_toast();
-    }
-    for _ in 0..=20 {
-        app.tick_toast();
-    }
-    assert!(app.toast.is_none());
+    app.notify_warning("a");
+    app.notify_warning("b");
+    assert_eq!(app.toast_queue.len(), 1);
+    app.notify("done");
+    assert_eq!(app.toast.as_ref().unwrap().text, "done");
     assert!(app.toast_queue.is_empty());
 }
 
@@ -6549,31 +6598,35 @@ fn notify_info_goes_to_footer() {
 
 #[test]
 fn tick_status_info_expires() {
+    use std::time::{Duration, Instant};
+    // "done" = 1 word → max(TIMEOUT_MIN_MS=2500, 750) = 2500ms.
     let mut app = make_app("");
     app.notify_info("done");
-    for _ in 0..=16 {
-        app.tick_status();
+    if let Some(status) = app.status.as_mut() {
+        status.created_at = Instant::now() - Duration::from_millis(2600);
     }
+    app.tick_status();
     assert!(app.status.is_none());
 }
 
 #[test]
 fn tick_status_does_not_expire_while_syncing() {
+    use std::time::{Duration, Instant};
     let mut app = make_app("");
     app.notify_info("syncing...");
     app.syncing_providers
         .insert("aws".to_string(), Arc::new(AtomicBool::new(true)));
-    for _ in 0..30 {
-        app.tick_status();
+    // Backdate past timeout.
+    if let Some(status) = app.status.as_mut() {
+        status.created_at = Instant::now() - Duration::from_secs(30);
     }
+    app.tick_status();
     assert!(
         app.status.is_some(),
         "status must not expire while providers are syncing"
     );
     app.syncing_providers.clear();
-    for _ in 0..=16 {
-        app.tick_status();
-    }
+    app.tick_status();
     assert!(
         app.status.is_none(),
         "status must expire after syncing completes"
@@ -6581,96 +6634,117 @@ fn tick_status_does_not_expire_while_syncing() {
 }
 
 #[test]
-fn tick_toast_alert_expires() {
+fn tick_toast_error_does_not_auto_expire() {
+    use std::time::{Duration, Instant};
     let mut app = make_app("");
     app.notify_error("failed");
     assert!(app.toast.is_some());
-    assert!(app.status.is_none());
-    for _ in 0..=20 {
-        app.tick_toast();
+    // Backdate far into the past.
+    if let Some(toast) = app.toast.as_mut() {
+        toast.created_at = Instant::now() - Duration::from_secs(3600);
     }
-    assert!(app.toast.is_none());
-}
-
-#[test]
-fn tick_toast_confirmation_expires() {
-    let mut app = make_app("");
-    app.notify("done");
-    assert!(app.toast.is_some());
-    for _ in 0..=16 {
-        app.tick_toast();
-    }
-    assert!(app.toast.is_none());
-}
-
-#[test]
-fn tick_toast_confirmation_still_visible_before_expiry() {
-    let mut app = make_app("");
-    app.notify("done");
-    assert!(app.toast.is_some());
-    // 16 ticks is the timeout; tick_count must exceed it to expire.
-    // After 16 calls tick_count = 16, which is NOT > 16, so toast stays.
-    for _ in 0..16 {
-        app.tick_toast();
-    }
+    app.tick_toast();
     assert!(
         app.toast.is_some(),
-        "confirmation toast must still be visible at tick 16 (expires after >16)"
+        "sticky error toast must remain visible regardless of elapsed time"
+    );
+}
+
+#[test]
+fn tick_toast_success_expires_after_timeout_ms() {
+    use std::time::{Duration, Instant};
+    // "done" = 1 word → max(2500, 750) = 2500ms.
+    let mut app = make_app("");
+    app.notify("done");
+    assert!(app.toast.is_some());
+    if let Some(toast) = app.toast.as_mut() {
+        toast.created_at = Instant::now() - Duration::from_millis(2600);
+    }
+    app.tick_toast();
+    assert!(app.toast.is_none());
+}
+
+#[test]
+fn tick_toast_success_still_visible_before_expiry() {
+    use std::time::{Duration, Instant};
+    // "done" = 1 word → timeout_ms = 2500. Backdate 2000ms (< 2500).
+    let mut app = make_app("");
+    app.notify("done");
+    assert!(app.toast.is_some());
+    if let Some(toast) = app.toast.as_mut() {
+        toast.created_at = Instant::now() - Duration::from_millis(2000);
+    }
+    app.tick_toast();
+    assert!(
+        app.toast.is_some(),
+        "success toast must still be visible before timeout_ms"
     );
 }
 
 #[test]
 fn message_class_is_toast_routing() {
-    assert!(
-        StatusMessage {
-            text: String::new(),
-            class: MessageClass::Confirmation,
-            tick_count: 0,
-            sticky: false,
-        }
-        .is_toast()
-    );
-    assert!(
-        !StatusMessage {
-            text: String::new(),
-            class: MessageClass::Info,
-            tick_count: 0,
-            sticky: false,
-        }
-        .is_toast()
-    );
-    assert!(
-        StatusMessage {
-            text: String::new(),
-            class: MessageClass::Alert,
-            tick_count: 0,
-            sticky: false,
-        }
-        .is_toast()
-    );
-    assert!(
-        !StatusMessage {
-            text: String::new(),
-            class: MessageClass::Progress,
-            tick_count: 0,
-            sticky: false,
-        }
-        .is_toast()
-    );
-}
-
-#[test]
-fn message_class_timeout_values() {
     let mk = |class| StatusMessage {
         text: String::new(),
         class,
         tick_count: 0,
         sticky: false,
+        created_at: std::time::Instant::now(),
     };
-    assert_eq!(mk(MessageClass::Confirmation).timeout(), 16);
-    assert_eq!(mk(MessageClass::Info).timeout(), 16);
-    assert_eq!(mk(MessageClass::Alert).timeout(), 20);
-    assert_eq!(mk(MessageClass::Progress).timeout(), u32::MAX);
+    assert!(mk(MessageClass::Success).is_toast());
+    assert!(!mk(MessageClass::Info).is_toast());
+    assert!(mk(MessageClass::Warning).is_toast());
+    assert!(mk(MessageClass::Error).is_toast());
+    assert!(!mk(MessageClass::Progress).is_toast());
+}
+
+#[test]
+fn message_class_timeout_is_length_proportional() {
+    let mk = |class, text: &str| StatusMessage {
+        text: text.to_string(),
+        class,
+        tick_count: 0,
+        sticky: false,
+        created_at: std::time::Instant::now(),
+    };
+    // Errors and Progress are sticky.
+    assert_eq!(mk(MessageClass::Error, "anything").timeout_ms(), u64::MAX);
+    assert_eq!(
+        mk(MessageClass::Progress, "anything").timeout_ms(),
+        u64::MAX
+    );
+    // Success/Info: minimum TIMEOUT_MIN_MS (2500), MS_PER_WORD (750) per word.
+    assert_eq!(mk(MessageClass::Success, "Saved").timeout_ms(), 2500); // 1w*750<2500
+    assert_eq!(
+        mk(MessageClass::Success, "one two three four five").timeout_ms(),
+        3750 // 5w*750=3750 > 2500
+    );
+    assert_eq!(
+        mk(
+            MessageClass::Info,
+            "Synced ten hosts from AWS region eu-west-1"
+        )
+        .timeout_ms(),
+        5250 // 7w*750=5250 > 2500
+    );
+    // Warning: minimum TIMEOUT_MIN_WARNING_MS (4000).
+    assert_eq!(mk(MessageClass::Warning, "Stale").timeout_ms(), 4000);
+    assert_eq!(
+        mk(
+            MessageClass::Warning,
+            "Stale hosts detected in production cluster"
+        )
+        .timeout_ms(),
+        4500 // 6w*750=4500 > 4000
+    );
+    // Empty string: zero words → minimum dwell time.
+    assert_eq!(mk(MessageClass::Success, "").timeout_ms(), 2500);
+    assert_eq!(mk(MessageClass::Warning, "").timeout_ms(), 4000);
+    // Word cap: capped at WORD_CAP * MS_PER_WORD = 30 * 750 = 22500ms.
+    let huge: String = (0..1000).map(|_| "word ").collect();
+    assert_eq!(
+        mk(MessageClass::Success, huge.trim()).timeout_ms(),
+        crate::ui::design::WORD_CAP as u64 * crate::ui::design::MS_PER_WORD
+    );
 }
 
 #[test]
@@ -6680,10 +6754,12 @@ fn message_class_is_error() {
         class,
         tick_count: 0,
         sticky: false,
+        created_at: std::time::Instant::now(),
     };
-    assert!(!mk(MessageClass::Confirmation).is_error());
+    assert!(!mk(MessageClass::Success).is_error());
     assert!(!mk(MessageClass::Info).is_error());
-    assert!(mk(MessageClass::Alert).is_error());
+    assert!(mk(MessageClass::Warning).is_error());
+    assert!(mk(MessageClass::Error).is_error());
     assert!(!mk(MessageClass::Progress).is_error());
 }
 

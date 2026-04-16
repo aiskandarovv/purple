@@ -424,11 +424,11 @@ pub fn self_update() -> Result<()> {
     let current = current_version();
 
     if !is_newer(current, &latest) {
-        println!("already on v{} (latest).", current);
+        println!("{}", crate::messages::update::already_on(current));
         return Ok(());
     }
 
-    println!("v{} available (current: v{}).", latest, current);
+    println!("{}", crate::messages::update::available(&latest, current));
     info!("Update started: {current} -> {latest}");
 
     // Detect target
@@ -570,7 +570,7 @@ pub fn self_update() -> Result<()> {
 
     // Show release notes if available from GitHub
     if !release_notes.is_empty() {
-        println!("\n  {}", bold("What's new:"));
+        println!("\n  {}", bold(crate::messages::update::WHATS_NEW));
         for line in release_notes.lines() {
             println!("  {}", strip_markdown(line));
         }

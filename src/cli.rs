@@ -33,15 +33,15 @@ pub(super) fn handle_quick_add(
     });
 
     if alias_str.trim().is_empty() {
-        eprintln!("Alias can't be empty. Use --alias to specify one.");
+        eprintln!("{}", crate::messages::cli::ALIAS_EMPTY);
         std::process::exit(1);
     }
     if alias_str.contains(char::is_whitespace) {
-        eprintln!("Alias can't contain whitespace. Use --alias to pick a simpler name.");
+        eprintln!("{}", crate::messages::cli::ALIAS_WHITESPACE);
         std::process::exit(1);
     }
     if crate::ssh_config::model::is_host_pattern(&alias_str) {
-        eprintln!("Alias can't contain pattern characters. Use --alias to pick a different name.");
+        eprintln!("{}", crate::messages::cli::ALIAS_PATTERN_CHARS);
         std::process::exit(1);
     }
 
@@ -54,18 +54,18 @@ pub(super) fn handle_quick_add(
         (&key_val, "Identity file"),
     ] {
         if value.chars().any(|c| c.is_control()) {
-            eprintln!("{} contains control characters.", name);
+            eprintln!("{}", crate::messages::cli::control_chars(name));
             std::process::exit(1);
         }
     }
 
     // Reject whitespace in hostname and user (matches TUI validation)
     if parsed.hostname.contains(char::is_whitespace) {
-        eprintln!("Hostname can't contain whitespace.");
+        eprintln!("{}", crate::messages::cli::HOSTNAME_WHITESPACE);
         std::process::exit(1);
     }
     if parsed.user.contains(char::is_whitespace) {
-        eprintln!("User can't contain whitespace.");
+        eprintln!("{}", crate::messages::cli::USER_WHITESPACE);
         std::process::exit(1);
     }
 
@@ -88,7 +88,7 @@ pub(super) fn handle_quick_add(
 
     config.add_host(&entry);
     config.write()?;
-    println!("Welcome aboard, {}!", alias_str);
+    println!("{}", crate::messages::cli::welcome(&alias_str));
     Ok(())
 }
 
@@ -104,7 +104,7 @@ pub(super) fn handle_import(
         let resolved = super::resolve_config_path(path)?;
         import::import_from_file(&mut config, &resolved, group)
     } else {
-        eprintln!("Provide a file or use --known-hosts. Run 'purple import --help' for details.");
+        eprintln!("{}", crate::messages::cli::IMPORT_NO_FILE);
         std::process::exit(1);
     };
 
@@ -161,17 +161,14 @@ pub(super) fn handle_sync(
         match provider_config.section(name) {
             Some(s) => vec![s],
             None => {
-                eprintln!(
-                    "No configuration for {}. Run 'purple provider add {}' first.",
-                    name, name
-                );
+                eprintln!("{}", crate::messages::cli::no_config_for(name));
                 std::process::exit(1);
             }
         }
     } else {
         let configured = provider_config.configured_providers();
         if configured.is_empty() {
-            eprintln!("No providers configured. Run 'purple provider add' to set one up.");
+            eprintln!("{}", crate::messages::cli::NO_PROVIDERS);
             std::process::exit(1);
         }
         configured.iter().collect()
@@ -204,7 +201,7 @@ pub(super) fn handle_sync(
         let progress = |msg: &str| {
             *last_summary.borrow_mut() = msg.to_string();
             if is_tty {
-                print!("\x1b[2K\rSyncing {}... {}", display_name, msg);
+                print!("{}", crate::messages::cli::syncing(display_name, msg));
                 let _ = std::io::Write::flush(&mut std::io::stdout());
             }
         };
@@ -217,9 +214,9 @@ pub(super) fn handle_sync(
         // Complete the Syncing line: TTY overwrites with summary; non-TTY appends.
         if is_tty {
             if summary.is_empty() {
-                print!("\x1b[2K\rSyncing {}... ", display_name);
+                print!("{}", crate::messages::cli::syncing(display_name, ""));
             } else {
-                println!("\x1b[2K\rSyncing {}... {}", display_name, summary);
+                println!("{}", crate::messages::cli::syncing(display_name, &summary));
             }
             let _ = std::io::Write::flush(&mut std::io::stdout());
         } else if !summary.is_empty() {
@@ -233,30 +230,25 @@ pub(super) fn handle_sync(
                 total,
             }) => {
                 println!(
-                    "{} servers found ({} of {} failed to fetch).",
-                    hosts.len(),
-                    failures,
-                    total
+                    "{}",
+                    crate::messages::cli::servers_found_with_failures(hosts.len(), failures, total)
                 );
                 if remove {
-                    eprintln!(
-                        "! {}: skipping --remove due to partial failures.",
-                        display_name
-                    );
+                    eprintln!("{}", crate::messages::cli::sync_skip_remove(display_name));
                 }
                 any_failures = true;
                 (hosts, true)
             }
             Err(e) => {
                 println!("failed.");
-                eprintln!("! {}: {}", display_name, e);
+                eprintln!("{}", crate::messages::cli::sync_error(display_name, &e));
                 any_failures = true;
                 any_hard_failures = true;
                 continue;
             }
         };
         if !suppress_remove {
-            println!("{} servers found.", hosts.len());
+            println!("{}", crate::messages::cli::servers_found(hosts.len()));
         }
         let effective_remove = remove && !suppress_remove;
         let result = providers::sync::sync_provider(
@@ -270,14 +262,19 @@ pub(super) fn handle_sync(
         );
         let prefix = if dry_run { "  Would have: " } else { "  " };
         println!(
-            "{}Added {}, updated {}, unchanged {}.",
-            prefix, result.added, result.updated, result.unchanged
+            "{}",
+            crate::messages::cli::sync_result(
+                prefix,
+                result.added,
+                result.updated,
+                result.unchanged
+            )
         );
         if result.removed > 0 {
-            println!("  Removed {}.", result.removed);
+            println!("{}", crate::messages::cli::sync_removed(result.removed));
         }
         if result.stale > 0 {
-            println!("  Marked {} stale.", result.stale);
+            println!("{}", crate::messages::cli::sync_stale(result.stale));
         }
         if result.added > 0 || result.updated > 0 || result.removed > 0 || result.stale > 0 {
             any_changes = true;
@@ -286,7 +283,7 @@ pub(super) fn handle_sync(
 
     if any_changes && !dry_run {
         if any_hard_failures {
-            eprintln!("! Skipping config write due to sync failures. Fix the errors and re-run.");
+            eprintln!("{}", crate::messages::cli::SYNC_SKIP_WRITE);
         } else {
             config.write()?;
         }
@@ -336,7 +333,7 @@ pub(super) fn handle_provider_command(command: ProviderCommands) -> Result<()> {
             let mut verify_tls = verify_tls;
             if provider != "proxmox" {
                 if url.is_some() {
-                    eprintln!("Warning: --url is only used by the Proxmox provider. Ignoring.");
+                    eprintln!("{}", crate::messages::cli::WARN_URL_NOT_USED);
                     url = None;
                 }
                 if no_verify_tls {
@@ -354,7 +351,7 @@ pub(super) fn handle_provider_command(command: ProviderCommands) -> Result<()> {
             }
             // --profile is AWS-only, --regions is AWS/Scaleway/GCP/Azure, --project is GCP-only
             if provider != "aws" && profile.is_some() {
-                eprintln!("Warning: --profile is only used by the AWS provider. Ignoring.");
+                eprintln!("{}", crate::messages::cli::WARN_PROFILE_NOT_USED);
                 profile = None;
             }
             if !matches!(
@@ -368,11 +365,11 @@ pub(super) fn handle_provider_command(command: ProviderCommands) -> Result<()> {
                 regions = None;
             }
             if provider != "gcp" && project.is_some() {
-                eprintln!("Warning: --project is only used by the GCP provider. Ignoring.");
+                eprintln!("{}", crate::messages::cli::WARN_PROJECT_NOT_USED);
                 project = None;
             }
             if provider != "oracle" && compartment.is_some() {
-                eprintln!("Warning: --compartment is only used by the Oracle provider. Ignoring.");
+                eprintln!("{}", crate::messages::cli::WARN_COMPARTMENT_NOT_USED);
                 compartment = None;
             }
 
@@ -433,7 +430,7 @@ pub(super) fn handle_provider_command(command: ProviderCommands) -> Result<()> {
             // Proxmox requires --url
             if provider == "proxmox" {
                 if url.is_none() || url.as_deref().unwrap_or("").trim().is_empty() {
-                    eprintln!("Proxmox requires --url (e.g. --url https://pve.example.com:8006).");
+                    eprintln!("{}", crate::messages::cli::PROXMOX_URL_REQUIRED);
                     std::process::exit(1);
                 }
                 let u = url.as_deref().unwrap();
@@ -484,7 +481,7 @@ pub(super) fn handle_provider_command(command: ProviderCommands) -> Result<()> {
 
             let alias_prefix = prefix.unwrap_or_else(|| p.short_label().to_string());
             if crate::ssh_config::model::is_host_pattern(&alias_prefix) {
-                eprintln!("Alias prefix can't contain spaces or pattern characters (*, ?, [, !).");
+                eprintln!("{}", crate::messages::cli::ALIAS_PREFIX_INVALID);
                 std::process::exit(1);
             }
 
@@ -509,12 +506,12 @@ pub(super) fn handle_provider_command(command: ProviderCommands) -> Result<()> {
                 (&compartment_value, "Compartment"),
             ] {
                 if value.chars().any(|c| c.is_control()) {
-                    eprintln!("{} contains control characters.", name);
+                    eprintln!("{}", crate::messages::cli::control_chars(name));
                     std::process::exit(1);
                 }
             }
             if user.contains(char::is_whitespace) {
-                eprintln!("User can't contain whitespace.");
+                eprintln!("{}", crate::messages::cli::USER_WHITESPACE);
                 std::process::exit(1);
             }
 
@@ -536,7 +533,7 @@ pub(super) fn handle_provider_command(command: ProviderCommands) -> Result<()> {
 
             // AWS/Scaleway/Azure requires at least one region/zone/subscription
             if provider == "aws" && resolved_regions.trim().is_empty() {
-                eprintln!("AWS requires --regions (e.g. --regions us-east-1,eu-west-1).");
+                eprintln!("{}", crate::messages::cli::AWS_REGIONS_REQUIRED);
                 std::process::exit(1);
             }
             if provider == "scaleway" && resolved_regions.trim().is_empty() {
@@ -547,7 +544,7 @@ pub(super) fn handle_provider_command(command: ProviderCommands) -> Result<()> {
             }
             if provider == "azure" {
                 if resolved_regions.trim().is_empty() {
-                    eprintln!("Azure requires --regions with one or more subscription IDs.");
+                    eprintln!("{}", crate::messages::cli::AZURE_REGIONS_REQUIRED);
                     std::process::exit(1);
                 }
                 for sub in resolved_regions
@@ -566,7 +563,7 @@ pub(super) fn handle_provider_command(command: ProviderCommands) -> Result<()> {
             }
             // GCP requires --project
             if provider == "gcp" && resolved_project.trim().is_empty() {
-                eprintln!("GCP requires --project (e.g. --project my-gcp-project-id).");
+                eprintln!("{}", crate::messages::cli::GCP_PROJECT_REQUIRED);
                 std::process::exit(1);
             }
             // Oracle requires --compartment
@@ -599,14 +596,14 @@ pub(super) fn handle_provider_command(command: ProviderCommands) -> Result<()> {
             config
                 .save()
                 .map_err(|e| anyhow::anyhow!("Failed to save: {}", e))?;
-            println!("Saved {} configuration.", provider);
+            println!("{}", crate::messages::cli::saved_config(&provider));
             Ok(())
         }
         ProviderCommands::List => {
             let config = providers::config::ProviderConfig::load();
             let sections = config.configured_providers();
             if sections.is_empty() {
-                println!("No providers configured. Run 'purple provider add' to set one up.");
+                println!("{}", crate::messages::cli::NO_PROVIDERS);
             } else {
                 for s in sections {
                     let display_name = providers::provider_display_name(s.provider.as_str());
@@ -618,14 +615,14 @@ pub(super) fn handle_provider_command(command: ProviderCommands) -> Result<()> {
         ProviderCommands::Remove { provider } => {
             let mut config = providers::config::ProviderConfig::load();
             if config.section(&provider).is_none() {
-                eprintln!("No configuration for '{}'. Nothing to remove.", provider);
+                eprintln!("{}", crate::messages::cli::no_config_to_remove(&provider));
                 std::process::exit(1);
             }
             config.remove_section(&provider);
             config
                 .save()
                 .map_err(|e| anyhow::anyhow!("Failed to save: {}", e))?;
-            println!("Removed {} configuration.", provider);
+            println!("{}", crate::messages::cli::removed_config(&provider));
             Ok(())
         }
     }
@@ -640,14 +637,14 @@ pub(super) fn handle_tunnel_command(
             if let Some(alias) = alias {
                 // Show tunnels for a specific host
                 if !config.has_host(&alias) {
-                    eprintln!("No host '{}' found.", alias);
+                    eprintln!("{}", crate::messages::cli::host_not_found(&alias));
                     std::process::exit(1);
                 }
                 let rules = config.find_tunnel_directives(&alias);
                 if rules.is_empty() {
-                    println!("No tunnels configured for {}.", alias);
+                    println!("{}", crate::messages::cli::no_tunnels_for(&alias));
                 } else {
-                    println!("Tunnels for {}:", alias);
+                    println!("{}", crate::messages::cli::tunnels_for(&alias));
                     for rule in &rules {
                         println!("  {}", rule.display());
                     }
@@ -657,7 +654,7 @@ pub(super) fn handle_tunnel_command(
                 let entries = config.host_entries();
                 let with_tunnels: Vec<_> = entries.iter().filter(|e| e.tunnel_count > 0).collect();
                 if with_tunnels.is_empty() {
-                    println!("No tunnels configured.");
+                    println!("{}", crate::messages::cli::NO_TUNNELS);
                 } else {
                     for (i, host) in with_tunnels.iter().enumerate() {
                         if i > 0 {
@@ -674,7 +671,7 @@ pub(super) fn handle_tunnel_command(
         }
         TunnelCommands::Add { alias, forward } => {
             if !config.has_host(&alias) {
-                eprintln!("No host '{}' found.", alias);
+                eprintln!("{}", crate::messages::cli::host_not_found(&alias));
                 std::process::exit(1);
             }
             if config.is_included_host(&alias) {
@@ -692,7 +689,7 @@ pub(super) fn handle_tunnel_command(
             let value = rule.to_directive_value();
             // Check for duplicate forward
             if config.has_forward(&alias, key, &value) {
-                eprintln!("Forward {} already exists on {}.", forward, alias);
+                eprintln!("{}", crate::messages::cli::forward_exists(&forward, &alias));
                 std::process::exit(1);
             }
             config.add_forward(&alias, key, &value);
@@ -700,12 +697,12 @@ pub(super) fn handle_tunnel_command(
                 eprintln!("Failed to save config: {}", e);
                 std::process::exit(1);
             }
-            println!("Added {} to {}.", forward, alias);
+            println!("{}", crate::messages::cli::added_forward(&forward, &alias));
             Ok(())
         }
         TunnelCommands::Remove { alias, forward } => {
             if !config.has_host(&alias) {
-                eprintln!("No host '{}' found.", alias);
+                eprintln!("{}", crate::messages::cli::host_not_found(&alias));
                 std::process::exit(1);
             }
             if config.is_included_host(&alias) {
@@ -723,27 +720,33 @@ pub(super) fn handle_tunnel_command(
             let value = rule.to_directive_value();
             let removed = config.remove_forward(&alias, key, &value);
             if !removed {
-                eprintln!("No matching forward {} found on {}.", forward, alias);
+                eprintln!(
+                    "{}",
+                    crate::messages::cli::forward_not_found(&forward, &alias)
+                );
                 std::process::exit(1);
             }
             if let Err(e) = config.write() {
                 eprintln!("Failed to save config: {}", e);
                 std::process::exit(1);
             }
-            println!("Removed {} from {}.", forward, alias);
+            println!(
+                "{}",
+                crate::messages::cli::removed_forward(&forward, &alias)
+            );
             Ok(())
         }
         TunnelCommands::Start { alias } => {
             if !config.has_host(&alias) {
-                eprintln!("No host '{}' found.", alias);
+                eprintln!("{}", crate::messages::cli::host_not_found(&alias));
                 std::process::exit(1);
             }
             let tunnels = config.find_tunnel_directives(&alias);
             if tunnels.is_empty() {
-                eprintln!("No forwarding directives configured for '{}'.", alias);
+                eprintln!("{}", crate::messages::cli::no_forwards(&alias));
                 std::process::exit(1);
             }
-            println!("Starting tunnel for {}... (Ctrl+C to stop)", alias);
+            println!("{}", crate::messages::cli::starting_tunnel(&alias));
             // Run ssh -N in foreground with inherited stdio
             let status = std::process::Command::new("ssh")
                 .arg("-F")
@@ -802,11 +805,11 @@ pub(super) fn handle_password_command(command: PasswordCommands) -> Result<()> {
             let password = match prompt_hidden_input(&format!("Password for {}: ", alias))? {
                 Some(p) if !p.is_empty() => p,
                 Some(_) => {
-                    eprintln!("Password can't be empty.");
+                    eprintln!("{}", crate::messages::cli::PASSWORD_EMPTY);
                     std::process::exit(1);
                 }
                 None => {
-                    eprintln!("Cancelled.");
+                    eprintln!("{}", crate::messages::cli::CANCELLED);
                     std::process::exit(1);
                 }
             };
@@ -820,7 +823,7 @@ pub(super) fn handle_password_command(command: PasswordCommands) -> Result<()> {
         }
         PasswordCommands::Remove { alias } => {
             askpass::remove_from_keychain(&alias)?;
-            println!("Password removed for {}.", alias);
+            println!("{}", crate::messages::cli::password_removed(&alias));
             Ok(())
         }
     }
@@ -835,7 +838,7 @@ pub(super) fn handle_snippet_command(
         SnippetCommands::List => {
             let store = snippet::SnippetStore::load();
             if store.snippets.is_empty() {
-                println!("No snippets configured. Use 'purple snippet add' to create one.");
+                println!("{}", crate::messages::cli::NO_SNIPPETS);
             } else {
                 for s in &store.snippets {
                     if s.description.is_empty() {
@@ -862,7 +865,7 @@ pub(super) fn handle_snippet_command(
             }
             if let Some(ref desc) = description {
                 if desc.contains(|c: char| c.is_control()) {
-                    eprintln!("Description contains control characters.");
+                    eprintln!("{}", crate::messages::cli::DESCRIPTION_CONTROL_CHARS);
                     std::process::exit(1);
                 }
             }
@@ -875,21 +878,21 @@ pub(super) fn handle_snippet_command(
             });
             store.save()?;
             if is_update {
-                println!("Updated snippet '{}'.", name);
+                println!("{}", crate::messages::cli::snippet_updated(&name));
             } else {
-                println!("Added snippet '{}'.", name);
+                println!("{}", crate::messages::cli::snippet_added(&name));
             }
             Ok(())
         }
         SnippetCommands::Remove { name } => {
             let mut store = snippet::SnippetStore::load();
             if store.get(&name).is_none() {
-                eprintln!("No snippet '{}' found.", name);
+                eprintln!("{}", crate::messages::cli::snippet_not_found(&name));
                 std::process::exit(1);
             }
             store.remove(&name);
             store.save()?;
-            println!("Removed snippet '{}'.", name);
+            println!("{}", crate::messages::cli::snippet_removed(&name));
             Ok(())
         }
         SnippetCommands::Run {
@@ -903,7 +906,7 @@ pub(super) fn handle_snippet_command(
             let snip = match store.get(&name) {
                 Some(s) => s.clone(),
                 None => {
-                    eprintln!("No snippet '{}' found.", name);
+                    eprintln!("{}", crate::messages::cli::snippet_not_found(&name));
                     std::process::exit(1);
                 }
             };
@@ -915,7 +918,7 @@ pub(super) fn handle_snippet_command(
                 match entries.iter().find(|h| h.alias == *alias) {
                     Some(h) => vec![h],
                     None => {
-                        eprintln!("No host '{}' found.", alias);
+                        eprintln!("{}", crate::messages::cli::host_not_found(alias));
                         std::process::exit(1);
                     }
                 }
@@ -925,14 +928,14 @@ pub(super) fn handle_snippet_command(
                     .filter(|h| h.tags.iter().any(|t| t.eq_ignore_ascii_case(tag_filter)))
                     .collect();
                 if matched.is_empty() {
-                    eprintln!("No hosts found with tag '{}'.", tag_filter);
+                    eprintln!("{}", crate::messages::cli::no_hosts_with_tag(tag_filter));
                     std::process::exit(1);
                 }
                 matched
             } else if all {
                 entries.iter().collect()
             } else {
-                eprintln!("Specify a host alias, --tag or --all.");
+                eprintln!("{}", crate::messages::cli::SPECIFY_TARGET);
                 std::process::exit(1);
             };
 
@@ -1035,7 +1038,9 @@ pub(super) fn handle_snippet_command(
                                     eprintln!("[{}] {}", alias, line);
                                 }
                             }
-                            Err(e) => eprintln!("[{}] Failed: {}", alias, e),
+                            Err(e) => {
+                                eprintln!("{}", crate::messages::cli::host_failed(&alias, &e))
+                            }
                         }
                     }
                 }
@@ -1053,7 +1058,7 @@ pub(super) fn handle_snippet_command(
                         bw_session = Some(token);
                     }
                     super::ensure_keychain_password(&host.alias, askpass.as_deref());
-                    println!("── {} ──", host.alias);
+                    println!("{}", crate::messages::cli::host_separator(&host.alias));
                     match snippet::run_snippet(
                         &host.alias,
                         config_path,
@@ -1065,10 +1070,17 @@ pub(super) fn handle_snippet_command(
                     ) {
                         Ok(r) => {
                             if !r.status.success() {
-                                eprintln!("Exited with code {}.", r.status.code().unwrap_or(1));
+                                eprintln!(
+                                    "{}",
+                                    crate::messages::cli::exited_with_code(
+                                        r.status.code().unwrap_or(1)
+                                    )
+                                );
                             }
                         }
-                        Err(e) => eprintln!("[{}] Failed: {}", host.alias, e),
+                        Err(e) => {
+                            eprintln!("{}", crate::messages::cli::host_failed(&host.alias, &e))
+                        }
                     }
                     println!();
                 }
@@ -1083,9 +1095,9 @@ pub(super) fn handle_logs_command(tail: bool, clear: bool) -> Result<()> {
     if clear {
         if path.exists() {
             std::fs::remove_file(&path)?;
-            println!("Log file deleted: {}", path.display());
+            println!("{}", crate::messages::cli::log_deleted(&path.display()));
         } else {
-            println!("No log file found at {}", path.display());
+            println!("{}", crate::messages::cli::no_log_file(&path.display()));
         }
     } else if tail {
         let status = std::process::Command::new("tail")
@@ -1103,7 +1115,7 @@ pub(super) fn handle_theme_command(command: ThemeCommands) -> Result<()> {
     match command {
         ThemeCommands::List => {
             let current = preferences::load_theme().unwrap_or_else(|| "Purple".to_string());
-            println!("Built-in themes:");
+            println!("{}", crate::messages::cli::BUILTIN_THEMES);
             for theme in ui::theme::ThemeDef::builtins() {
                 let marker = if theme.name.eq_ignore_ascii_case(&current) {
                     "*"
@@ -1114,7 +1126,7 @@ pub(super) fn handle_theme_command(command: ThemeCommands) -> Result<()> {
             }
             let custom = ui::theme::ThemeDef::load_custom();
             if !custom.is_empty() {
-                println!("\nCustom themes:");
+                println!("{}", crate::messages::cli::CUSTOM_THEMES);
                 for theme in &custom {
                     let marker = if theme.name.eq_ignore_ascii_case(&current) {
                         "*"
@@ -1134,7 +1146,7 @@ pub(super) fn handle_theme_command(command: ThemeCommands) -> Result<()> {
             match found {
                 Some(theme) => {
                     preferences::save_theme(&theme.name)?;
-                    println!("Theme set to: {}", theme.name);
+                    println!("{}", crate::messages::cli::theme_set(&theme.name));
                 }
                 None => {
                     anyhow::bail!("Unknown theme: {}", name);
@@ -1182,7 +1194,7 @@ pub(super) fn handle_vault_sign_command(
             let pubkey = match vault_ssh::resolve_pubkey_path(&entry.identity_file) {
                 Ok(p) => p,
                 Err(e) => {
-                    println!("Skipping {}: {}", entry.alias, e);
+                    println!("{}", crate::messages::cli::skipping_host(&entry.alias, &e));
                     failed += 1;
                     continue;
                 }
@@ -1229,14 +1241,14 @@ pub(super) fn handle_vault_sign_command(
                     signed += 1;
                 }
                 Err(e) => {
-                    println!("failed: {}", e);
+                    println!("{}", crate::messages::cli::vault_sign_failed(&e));
                     failed += 1;
                 }
             }
         }
         if signed > 0 {
             if let Err(e) = config.write() {
-                eprintln!("Warning: Failed to update SSH config: {}", e);
+                eprintln!("{}", crate::messages::cli::vault_config_update_warning(&e));
             }
         }
         println!(
@@ -1257,12 +1269,7 @@ pub(super) fn handle_vault_sign_command(
             entry.provider.as_deref(),
             &provider_config,
         )
-        .with_context(|| {
-            format!(
-                "No Vault SSH role configured for '{}'. Set it in the host form (Vault SSH Role field) or in the provider config (vault_role).",
-                alias
-            )
-        })?;
+        .with_context(|| crate::messages::cli::vault_no_role(&alias))?;
 
         let pubkey = vault_ssh::resolve_pubkey_path(&entry.identity_file)?;
         let resolved_addr = cli_vault_addr.clone().or_else(|| {
@@ -1296,7 +1303,10 @@ pub(super) fn handle_vault_sign_command(
                 .write()
                 .with_context(|| "Failed to update SSH config with CertificateFile")?;
         }
-        println!("Certificate signed: {}", result.cert_path.display());
+        println!(
+            "{}",
+            crate::messages::cli::vault_cert_signed(&result.cert_path.display())
+        );
     } else {
         anyhow::bail!("Provide a host alias or use --all");
     }

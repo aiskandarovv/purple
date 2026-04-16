@@ -21,7 +21,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         None => return,
     };
 
-    let area = design::overlay_area(frame, 90, 85, frame.area().height);
+    // Reserve 1 row below the block for the external footer.
+    let area = design::overlay_area(frame, 90, 85, frame.area().height.saturating_sub(1));
     frame.render_widget(Clear, area);
 
     // Title with progress
@@ -40,8 +41,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let (content, footer) = design::content_and_footer(inner);
-
+    let content = inner;
     let width = content.width as usize;
 
     // Build all lines from results
@@ -49,17 +49,17 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     if state.results.is_empty() {
         let msg = if state.all_done {
-            "  [No results]"
+            "No results."
         } else {
-            "  Running..."
+            "Running..."
         };
-        lines.push(Line::from(Span::styled(msg, theme::muted())));
+        lines.push(design::empty_line(msg));
     }
 
     for result in &state.results {
         // Host header with exit code
         let status_text = match result.exit_code {
-            Some(0) => " \u{2713}".to_string(),
+            Some(0) => format!(" {}", design::ICON_SUCCESS),
             Some(code) => format!(" exit {}", code),
             None => " error".to_string(),
         };
@@ -107,7 +107,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     frame.render_widget(Paragraph::new(visible), content);
 
-    // Footer
+    // Footer below the block
+    let footer_area = design::render_overlay_footer(frame, area);
     let mut f = design::Footer::new();
     if state.all_done {
         f = f.action("Esc", " close ").action("c", " copy ");
@@ -118,24 +119,22 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         .action("j/k", " scroll ")
         .action("n/N", " next/prev host ")
         .action("g/G", " top/bottom");
-    f.render_with_status(frame, footer, app);
+    f.render_with_status(frame, footer_area, app);
 }
 
 #[cfg(test)]
 mod tests {
-    use ratatui::layout::{Constraint, Layout, Rect};
+    use ratatui::layout::Rect;
+
+    use super::design;
 
     #[test]
-    fn layout_has_spacer_between_content_and_footer() {
+    fn footer_sits_directly_below_block() {
         let area = Rect::new(0, 0, 80, 30);
-        let chunks = Layout::vertical([
-            Constraint::Min(0),
-            Constraint::Length(1),
-            Constraint::Length(1),
-        ])
-        .split(area);
-        assert_eq!(chunks[1].height, 1);
-        assert_eq!(chunks[2].height, 1);
-        assert!(chunks[2].y > chunks[0].y + chunks[0].height);
+        let footer = design::form_footer(area, area.height);
+        assert_eq!(footer.height, 1);
+        assert_eq!(footer.y, area.y + area.height);
+        assert_eq!(footer.x, area.x);
+        assert_eq!(footer.width, area.width);
     }
 }

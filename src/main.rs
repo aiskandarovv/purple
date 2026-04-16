@@ -16,6 +16,7 @@ mod history;
 mod import;
 mod logging;
 mod mcp;
+mod messages;
 mod ping;
 mod preferences;
 mod providers;
@@ -396,7 +397,7 @@ pub(crate) fn resolve_token(explicit: Option<String>, from_stdin: bool) -> Resul
     if let Ok(t) = std::env::var("PURPLE_TOKEN") {
         return Ok(t);
     }
-    anyhow::bail!("No token provided. Use --token, --token-stdin, or set PURPLE_TOKEN env var.")
+    anyhow::bail!("{}", crate::messages::cli::NO_TOKEN)
 }
 
 fn main() -> Result<()> {
@@ -609,7 +610,7 @@ fn main() -> Result<()> {
     if cli.list {
         let entries = config.host_entries();
         if entries.is_empty() {
-            println!("No hosts configured. Run 'purple' to add some!");
+            println!("{}", crate::messages::cli::NO_HOSTS);
         } else {
             for host in &entries {
                 let user = if host.user.is_empty() {
@@ -649,7 +650,7 @@ fn main() -> Result<()> {
                 .or_else(preferences::load_askpass_default);
             let bw_session = ensure_bw_session(None, askpass.as_deref());
             ensure_keychain_password(&alias, askpass.as_deref());
-            println!("Beaming you up to {}...\n", alias);
+            print!("{}", crate::messages::cli::beaming_up(&alias));
             let result = connection::connect(
                 &alias,
                 &config_path,
@@ -668,17 +669,14 @@ fn main() -> Result<()> {
         let mut app = App::new(config);
         apply_saved_sort(&mut app);
         if repaired_groups > 0 || orphaned_headers > 0 {
-            app.notify(format!(
-                "Repaired SSH config ({} absorbed, {} orphaned group headers).",
-                repaired_groups, orphaned_headers
+            app.notify(crate::messages::config_repaired(
+                repaired_groups,
+                orphaned_headers,
             ));
         }
         app.start_search_with(alias);
         if app.search.filtered_indices.is_empty() {
-            app.notify(format!(
-                "No exact match for '{}'. Here's what we found.",
-                alias
-            ));
+            app.notify(crate::messages::no_exact_match(alias));
         }
         return run_tui(app);
     }
@@ -687,9 +685,9 @@ fn main() -> Result<()> {
     let mut app = App::new(config);
     apply_saved_sort(&mut app);
     if repaired_groups > 0 || orphaned_headers > 0 {
-        app.notify(format!(
-            "Repaired SSH config ({} absorbed, {} orphaned group headers).",
-            repaired_groups, orphaned_headers
+        app.notify(crate::messages::config_repaired(
+            repaired_groups,
+            orphaned_headers,
         ));
     }
     run_tui(app)
@@ -704,7 +702,7 @@ fn apply_saved_sort(app: &mut App) {
     // Clear stale tag preference if the tag no longer exists in any host
     if app.clear_stale_group_tag() {
         if let Err(e) = preferences::save_group_by(&app.group_by) {
-            app.notify_error(format!("Group preference reset. (save failed: {})", e));
+            app.notify_error(crate::messages::group_pref_reset_failed(&e));
         }
     }
     if saved != app::SortMode::Original || !matches!(app.group_by, app::GroupBy::None) {
@@ -799,15 +797,15 @@ pub(crate) fn set_sync_summary(app: &mut App) {
     let names = app.sync_done.join(", ");
     if still_syncing {
         if app.sync_had_errors {
-            app.notify_background_error(format!("Synced: {}...", names));
+            app.notify_background_error(crate::messages::synced_progress(&names));
         } else {
-            app.notify_background(format!("Synced: {}...", names));
+            app.notify_background(crate::messages::synced_progress(&names));
         }
     } else {
         if app.sync_had_errors {
-            app.notify_background_error(format!("Synced: {}", names));
+            app.notify_background_error(crate::messages::synced_done(&names));
         } else {
-            app.notify_background(format!("Synced: {}", names));
+            app.notify_background(crate::messages::synced_done(&names));
         }
         app.sync_done.clear();
         app.sync_had_errors = false;
@@ -879,7 +877,7 @@ fn run_tui(mut app: App) -> Result<()> {
 
     let mut terminal = tui::Tui::new()?;
     terminal.enter()?;
-    let events = EventHandler::new(250);
+    let events = EventHandler::new(50);
     let events_tx = events.sender();
     let mut last_config_check = std::time::Instant::now();
 
@@ -1215,11 +1213,11 @@ fn run_tui(mut app: App) -> Result<()> {
                                 app.notify(msg.clone());
                             }
                         } else {
-                            app.notify(format!("Opened {} in new tmux window.", alias));
+                            app.notify(crate::messages::opened_in_tmux(&alias));
                         }
                     }
                     Err(e) => {
-                        app.notify_error(format!("tmux: {e}"));
+                        app.notify_error(crate::messages::tmux_error(&e));
                     }
                 }
             } else {
@@ -1250,7 +1248,7 @@ fn run_tui(mut app: App) -> Result<()> {
                     app.bw_session = Some(token);
                 }
                 ensure_keychain_password(&alias, askpass.as_deref());
-                println!("Beaming you up to {}...\n", alias);
+                print!("{}", crate::messages::cli::beaming_up(&alias));
                 let result = connection::connect(
                     &alias,
                     &app.reload.config_path,
@@ -1294,7 +1292,7 @@ fn run_tui(mut app: App) -> Result<()> {
                     }
                     Err(e) => {
                         eprintln!("Connection failed: {}", e);
-                        app.notify_error(format!("Connection to {} failed.", alias));
+                        app.notify_error(crate::messages::connection_failed(&alias));
                     }
                 }
                 askpass::cleanup_marker(&alias);
@@ -1329,9 +1327,12 @@ fn run_tui(mut app: App) -> Result<()> {
                 ensure_keychain_password(alias, askpass.as_deref());
 
                 if multi {
-                    println!("── {} ──", alias);
+                    println!("{}", crate::messages::cli::host_separator(alias));
                 } else {
-                    println!("Running '{}' on {}...\n", snip.name, alias);
+                    print!(
+                        "{}",
+                        crate::messages::cli::running_snippet_on(&snip.name, alias)
+                    );
                 }
                 let has_tunnel = app.active_tunnels.contains_key(alias);
                 match snippet::run_snippet(
@@ -1347,12 +1348,22 @@ fn run_tui(mut app: App) -> Result<()> {
                         if r.status.success() {
                             app.history.record(alias);
                         } else if multi {
-                            eprintln!("Exited with code {}.", r.status.code().unwrap_or(1));
+                            eprintln!(
+                                "{}",
+                                crate::messages::cli::exited_with_code(
+                                    r.status.code().unwrap_or(1)
+                                )
+                            );
                         } else {
-                            println!("\nExited with code {}.", r.status.code().unwrap_or(1));
+                            println!(
+                                "\n{}",
+                                crate::messages::cli::exited_with_code(
+                                    r.status.code().unwrap_or(1)
+                                )
+                            );
                         }
                     }
-                    Err(e) => eprintln!("[{}] Failed: {}", alias, e),
+                    Err(e) => eprintln!("{}", crate::messages::cli::host_failed(alias, &e)),
                 }
                 if multi {
                     println!();
@@ -1360,11 +1371,14 @@ fn run_tui(mut app: App) -> Result<()> {
             }
 
             if !multi {
-                println!("\nDone.");
+                println!("\n{}", crate::messages::cli::DONE);
             } else {
-                println!("Done. Ran '{}' on {} hosts.", snip.name, aliases.len());
+                println!(
+                    "{}",
+                    crate::messages::cli::done_multi(&snip.name, aliases.len())
+                );
             }
-            println!("\nPress Enter to continue...");
+            println!("\n{}", crate::messages::cli::PRESS_ENTER);
             let _ = std::io::stdin().read_line(&mut String::new());
             terminal.enter()?;
             events.resume();
@@ -1548,11 +1562,11 @@ pub(crate) fn ensure_bw_session(existing: Option<&str>, askpass: Option<&str>) -
             None
         }
         askpass::BwStatus::NotInstalled => {
-            eprintln!("Bitwarden CLI (bw) not found. SSH will prompt for password.");
+            eprintln!("{}", crate::messages::askpass::BW_NOT_FOUND);
             None
         }
         askpass::BwStatus::NotAuthenticated => {
-            eprintln!("Bitwarden vault not logged in. Run 'bw login' first.");
+            eprintln!("{}", crate::messages::askpass::BW_NOT_LOGGED_IN);
             None
         }
         askpass::BwStatus::Locked => {
@@ -1561,7 +1575,7 @@ pub(crate) fn ensure_bw_session(existing: Option<&str>, askpass: Option<&str>) -
                 let password = match cli::prompt_hidden_input("Bitwarden master password: ") {
                     Ok(Some(p)) if !p.is_empty() => p,
                     Ok(Some(_)) => {
-                        eprintln!("Empty password. SSH will prompt for password.");
+                        eprintln!("{}", crate::messages::askpass::EMPTY_PASSWORD);
                         return None;
                     }
                     Ok(None) => {
@@ -1569,7 +1583,7 @@ pub(crate) fn ensure_bw_session(existing: Option<&str>, askpass: Option<&str>) -
                         return None;
                     }
                     Err(e) => {
-                        eprintln!("Failed to read password: {}", e);
+                        eprintln!("{}", crate::messages::askpass::read_failed(&e));
                         return None;
                     }
                 };
@@ -1577,9 +1591,9 @@ pub(crate) fn ensure_bw_session(existing: Option<&str>, askpass: Option<&str>) -
                     Ok(token) => return Some(token),
                     Err(e) => {
                         if attempt == 0 {
-                            eprintln!("Unlock failed: {}. Try again.", e);
+                            eprintln!("{}", crate::messages::askpass::unlock_failed_retry(&e));
                         } else {
-                            eprintln!("Unlock failed: {}. SSH will prompt for password.", e);
+                            eprintln!("{}", crate::messages::askpass::unlock_failed_prompt(&e));
                         }
                     }
                 }
@@ -1604,14 +1618,14 @@ pub(crate) fn ensure_keychain_password(alias: &str, askpass: Option<&str>) {
         match cli::prompt_hidden_input(&format!("Password for {} (stored in keychain): ", alias)) {
             Ok(Some(p)) if !p.is_empty() => p,
             Ok(Some(_)) => {
-                eprintln!("Empty password. SSH will prompt for password.");
+                eprintln!("{}", crate::messages::askpass::EMPTY_PASSWORD);
                 return;
             }
             Ok(None) => return, // Esc
             Err(_) => return,
         };
     match askpass::store_in_keychain(alias, &password) {
-        Ok(()) => eprintln!("Password stored in keychain."),
+        Ok(()) => eprintln!("{}", crate::messages::askpass::PASSWORD_IN_KEYCHAIN),
         Err(e) => eprintln!(
             "Failed to store in keychain: {}. SSH will prompt for password.",
             e
@@ -1622,3 +1636,7 @@ pub(crate) fn ensure_keychain_password(alias: &str, askpass: Option<&str>) {
 #[cfg(test)]
 #[path = "main_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "visual_regression_tests.rs"]
+mod visual_regression_tests;

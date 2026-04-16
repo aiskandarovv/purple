@@ -56,7 +56,7 @@ pub(super) fn handle_snippet_picker(
                     let removed = app.snippet_store.snippets.remove(sel);
                     if let Err(e) = app.snippet_store.save() {
                         app.snippet_store.snippets.insert(sel, removed);
-                        app.notify_error(format!("Failed to save: {}", e));
+                        app.notify_error(crate::messages::failed_to_save(&e));
                     } else {
                         if app.snippet_store.snippets.is_empty() {
                             app.ui.snippet_picker_state.select(None);
@@ -65,7 +65,7 @@ pub(super) fn handle_snippet_picker(
                                 .snippet_picker_state
                                 .select(Some(app.snippet_store.snippets.len() - 1));
                         }
-                        app.notify(format!("Removed snippet '{}'.", removed.name));
+                        app.notify(crate::messages::snippet_removed(&removed.name));
                     }
                 }
             }
@@ -160,7 +160,7 @@ fn run_or_prompt_params(
     events_tx: &mpsc::Sender<AppEvent>,
 ) {
     if app.demo_mode {
-        app.notify("Demo mode. Execution disabled.".to_string());
+        app.notify(crate::messages::DEMO_EXECUTION_DISABLED);
         return;
     }
     let params = crate::snippet::parse_params(&snippet.command);
@@ -358,8 +358,8 @@ pub(super) fn handle_snippet_output(app: &mut App, key: KeyEvent) {
                     text.push('\n');
                 }
                 match clipboard::copy_to_clipboard(&text) {
-                    Ok(()) => app.notify("Output copied."),
-                    Err(e) => app.notify_error(format!("Copy failed: {}", e)),
+                    Ok(()) => app.notify(crate::messages::OUTPUT_COPIED),
+                    Err(e) => app.notify_error(crate::messages::copy_failed(&e)),
                 }
             }
         }
@@ -656,7 +656,7 @@ fn submit_snippet_form(app: &mut App, target_aliases: &[String], editing: Option
         .iter()
         .any(|s| s.name == new_name && Some(&s.name) != old_name.as_ref());
     if name_taken {
-        app.notify_error(format!("'{}' already exists.", new_name));
+        app.notify_warning(crate::messages::snippet_exists(&new_name));
         return;
     }
 
@@ -681,7 +681,7 @@ fn submit_snippet_form(app: &mut App, target_aliases: &[String], editing: Option
 
     if let Err(e) = app.snippet_store.save() {
         app.snippet_store.snippets = snapshot;
-        app.notify_error(format!("Failed to save: {}", e));
+        app.notify_error(crate::messages::failed_to_save(&e));
         return;
     }
 
@@ -696,9 +696,9 @@ fn submit_snippet_form(app: &mut App, target_aliases: &[String], editing: Option
 
     app.snippet_form_baseline = None;
     if is_new {
-        app.notify(format!("Added snippet '{}'.", name));
+        app.notify(crate::messages::snippet_added(&name));
     } else {
-        app.notify(format!("Updated snippet '{}'.", name));
+        app.notify(crate::messages::snippet_updated(&name));
     }
     app.screen = Screen::SnippetPicker {
         target_aliases: target_aliases.to_vec(),

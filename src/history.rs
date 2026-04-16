@@ -157,10 +157,17 @@ impl ConnectionHistory {
         if timestamp == 0 {
             return String::new();
         }
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        // In demo mode read from a frozen reference clock so visual goldens
+        // do not flake when render time straddles a minute boundary after
+        // demo-data build time.
+        let now = if crate::demo_flag::is_demo() {
+            crate::demo_flag::now_secs()
+        } else {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+        };
         let diff = now.saturating_sub(timestamp);
         if diff < 60 {
             "<1m".to_string()

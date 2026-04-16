@@ -8,16 +8,10 @@
 //! The goal is to keep design intent in one place and have screens reference
 //! these helpers instead of duplicating border, title or footer wiring.
 //!
-//! Task 1 introduces this module as a foundation. Individual screens are
-//! migrated to use these helpers in follow-up tasks, so items here may appear
-//! unused by the binary until then.
-
-#![allow(dead_code)]
-
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 
 use super::theme;
 use crate::app::App;
@@ -30,8 +24,6 @@ use crate::app::App;
 pub const FOOTER_GAP: &str = "  ";
 /// Gap between columns in list rows.
 pub const COL_GAP: u16 = 2;
-/// Horizontal indent used inside form blocks.
-pub const FORM_INDENT: u16 = 1;
 
 // ---------------------------------------------------------------------------
 // Overlay sizing tokens
@@ -41,12 +33,16 @@ pub const FORM_INDENT: u16 = 1;
 pub const OVERLAY_W: u16 = 70;
 /// Default overlay height percentage.
 pub const OVERLAY_H: u16 = 80;
-/// Default overlay margin reservation.
-pub const OVERLAY_MARGIN: u16 = 4;
-/// Minimum width used for simple list pickers.
-pub const PICKER_MIN_W: u16 = 50;
-/// Maximum width used for simple list pickers.
-pub const PICKER_MAX_W: u16 = 64;
+/// Minimum width for picker overlays. All pickers (Password Source,
+/// Select Key, Vault SSH Role, ProxyJump, tag picker, theme picker, etc.)
+/// share this single sizing range so they look identical regardless of
+/// which form field opened them.
+pub const PICKER_MIN_W: u16 = 60;
+/// Maximum width for picker overlays.
+pub const PICKER_MAX_W: u16 = 72;
+/// Maximum height (incl. borders) for picker overlays. Pickers grow with
+/// item count up to this cap, then scroll.
+pub const PICKER_MAX_H: u16 = 18;
 
 // ---------------------------------------------------------------------------
 // Toast tokens
@@ -56,23 +52,27 @@ pub const PICKER_MAX_W: u16 = 64;
 pub const TOAST_INSET_X: u16 = 2;
 /// Toast vertical inset from the bottom edge.
 pub const TOAST_INSET_Y: u16 = 2;
-/// Toast success glyph (U+2713, standard Unicode check mark).
-pub const TOAST_ICON_OK: &str = "\u{2713}";
-/// Toast alert glyph (U+26A0, standard Unicode warning sign).
-pub const TOAST_ICON_ALERT: &str = "\u{26A0}";
 
 // ---------------------------------------------------------------------------
-// Timeout tokens (1 tick = 250ms)
+// Timeout tokens (millisecond-based, tick-rate-independent)
 // ---------------------------------------------------------------------------
 
-/// Ticks before a confirmation toast clears (4s).
-pub const TIMEOUT_CONFIRM: u32 = 16;
-/// Ticks before an info toast clears (4s).
-pub const TIMEOUT_INFO: u32 = 16;
-/// Ticks before an alert toast clears (5s).
-pub const TIMEOUT_ALERT: u32 = 20;
-/// Maximum number of queued toast messages.
-pub const TOAST_QUEUE_MAX: usize = 5;
+/// Minimum milliseconds before a Success or Info message clears (2.5s).
+/// Effective timeout is `max(TIMEOUT_MIN_MS, words * MS_PER_WORD)`.
+pub const TIMEOUT_MIN_MS: u64 = 2500;
+/// Minimum milliseconds before a Warning message clears (4s).
+pub const TIMEOUT_MIN_WARNING_MS: u64 = 4000;
+/// Per-word reading-time budget in milliseconds (750ms/word, matching
+/// peripheral reading speed for short status strings competing with the
+/// primary task).
+pub const MS_PER_WORD: u64 = 750;
+/// Cap on word count for length-proportional timeout. 30 words at
+/// 750ms/word = 22.5s maximum for any non-sticky toast.
+pub const WORD_CAP: usize = 30;
+/// Maximum number of queued toast messages. Three matches Linear/Stripe
+/// toast stack patterns; more than 3 stacked toasts is itself a UX signal
+/// of a system problem and dropping older ones is preferable to clutter.
+pub const TOAST_QUEUE_MAX: usize = 3;
 
 // ---------------------------------------------------------------------------
 // Status indicator tokens
@@ -80,10 +80,14 @@ pub const TOAST_QUEUE_MAX: usize = 5;
 
 /// Online status glyph (U+25CF, filled circle).
 pub const ICON_ONLINE: &str = "\u{25CF}";
-/// Success glyph (U+2713, check mark).
+/// Success glyph (U+2713, check mark). Also used as the toast success glyph.
 pub const ICON_SUCCESS: &str = "\u{2713}";
-/// Warning glyph (U+26A0, warning sign).
+/// Warning glyph (U+26A0, warning sign). Also used as the toast warning glyph.
 pub const ICON_WARNING: &str = "\u{26A0}";
+/// Error glyph (U+2716, heavy multiplication X). Distinct from the
+/// warning sign so the user can tell at a glance whether something is
+/// recoverable (warning) or has gone wrong (error).
+pub const ICON_ERROR: &str = "\u{2716}";
 
 // ---------------------------------------------------------------------------
 // List rendering tokens
@@ -107,15 +111,6 @@ pub const SECTION_LABEL_W: u16 = 14;
 
 /// RGB triple used for dim-background text.
 pub const DIM_FG_RGB: (u8, u8, u8) = (70, 70, 70);
-
-// ---------------------------------------------------------------------------
-// Column-width helper
-// ---------------------------------------------------------------------------
-
-/// Column-width padding formula used by list columns.
-pub fn padded(w: u16) -> u16 {
-    if w == 0 { 0 } else { w + w / 10 + 1 }
-}
 
 // ---------------------------------------------------------------------------
 // Block component builders
@@ -187,15 +182,7 @@ pub fn main_block_line(title: Line<'static>) -> Block<'static> {
         .title(title)
 }
 
-/// Search-active block: rounded border, brand title, search border.
-pub fn search_block(title: &str) -> Block<'static> {
-    search_block_line(Line::from(Span::styled(
-        format!(" {title} "),
-        theme::brand(),
-    )))
-}
-
-/// Search block variant accepting a pre-built compound title `Line`.
+/// Search-active block accepting a pre-built compound title `Line`.
 /// Mirrors `main_block_line` but with the search border style.
 pub fn search_block_line(title: Line<'static>) -> Block<'static> {
     Block::default()
@@ -219,24 +206,17 @@ pub fn overlay_area(frame: &Frame, w_pct: u16, h_pct: u16, height: u16) -> Rect 
     super::centered_rect_fixed(pct_area.width, height.min(pct_area.height), area)
 }
 
-/// Content + footer with a 1-row spacer in between. Returns `(content, footer)`.
-pub fn content_and_footer(inner: Rect) -> (Rect, Rect) {
-    let (content, _spacer, footer) = content_spacer_footer(inner);
-    (content, footer)
-}
-
-/// Content + spacer + footer. Returns all three rects.
-pub fn content_spacer_footer(inner: Rect) -> (Rect, Rect, Rect) {
-    let [content, spacer, footer] = Layout::vertical([
-        Constraint::Min(0),
-        Constraint::Length(1),
-        Constraint::Length(1),
-    ])
-    .areas::<3>(inner);
-    (content, spacer, footer)
-}
-
 /// Form footer positioned directly below the block border.
+///
+/// All overlays use this — there is no longer an "inside the block + spacer"
+/// alternative. Form screens, list/picker overlays and detail overlays
+/// alike render their action footer at this fixed external position so the
+/// keycaps strip lines up consistently across every screen.
+///
+/// **Note:** Prefer `render_overlay_footer` over this helper. `form_footer`
+/// only computes the Rect; `render_overlay_footer` also renders a `Clear`
+/// widget over the footer row so it does not show through to the screen
+/// behind the overlay (e.g. the host list when a picker is open).
 pub fn form_footer(block_area: Rect, block_height: u16) -> Rect {
     Rect::new(
         block_area.x,
@@ -246,14 +226,13 @@ pub fn form_footer(block_area: Rect, block_height: u16) -> Rect {
     )
 }
 
-/// Form field content area at the given index.
-pub fn form_field_area(inner: Rect, index: usize) -> Rect {
-    Rect::new(
-        inner.x + FORM_INDENT,
-        inner.y + (index as u16) * 2,
-        inner.width.saturating_sub(FORM_INDENT * 2),
-        1,
-    )
+/// Compute the external footer Rect for an overlay block, render `Clear`
+/// over it so the row underneath the overlay does not bleed through, and
+/// return the footer Rect for the caller to render the footer spans into.
+pub fn render_overlay_footer(frame: &mut Frame, block_area: Rect) -> Rect {
+    let footer_area = form_footer(block_area, block_area.height);
+    frame.render_widget(Clear, footer_area);
+    footer_area
 }
 
 /// Form divider Y position for the given index.
@@ -312,11 +291,6 @@ impl Footer {
         super::render_footer_with_status(frame, area, self.spans, app);
     }
 
-    /// Render in a main screen footer (with the "? more" hint on the right).
-    pub fn render_with_help(self, frame: &mut Frame, area: Rect, app: &App) {
-        super::render_footer_with_help(frame, area, self.spans, app);
-    }
-
     /// Convert the accumulated spans into a single `Line`.
     #[allow(clippy::wrong_self_convention)]
     pub fn to_line(self) -> Line<'static> {
@@ -339,13 +313,19 @@ impl Default for Footer {
 // Render helpers
 // ---------------------------------------------------------------------------
 
-/// Render a 2-space-indented message with the muted style.
-fn render_muted_message(frame: &mut Frame, area: Rect, message: &str) {
-    let line = Line::from(vec![
+/// 2-space-indented muted line. Single source of truth for the
+/// indent + muted style pattern shared by `render_empty`, `render_loading`
+/// and `empty_line`.
+fn muted_line(message: &str) -> Line<'static> {
+    Line::from(vec![
         Span::raw("  "),
         Span::styled(message.to_string(), theme::muted()),
-    ]);
-    frame.render_widget(Paragraph::new(line), area);
+    ])
+}
+
+/// Render a 2-space-indented message with the muted style.
+fn render_muted_message(frame: &mut Frame, area: Rect, message: &str) {
+    frame.render_widget(Paragraph::new(muted_line(message)), area);
 }
 
 /// Render an empty-state message with 2-space indent and muted style.
@@ -367,20 +347,196 @@ pub fn render_error(frame: &mut Frame, area: Rect, message: &str) {
     frame.render_widget(Paragraph::new(line), area);
 }
 
-/// Render a column header row. Bold style is applied to the paragraph itself.
-pub fn render_column_header(frame: &mut Frame, area: Rect, spans: Vec<Span<'_>>) {
-    let owned: Vec<Span<'static>> = spans
-        .into_iter()
-        .map(|s| Span::styled(s.content.into_owned(), s.style))
-        .collect();
-    let paragraph = Paragraph::new(Line::from(owned)).style(theme::bold());
-    frame.render_widget(paragraph, area);
-}
-
 /// Inline section divider below section headers.
 /// Renders as indented dashes in muted style.
 pub fn section_divider() -> Line<'static> {
     Line::from(Span::styled("  ────────────────────────", theme::muted()))
+}
+
+// ---------------------------------------------------------------------------
+// Content-level helpers
+// ---------------------------------------------------------------------------
+
+/// Column-width padding formula (usize variant for list screens).
+pub fn padded_usize(w: usize) -> usize {
+    if w == 0 { 0 } else { w + w / 10 + 1 }
+}
+
+/// 3-space prefix for column headers (aligns with highlight_symbol + leading space).
+pub const COLUMN_HEADER_PREFIX: &str = "   ";
+
+/// Inter-column gap as string.
+pub const COL_GAP_STR: &str = "  ";
+
+/// Key-value line: muted label (left-padded to width) + bold value.
+pub fn kv_line(label: &str, value: &str, label_width: usize) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            format!("  {:<width$}", label, width = label_width),
+            theme::muted(),
+        ),
+        Span::styled(value.to_string(), theme::bold()),
+    ])
+}
+
+/// Key-value label width for overlay detail screens (host_detail, key_detail).
+pub const KV_LABEL_WIDE: usize = 22;
+
+/// Content section header + divider pair.
+pub fn content_section(label: &str) -> [Line<'static>; 2] {
+    [
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled(label.to_string(), theme::section_header()),
+        ]),
+        section_divider(),
+    ]
+}
+
+/// Empty state with action hint: `"  message  \[key\]  action"`
+pub fn render_empty_with_hint(
+    frame: &mut Frame,
+    area: Rect,
+    message: &str,
+    key: &str,
+    action: &str,
+) {
+    let line = Line::from(vec![
+        Span::raw("  "),
+        Span::styled(message.to_string(), theme::muted()),
+        Span::raw("  "),
+        Span::styled(format!(" {} ", key), theme::footer_key()),
+        Span::styled(format!(" {}", action), theme::muted()),
+    ]);
+    frame.render_widget(Paragraph::new(line), area);
+}
+
+/// Right-arrow glyph for picker fields.
+pub const PICKER_ARROW: &str = "\u{25B8}";
+
+/// Space-bar glyph for toggle fields.
+pub const TOGGLE_HINT: &str = "\u{2423}";
+
+/// Empty-state line for embedding in Paragraphs that render inside a block.
+/// Same visual output as `render_empty()` but returns a composable `Line`.
+pub fn empty_line(message: &str) -> Line<'static> {
+    muted_line(message)
+}
+
+// ---------------------------------------------------------------------------
+// Keyboard interaction primitives
+// ---------------------------------------------------------------------------
+//
+// These helpers are the single source of truth for keyboard interaction
+// patterns in purple. The CI script `scripts/check-keybindings.sh` enforces
+// that handler and screen code uses these helpers instead of building footers
+// or routing keys ad hoc. See CLAUDE.md "Keyboard interaction rules".
+
+/// Field kind for dynamic form footer hints.
+///
+/// Drives the `Space` action label in [`form_save_footer`]:
+/// - `Text`: Space inserts a literal space character. No hint shown.
+/// - `Toggle`: Space flips a boolean. Footer shows "Space toggle".
+/// - `Picker`: Space opens a selection picker. Footer shows "Space pick".
+///
+/// **Invariant**: Enter ALWAYS submits the form regardless of `FieldKind`.
+/// Pickers and toggles are reached via Space only, never via Enter. This
+/// invariant is documented in CLAUDE.md and enforced by the CI script.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldKind {
+    /// Text input field. Space inserts a literal character.
+    Text,
+    /// Boolean toggle (e.g. VerifyTls, AutoSync). Space flips the value.
+    Toggle,
+    /// Picker field (e.g. IdentityFile, ProxyJump). Space opens the picker.
+    Picker,
+}
+
+/// Form mode for dynamic footer rendering.
+///
+/// Forms with progressive disclosure (host form, provider form) start
+/// `Collapsed` showing only required fields. The footer hints `\u{2193} more
+/// options` so the user can expand. After expansion the footer flips to
+/// `Expanded(kind)` and shows the appropriate per-field hint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FormFooterMode {
+    /// Required fields only. Down arrow expands to optional fields.
+    Collapsed,
+    /// All fields visible. Field kind determines the Space hint.
+    Expanded(FieldKind),
+}
+
+/// Standard form save footer with dynamic hints based on focused field.
+///
+/// Renders one of:
+/// - Collapsed:                `Enter save | \u{2193} more options | Esc cancel`
+/// - Expanded + Text field:    `Enter save | Tab next | Esc cancel`
+/// - Expanded + Toggle field:  `Enter save | Space toggle | Tab next | Esc cancel`
+/// - Expanded + Picker field:  `Enter save | Space pick | Tab next | Esc cancel`
+///
+/// **Why this helper exists**: it codifies the rule that Enter is always the
+/// save action, and that Space is the universal field-action key. Screens
+/// must call this instead of building form footers ad hoc.
+pub fn form_save_footer(mode: FormFooterMode) -> Footer {
+    let mut footer = Footer::new().primary("Enter", " save ");
+    match mode {
+        FormFooterMode::Collapsed => {
+            footer = footer.action("\u{2193}", " more options ");
+        }
+        FormFooterMode::Expanded(FieldKind::Text) => {
+            footer = footer.action("Tab", " next ");
+        }
+        FormFooterMode::Expanded(FieldKind::Toggle) => {
+            footer = footer.action("Space", " toggle ").action("Tab", " next ");
+        }
+        FormFooterMode::Expanded(FieldKind::Picker) => {
+            footer = footer.action("Space", " pick ").action("Tab", " next ");
+        }
+    }
+    footer.action("Esc", " cancel")
+}
+
+/// Footer for a destructive confirmation. Action-specific verbs both sides.
+///
+/// Stakes test (per CLAUDE.md "Keyboard interaction rules"): if cancelling
+/// by mistake loses irrecoverable work, use action verbs (e.g. `delete/keep`,
+/// `sign/skip`, `purge/keep`). The asymmetry helps users read the dialog as a
+/// choice between two outcomes, not "did I press the right key?".
+///
+/// Both `n` and `Esc` cancel (the contract enforced by
+/// `handler::route_confirm_key`); the footer advertises them as `n/Esc` so
+/// the visible UI matches the actual key set.
+///
+/// Examples:
+/// - `confirm_footer_destructive("delete", "keep")` for delete confirms
+/// - `confirm_footer_destructive("sign", "skip")` for vault sign
+/// - `confirm_footer_destructive("purge", "keep")` for purge stale
+pub fn confirm_footer_destructive(yes_verb: &str, no_verb: &str) -> Footer {
+    Footer::new()
+        .primary("y", &format!(" {} ", yes_verb))
+        .action("n/Esc", &format!(" {}", no_verb))
+}
+
+/// Footer for the standard discard-changes confirmation in any form.
+///
+/// Discarding form changes is a benign confirmation: users can re-enter the
+/// data. We still use action verbs (`discard`/`keep`) instead of `yes/no`
+/// because the noun-verb pairing is more informative than a bare affirmative.
+pub fn discard_footer() -> Footer {
+    confirm_footer_destructive("discard", "keep")
+}
+
+/// Render the standard "Discard changes?" footer with prompt prefix.
+///
+/// Single source of truth for the discard prompt across every editable
+/// surface (host form, tunnel form, snippet form, provider form, snippet
+/// param form, bulk tag editor). Renders below the block via
+/// `render_overlay_footer`. Callers must compute `footer_area` first via
+/// [`render_overlay_footer`] and pass it in.
+pub fn render_discard_prompt(frame: &mut Frame, footer_area: Rect, app: &App) {
+    let mut spans = vec![Span::styled(" Discard changes? ", theme::error())];
+    spans.extend(discard_footer().into_spans());
+    super::render_footer_with_status(frame, footer_area, spans, app);
 }
 
 // ---------------------------------------------------------------------------
@@ -442,11 +598,6 @@ mod tests {
     }
 
     #[test]
-    fn search_block_title_is_padded() {
-        assert!(render_block_title(search_block("Search"), " Search "));
-    }
-
-    #[test]
     fn overlay_area_stays_within_frame() {
         let backend = TestBackend::new(100, 40);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -464,23 +615,6 @@ mod tests {
     }
 
     #[test]
-    fn content_and_footer_heights_sum_with_spacer() {
-        let inner = Rect::new(0, 0, 40, 10);
-        let (content, footer) = content_and_footer(inner);
-        assert_eq!(footer.height, 1);
-        assert_eq!(content.height + 1 + footer.height, 10);
-    }
-
-    #[test]
-    fn content_spacer_footer_returns_three_rects_summing_to_total() {
-        let inner = Rect::new(0, 0, 40, 10);
-        let (content, spacer, footer) = content_spacer_footer(inner);
-        assert_eq!(spacer.height, 1);
-        assert_eq!(footer.height, 1);
-        assert_eq!(content.height + spacer.height + footer.height, 10);
-    }
-
-    #[test]
     fn form_footer_sits_directly_below_block() {
         let block_area = Rect::new(5, 2, 30, 8);
         let rect = form_footer(block_area, 8);
@@ -491,26 +625,11 @@ mod tests {
     }
 
     #[test]
-    fn form_field_area_steps_by_two() {
-        let inner = Rect::new(2, 3, 20, 10);
-        assert_eq!(form_field_area(inner, 0).y, 3);
-        assert_eq!(form_field_area(inner, 1).y, 5);
-        assert_eq!(form_field_area(inner, 2).y, 7);
-    }
-
-    #[test]
     fn form_divider_y_steps_by_two() {
         let inner = Rect::new(2, 3, 20, 10);
         assert_eq!(form_divider_y(inner, 0), 3);
         assert_eq!(form_divider_y(inner, 1), 5);
         assert_eq!(form_divider_y(inner, 2), 7);
-    }
-
-    #[test]
-    fn padded_matches_expected_values() {
-        assert_eq!(padded(0), 0);
-        assert_eq!(padded(10), 12);
-        assert_eq!(padded(20), 23);
     }
 
     #[test]
@@ -544,19 +663,6 @@ mod tests {
         };
         let line = footer.to_line();
         assert_eq!(line.spans.len(), spans_len);
-    }
-
-    #[test]
-    fn render_column_header_does_not_panic() {
-        let backend = TestBackend::new(40, 2);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| {
-                let area = Rect::new(0, 0, 40, 1);
-                let spans = vec![Span::raw("alias"), Span::raw("host")];
-                render_column_header(frame, area, spans);
-            })
-            .unwrap();
     }
 
     #[test]
@@ -596,11 +702,12 @@ mod tests {
 
     #[test]
     fn picker_width_passes_midrange_through() {
-        let backend = TestBackend::new(58, 20);
+        // PICKER_MIN_W (60) < 66 < PICKER_MAX_W (72), so passes through unclamped.
+        let backend = TestBackend::new(66, 20);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|frame| {
-                assert_eq!(picker_width(frame), 58);
+                assert_eq!(picker_width(frame), 66);
             })
             .unwrap();
     }
@@ -636,6 +743,91 @@ mod tests {
     }
 
     #[test]
+    fn padded_usize_matches_expected_values() {
+        assert_eq!(padded_usize(0), 0);
+        assert_eq!(padded_usize(10), 12);
+        assert_eq!(padded_usize(20), 23);
+    }
+
+    #[test]
+    fn kv_line_format_has_two_spans() {
+        let line = kv_line("Label", "Value", KV_LABEL_WIDE);
+        assert_eq!(line.spans.len(), 2);
+        let label_text = &line.spans[0].content;
+        assert!(
+            label_text.starts_with("  "),
+            "label should be 2-space indented"
+        );
+        assert!(label_text.contains("Label"));
+        assert_eq!(line.spans[1].content.as_ref(), "Value");
+    }
+
+    #[test]
+    fn kv_line_label_is_padded_to_width() {
+        let line = kv_line("X", "Y", 22);
+        let label = &line.spans[0].content;
+        // 2-space indent + 22-char padded label = 24 total
+        assert_eq!(label.len(), 24);
+    }
+
+    #[test]
+    fn content_section_returns_header_and_divider() {
+        let [header, divider] = content_section("Directives");
+        let h_text: String = header.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(h_text.contains("Directives"));
+        let d_text: String = divider.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(d_text.contains("────"));
+    }
+
+    #[test]
+    fn render_empty_with_hint_does_not_panic() {
+        let backend = TestBackend::new(60, 3);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                let area = Rect::new(0, 0, 60, 1);
+                render_empty_with_hint(frame, area, "No tags yet.", "+", "add");
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn column_header_prefix_is_three_spaces() {
+        assert_eq!(COLUMN_HEADER_PREFIX, "   ");
+        assert_eq!(COLUMN_HEADER_PREFIX.len(), 3);
+    }
+
+    #[test]
+    fn col_gap_str_is_two_spaces() {
+        assert_eq!(COL_GAP_STR, "  ");
+        assert_eq!(COL_GAP_STR.len(), 2);
+    }
+
+    #[test]
+    fn picker_arrow_renders_as_single_glyph() {
+        // The grep check in scripts/check-design-system.sh enforces that the
+        // literal "\u{25B8}" only appears in design.rs. The test here
+        // guards a different invariant: PICKER_ARROW must be a single
+        // non-whitespace grapheme so it lines up in form fields.
+        assert_eq!(PICKER_ARROW.chars().count(), 1);
+        assert!(!PICKER_ARROW.starts_with(char::is_whitespace));
+    }
+
+    #[test]
+    fn toggle_hint_renders_as_single_glyph() {
+        assert_eq!(TOGGLE_HINT.chars().count(), 1);
+        assert!(!TOGGLE_HINT.starts_with(char::is_whitespace));
+    }
+
+    #[test]
+    fn empty_line_has_indent_and_muted_style() {
+        let line = empty_line("No results.");
+        assert_eq!(line.spans.len(), 2);
+        assert_eq!(line.spans[0].content.as_ref(), "  ");
+        assert_eq!(line.spans[1].content.as_ref(), "No results.");
+    }
+
+    #[test]
     fn render_empty_loading_error_do_not_panic() {
         let backend = TestBackend::new(40, 3);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -663,5 +855,93 @@ mod tests {
                     .render_with_status(frame, area, &app);
             })
             .unwrap();
+    }
+
+    fn footer_text(footer: Footer) -> String {
+        footer
+            .into_spans()
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect()
+    }
+
+    #[test]
+    fn form_save_footer_collapsed_shows_more_options() {
+        let text = footer_text(form_save_footer(FormFooterMode::Collapsed));
+        assert!(text.contains("Enter"));
+        assert!(text.contains("save"));
+        assert!(text.contains("more options"));
+        assert!(text.contains("Esc"));
+        assert!(text.contains("cancel"));
+        // Collapsed mode never advertises Space.
+        assert!(!text.contains("Space"));
+    }
+
+    #[test]
+    fn form_save_footer_expanded_text_omits_space_hint() {
+        let text = footer_text(form_save_footer(FormFooterMode::Expanded(FieldKind::Text)));
+        assert!(text.contains("Enter"));
+        assert!(text.contains("save"));
+        assert!(text.contains("Tab"));
+        assert!(text.contains("Esc"));
+        // Text fields: Space is a literal character, not a hint.
+        assert!(!text.contains("Space"));
+    }
+
+    #[test]
+    fn form_save_footer_expanded_toggle_shows_space_toggle() {
+        let text = footer_text(form_save_footer(FormFooterMode::Expanded(
+            FieldKind::Toggle,
+        )));
+        assert!(text.contains("Space"));
+        assert!(text.contains("toggle"));
+        // Should not advertise picker on a toggle field.
+        assert!(!text.contains("pick"));
+    }
+
+    #[test]
+    fn form_save_footer_expanded_picker_shows_space_pick() {
+        let text = footer_text(form_save_footer(FormFooterMode::Expanded(
+            FieldKind::Picker,
+        )));
+        assert!(text.contains("Space"));
+        assert!(text.contains("pick"));
+        // Should not advertise toggle on a picker field.
+        assert!(!text.contains("toggle"));
+    }
+
+    #[test]
+    fn confirm_footer_destructive_uses_action_verbs() {
+        let text = footer_text(confirm_footer_destructive("delete", "keep"));
+        assert!(text.contains("y"));
+        assert!(text.contains("delete"));
+        assert!(text.contains("n/Esc"));
+        assert!(text.contains("keep"));
+        // Destructive footer must not contain generic yes/no labels.
+        assert!(!text.contains("yes"));
+        assert!(!text.contains(" no"));
+    }
+
+    #[test]
+    fn confirm_footers_advertise_n_alongside_esc() {
+        // route_confirm_key accepts y/Y, n/N, Esc. The footer must advertise
+        // both n and Esc to keep the visible UI in sync with the key contract.
+        for footer_text_str in [
+            footer_text(confirm_footer_destructive("delete", "keep")),
+            footer_text(discard_footer()),
+        ] {
+            assert!(
+                footer_text_str.contains("n/Esc"),
+                "footer must show both n and Esc as cancel keys: {}",
+                footer_text_str
+            );
+        }
+    }
+
+    #[test]
+    fn discard_footer_uses_discard_keep_verbs() {
+        let text = footer_text(discard_footer());
+        assert!(text.contains("discard"));
+        assert!(text.contains("keep"));
     }
 }

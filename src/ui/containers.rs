@@ -25,9 +25,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     } else {
         0
     };
-    let height = (item_count as u16 + 6 + header_row + action_row)
-        .min(frame.area().height.saturating_sub(4));
-    let area = design::overlay_area(frame, 70, 80, height);
+    // Reserve 1 row below the block for the external footer.
+    let height = (item_count as u16 + 4 + header_row + action_row)
+        .min(frame.area().height.saturating_sub(5));
+    let area = design::overlay_area(frame, design::OVERLAY_W, design::OVERLAY_H, height);
     frame.render_widget(Clear, area);
 
     let mut block = design::overlay_block(&format!("Containers for {}", alias));
@@ -41,7 +42,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // Layout: optional header + list + optional action + spacer + footer
+    // Layout inside the block: optional header + list + optional action.
+    // Footer renders BELOW the block via design::form_footer.
     let mut constraints = Vec::new();
     if has_header {
         constraints.push(Constraint::Length(1)); // column header
@@ -50,23 +52,16 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     if state.action_in_progress.is_some() {
         constraints.push(Constraint::Length(1)); // action in progress
     }
-    constraints.push(Constraint::Length(1)); // spacer
-    constraints.push(Constraint::Length(1)); // footer
     let chunks = Layout::vertical(constraints).split(inner);
 
     // Resolve chunk indices
     let header_ci = if has_header { Some(0) } else { None };
     let list_ci = has_header as usize;
-    let mut next = list_ci + 1;
     let action_ci = if state.action_in_progress.is_some() {
-        let ci = next;
-        next += 1;
-        Some(ci)
+        Some(list_ci + 1)
     } else {
         None
     };
-    let _spacer_ci = next;
-    let footer_ci = next + 1;
 
     let list_area = chunks[list_ci];
 
@@ -75,13 +70,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // Flex gap (absorbs surplus, pushes right cluster to the right)
     // Right cluster: STATE + gap + STATUS
     let usable = list_area.width.saturating_sub(2) as usize; // 1 highlight + 1 right margin
-    let gap: usize = 2;
-
-    // ~110% of content width (same formula as host_list::Columns::padded)
-    let padded = |w: usize| -> usize { if w == 0 { 0 } else { w + w / 10 + 1 } };
+    let gap: usize = design::COL_GAP as usize;
 
     // Measure and pad each column
-    let name_w = padded(
+    let name_w = design::padded_usize(
         state
             .containers
             .iter()
@@ -90,7 +82,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             .unwrap_or(4)
             .max(4),
     );
-    let image_w = padded(
+    let image_w = design::padded_usize(
         state
             .containers
             .iter()
@@ -99,7 +91,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             .unwrap_or(5)
             .max(5),
     );
-    let state_w = padded(
+    let state_w = design::padded_usize(
         state
             .containers
             .iter()
@@ -108,7 +100,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             .unwrap_or(5)
             .max(5),
     );
-    let status_w = padded(
+    let status_w = design::padded_usize(
         state
             .containers
             .iter()
@@ -126,17 +118,20 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let flex_gap = usable.saturating_sub(left + gap + right).max(gap);
 
     // Column header
-    let gap_str = " ".repeat(gap);
+    let gap_str = design::COL_GAP_STR;
     let flex_str = " ".repeat(flex_gap);
     if let Some(hi) = header_ci {
         let style = theme::bold();
         let hdr = Line::from(vec![
-            Span::styled(format!("   {:<name_w$}", "NAME"), style),
-            Span::raw(&gap_str),
+            Span::styled(
+                format!("{}{:<name_w$}", design::COLUMN_HEADER_PREFIX, "NAME"),
+                style,
+            ),
+            Span::raw(gap_str),
             Span::styled(format!("{:<image_w$}", "IMAGE"), style),
-            Span::raw(&flex_str),
+            Span::raw(flex_str.clone()),
             Span::styled(format!("{:<state_w$}", "STATE"), style),
-            Span::raw(&gap_str),
+            Span::raw(gap_str),
             Span::styled(format!("{:<status_w$}", "STATUS"), style),
         ]);
         frame.render_widget(Paragraph::new(hdr), chunks[hi]);
@@ -144,18 +139,14 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Content
     if state.loading && state.containers.is_empty() {
-        frame.render_widget(
-            Paragraph::new("  Loading containers...").style(theme::muted()),
-            list_area,
-        );
+        design::render_loading(frame, list_area, "Loading containers...");
     } else if let Some(ref err) = state.error {
-        let err_msg = format!("  {}", err);
-        frame.render_widget(Paragraph::new(err_msg).style(theme::error()), list_area);
+        design::render_error(frame, list_area, err);
     } else if state.containers.is_empty() {
-        frame.render_widget(
-            Paragraph::new("  No containers found. Is Docker or Podman installed?")
-                .style(theme::muted()),
+        design::render_empty(
+            frame,
             list_area,
+            "No containers found. Is Docker or Podman installed?",
         );
     } else {
         let items: Vec<ListItem> = state
@@ -171,11 +162,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 };
                 let line = Line::from(vec![
                     Span::styled(format!(" {:<name_w$}", name_str), theme::bold()),
-                    Span::raw(&gap_str),
+                    Span::raw(gap_str),
                     Span::styled(format!("{:<image_w$}", image_str), theme::muted()),
-                    Span::raw(&flex_str),
+                    Span::raw(flex_str.clone()),
                     Span::styled(format!("{:<state_w$}", c.state), state_style),
-                    Span::raw(&gap_str),
+                    Span::raw(gap_str),
                     Span::styled(
                         format!("{:<status_w$}", truncate_str(&c.status, status_w)),
                         theme::muted(),
@@ -195,46 +186,44 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // Action in progress
     if let Some(ci) = action_ci {
         if let Some(ref msg) = state.action_in_progress {
-            let action_line = format!("  {}", msg);
-            frame.render_widget(
-                Paragraph::new(action_line).style(theme::muted()),
-                chunks[ci],
-            );
+            design::render_loading(frame, chunks[ci], msg);
         }
     }
 
-    // Footer
+    // Footer below the block
+    let footer_area = design::render_overlay_footer(frame, area);
     design::Footer::new()
         .action("s", " start ")
         .action("x", " stop ")
         .action("r", " restart ")
         .action("R", " refresh ")
         .action("Esc", " back")
-        .render_with_status(frame, chunks[footer_ci], app);
+        .render_with_status(frame, footer_area, app);
 
     // Confirmation dialog for stop/restart
     if let Some(ref confirm_state) = app.container_state {
         if let Some((ref action, ref name, _)) = confirm_state.confirm_action {
             let verb = action.as_str();
             let display_name = truncate_str(name, 30);
-            let dialog_area = super::centered_rect_fixed(52, 7, frame.area());
+            let dialog_area = super::centered_rect_fixed(52, 5, frame.area());
             frame.render_widget(Clear, dialog_area);
             let block = design::danger_block(&format!("Confirm {}", verb));
-            let footer_line = design::Footer::new()
-                .action("y", " yes ")
-                .action("Esc", " no")
-                .to_line();
             let text = vec![
                 Line::from(""),
                 Line::from(Span::styled(
                     format!("  {} \"{}\"?", verb, display_name),
                     theme::bold(),
                 )),
-                Line::from(""),
-                footer_line,
             ];
             let paragraph = Paragraph::new(text).block(block);
             frame.render_widget(paragraph, dialog_area);
+
+            let footer_area = design::render_overlay_footer(frame, dialog_area);
+            let footer = design::Footer::new()
+                .action("y", " yes ")
+                .action("Esc", " no")
+                .to_line();
+            frame.render_widget(Paragraph::new(footer), footer_area);
         }
     }
 }
@@ -243,8 +232,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
-    use ratatui::layout::{Constraint, Layout, Rect};
+    use ratatui::layout::Rect;
 
+    use super::design;
     use crate::SshConfigFile;
     use crate::app::{App, ContainerState};
     use std::path::PathBuf;
@@ -323,52 +313,10 @@ mod tests {
     }
 
     #[test]
-    fn layout_has_spacer_between_content_and_footer() {
+    fn footer_sits_directly_below_block() {
         let area = Rect::new(0, 0, 60, 20);
-        let chunks = Layout::vertical([
-            Constraint::Min(0),
-            Constraint::Length(1),
-            Constraint::Length(1),
-        ])
-        .split(area);
-        assert_eq!(chunks[1].height, 1, "spacer row should be 1 tall");
-        assert_eq!(chunks[2].height, 1, "footer row should be 1 tall");
-        assert!(
-            chunks[2].y > chunks[0].y + chunks[0].height,
-            "footer (y={}) should be below content end (y={})",
-            chunks[2].y,
-            chunks[0].y + chunks[0].height
-        );
-    }
-
-    #[test]
-    fn layout_with_header_has_spacer() {
-        let area = Rect::new(0, 0, 60, 20);
-        let chunks = Layout::vertical([
-            Constraint::Length(1), // header
-            Constraint::Min(0),    // list
-            Constraint::Length(1), // spacer
-            Constraint::Length(1), // footer
-        ])
-        .split(area);
-        let list_ci = 1;
-        let footer_ci = 3;
-        assert!(chunks[footer_ci].y > chunks[list_ci].y + chunks[list_ci].height);
-    }
-
-    #[test]
-    fn layout_with_action_row() {
-        let area = Rect::new(0, 0, 60, 20);
-        let chunks = Layout::vertical([
-            Constraint::Length(1), // header
-            Constraint::Min(0),    // list
-            Constraint::Length(1), // action
-            Constraint::Length(1), // spacer
-            Constraint::Length(1), // footer
-        ])
-        .split(area);
-        assert_eq!(chunks[4].height, 1, "footer should be 1 tall");
-        assert_eq!(chunks[3].height, 1, "spacer should be 1 tall");
-        assert_eq!(chunks[2].height, 1, "action row should be 1 tall");
+        let footer = design::form_footer(area, area.height);
+        assert_eq!(footer.height, 1);
+        assert_eq!(footer.y, area.y + area.height);
     }
 }

@@ -33,6 +33,9 @@ libnull.rlib
 proptest-regressions/
 *.proptest-regressions
 
+# Visual regression diffs (written by failing tests)
+tests/visual_golden/*.actual
+
 # Environment
 .env
 .env.*

@@ -1,6 +1,6 @@
 use ratatui::Frame;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, List, ListItem, Paragraph};
+use ratatui::widgets::{Clear, List, ListItem};
 
 use super::design;
 use super::theme;
@@ -8,15 +8,11 @@ use crate::app::App;
 
 pub fn render(frame: &mut Frame, app: &mut App) {
     if app.tags.list.is_empty() {
-        let area = super::centered_rect_fixed(design::PICKER_MIN_W, 5, frame.area());
-        frame.render_widget(Clear, area);
-        let block = design::overlay_block("Filter by Tag");
-        let msg = Paragraph::new(Line::from(Span::styled(
-            "  No tags yet. Press t on a host to add some.",
-            theme::muted(),
-        )))
-        .block(block);
-        frame.render_widget(msg, area);
+        super::render_picker_empty_overlay(
+            frame,
+            "Filter by Tag",
+            "No tags yet. Press t on a host to add some.",
+        );
         return;
     }
 
@@ -75,8 +71,17 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         counts
     };
 
-    let height = (app.tags.list.len() as u16 + 6).min(frame.area().height.saturating_sub(4));
-    let area = super::centered_rect_fixed(design::PICKER_MIN_W, height, frame.area());
+    // Use the canonical picker geometry: width clamp[PICKER_MIN_W,
+    // PICKER_MAX_W], height grows with item count up to PICKER_MAX_H.
+    // Reserve 1 row below the block for the external footer.
+    let width = super::picker_overlay_width(frame);
+    let height = (app.tags.list.len() as u16 + 2)
+        .min(design::PICKER_MAX_H)
+        .min(frame.area().height.saturating_sub(3));
+    if height < super::PICKER_MIN_HEIGHT {
+        return;
+    }
+    let area = super::centered_rect_fixed(width, height, frame.area());
     frame.render_widget(Clear, area);
 
     let items: Vec<ListItem> = app
@@ -98,49 +103,32 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let (content, footer) = design::content_and_footer(inner);
-
     let list = List::new(items)
         .highlight_style(theme::selected_row())
         .highlight_symbol(design::LIST_HIGHLIGHT);
 
-    frame.render_stateful_widget(list, content, &mut app.ui.tag_picker_state);
+    frame.render_stateful_widget(list, inner, &mut app.ui.tag_picker_state);
 
+    let footer_area = design::render_overlay_footer(frame, area);
     design::Footer::new()
         .primary("Enter", " select ")
         .action("Esc", " back")
-        .render_with_status(frame, footer, app);
+        .render_with_status(frame, footer_area, app);
 }
 
 #[cfg(test)]
 mod tests {
-    use ratatui::layout::{Constraint, Layout, Rect};
+    use ratatui::layout::Rect;
+
+    use super::design;
 
     #[test]
-    fn layout_has_spacer_between_content_and_footer() {
+    fn footer_sits_directly_below_block() {
         let area = Rect::new(0, 0, 50, 15);
-        let chunks = Layout::vertical([
-            Constraint::Min(0),
-            Constraint::Length(1),
-            Constraint::Length(1),
-        ])
-        .split(area);
-        assert_eq!(chunks[1].height, 1);
-        assert_eq!(chunks[2].height, 1);
-        assert!(chunks[2].y > chunks[0].y + chunks[0].height);
-    }
-
-    #[test]
-    fn group_picker_layout_has_spacer_between_content_and_footer() {
-        let area = Rect::new(0, 0, 50, 15);
-        let chunks = Layout::vertical([
-            Constraint::Min(0),
-            Constraint::Length(1),
-            Constraint::Length(1),
-        ])
-        .split(area);
-        assert_eq!(chunks[1].height, 1);
-        assert_eq!(chunks[2].height, 1);
-        assert!(chunks[2].y > chunks[0].y + chunks[0].height);
+        let footer = design::form_footer(area, area.height);
+        assert_eq!(footer.height, 1);
+        assert_eq!(footer.y, area.y + area.height);
+        assert_eq!(footer.x, area.x);
+        assert_eq!(footer.width, area.width);
     }
 }

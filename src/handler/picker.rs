@@ -12,13 +12,13 @@ pub(super) fn handle_password_picker(app: &mut App, key: KeyEvent) {
                 match crate::preferences::save_askpass_default(value) {
                     Ok(()) => {
                         if is_none {
-                            app.notify("Global default cleared.");
+                            app.notify(crate::messages::GLOBAL_DEFAULT_CLEARED);
                         } else {
-                            app.notify(format!("Global default set to {}.", source.label));
+                            app.notify(crate::messages::global_default_set(source.label));
                         }
                     }
                     Err(e) => {
-                        app.notify_error(format!("Failed to save default: {}", e));
+                        app.notify_error(crate::messages::save_default_failed(&e));
                     }
                 }
             }
@@ -47,7 +47,7 @@ pub(super) fn handle_password_picker(app: &mut App, key: KeyEvent) {
                     if is_none {
                         app.form.askpass = String::new();
                         app.form.sync_cursor_to_end();
-                        app.notify("Password source cleared.");
+                        app.notify(crate::messages::PASSWORD_SOURCE_CLEARED);
                     } else if is_custom_cmd {
                         app.form.askpass = String::new();
                         app.form.focused_field = FormField::AskPass;
@@ -60,12 +60,12 @@ pub(super) fn handle_password_picker(app: &mut App, key: KeyEvent) {
                         app.form.askpass = source.value.to_string();
                         app.form.focused_field = FormField::AskPass;
                         app.form.sync_cursor_to_end();
-                        app.notify(format!("Complete the {} path.", source.label));
+                        app.notify(crate::messages::complete_path(source.label));
                         needs_more_input = true;
                     } else {
                         app.form.askpass = source.value.to_string();
                         app.form.sync_cursor_to_end();
-                        app.notify(format!("Password source set to {}.", source.label));
+                        app.notify(crate::messages::password_source_set(source.label));
                     }
                 }
             }
@@ -100,7 +100,7 @@ pub(super) fn handle_key_picker_shared(app: &mut App, key: KeyEvent, for_provide
                         app.form.identity_file = key_info.display_path.clone();
                         app.form.sync_cursor_to_end();
                     }
-                    app.notify(format!("Locked and loaded with {}.", key_info.name));
+                    app.notify(crate::messages::key_selected(&key_info.name));
                 }
             }
             app.ui.show_key_picker = false;
@@ -132,7 +132,7 @@ pub(super) fn handle_proxyjump_picker(app: &mut App, key: KeyEvent) {
                 {
                     app.form.proxy_jump = alias.clone();
                     app.form.sync_cursor_to_end();
-                    app.notify(format!("Jumping through {}.", alias));
+                    app.notify(crate::messages::proxy_jump_set(alias));
                     app.ui.show_proxyjump_picker = false;
                     super::try_auto_submit_after_picker(app);
                 }
@@ -160,7 +160,7 @@ pub(super) fn handle_vault_role_picker(app: &mut App, key: KeyEvent) {
                 if let Some(role) = candidates.get(index) {
                     app.form.vault_ssh = role.clone();
                     app.form.sync_cursor_to_end();
-                    app.notify(format!("Vault SSH role set to {}.", role));
+                    app.notify(crate::messages::vault_role_set(role));
                 }
             }
             app.ui.show_vault_role_picker = false;

@@ -18,18 +18,13 @@ pub(super) fn handle_tag_input(app: &mut App, key: KeyEvent) {
                     if let Err(e) = app.config.write() {
                         // Restore old tags on write failure
                         app.config.set_host_tags(&alias, &old_tags);
-                        app.notify_error(format!("Failed to save: {}", e));
+                        app.notify_error(crate::messages::failed_to_save(&e));
                     } else {
                         app.update_last_modified();
                         let count = tags.len();
                         app.reload_hosts();
                         app.select_host_by_alias(&alias);
-                        app.notify(format!(
-                            "Tagged {} with {} label{}.",
-                            alias,
-                            count,
-                            if count == 1 { "" } else { "s" }
-                        ));
+                        app.notify(crate::messages::tagged_host(&alias, count));
                     }
                 }
             }
@@ -110,7 +105,7 @@ pub(super) fn handle_host_detail(app: &mut App, key: KeyEvent) {
                 };
                 let alias = host.alias.clone();
                 if let Some(hint) = stale_hint {
-                    app.notify_error(format!("Stale host.{}", hint));
+                    app.notify_warning(crate::messages::stale_host(&hint));
                 }
                 app.refresh_tunnel_list(&alias);
                 app.ui.tunnel_list_state = ratatui::widgets::ListState::default();
@@ -129,7 +124,7 @@ pub(super) fn handle_host_detail(app: &mut App, key: KeyEvent) {
                 };
                 let alias = host.alias.clone();
                 if let Some(hint) = stale_hint {
-                    app.notify_error(format!("Stale host.{}", hint));
+                    app.notify_warning(crate::messages::stale_host(&hint));
                 }
                 app.screen = Screen::SnippetPicker {
                     target_aliases: vec![alias],

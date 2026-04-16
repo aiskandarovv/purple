@@ -142,7 +142,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 
     // Footer below the block
-    let footer_area = design::form_footer(form_area, block_height);
+    let footer_area = design::render_overlay_footer(frame, block_area);
     if footer_area.y < form_area.y + form_area.height {
         if app.pending_discard_confirm {
             let footer = design::Footer::new()

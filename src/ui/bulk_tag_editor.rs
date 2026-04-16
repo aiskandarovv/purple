@@ -17,9 +17,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let input_active = app.bulk_tag_editor.new_tag_input.is_some();
     let has_skipped = !app.bulk_tag_editor.skipped_included.is_empty();
 
-    // +4 rows reserved for: legend, optional skip-warning, spacer/input, footer.
-    let content_rows = app.bulk_tag_editor.rows.len() as u16 + 4;
-    let overlay_h = (content_rows + 6).min(frame.area().height.saturating_sub(4));
+    // +3 rows reserved for: legend, optional skip-warning, spacer/input.
+    // Footer renders below the block.
+    let content_rows = app.bulk_tag_editor.rows.len() as u16 + 3;
+    let overlay_h = (content_rows + 4).min(frame.area().height.saturating_sub(5));
     let overlay_w = 52u16.min(frame.area().width.saturating_sub(4));
     let area = super::centered_rect_fixed(overlay_w, overlay_h, frame.area());
     frame.render_widget(Clear, area);
@@ -34,16 +35,13 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // When include-file hosts exist the layout has 5 rows (legend + skip
-    // warning + list + spacer + footer). Otherwise 4 (legend + list +
-    // spacer + footer).
+    // Layout inside the block. Footer renders BELOW the block.
     let chunks = if has_skipped {
         Layout::vertical([
             Constraint::Length(1), // legend
             Constraint::Length(1), // skip warning
             Constraint::Min(0),    // list
             Constraint::Length(1), // spacer / input bar
-            Constraint::Length(1), // footer
         ])
         .split(inner)
     } else {
@@ -51,7 +49,6 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             Constraint::Length(1), // legend
             Constraint::Min(0),    // list
             Constraint::Length(1), // spacer / input bar
-            Constraint::Length(1), // footer
         ])
         .split(inner)
     };
@@ -89,15 +86,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     let list_idx = if has_skipped { 2 } else { 1 };
     let spacer_idx = if has_skipped { 3 } else { 2 };
-    let footer_idx = if has_skipped { 4 } else { 3 };
 
     if app.bulk_tag_editor.rows.is_empty() && !input_active {
-        let msg = Paragraph::new(Line::from(vec![
-            Span::styled("  No tags yet. Press ", theme::muted()),
-            Span::styled("+", theme::bold()),
-            Span::styled(" to add one.", theme::muted()),
-        ]));
-        frame.render_widget(msg, chunks[list_idx]);
+        design::render_empty_with_hint(frame, chunks[list_idx], "No tags yet.", "+", "add");
     } else {
         let items: Vec<ListItem> = app
             .bulk_tag_editor
@@ -120,6 +111,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         frame.render_widget(Paragraph::new(Line::from(spans)), chunks[spacer_idx]);
     }
 
+    // Footer below the block
+    let footer_area = design::render_overlay_footer(frame, area);
     let f = if input_active {
         design::Footer::new()
             .primary("Enter", " add ")
@@ -131,7 +124,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             .primary("Enter", " ok ")
             .action("Esc", " back")
     };
-    f.render_with_status(frame, chunks[footer_idx], app);
+    f.render_with_status(frame, footer_area, app);
 }
 
 /// Build the rendered line for a single bulk-tag row.
@@ -143,13 +136,13 @@ pub(crate) fn build_row_line(row: &crate::app::BulkTagRow, editable_count: usize
     let glyph = row.action.glyph();
     let glyph_style = match row.action {
         BulkTagAction::Leave => theme::muted(),
-        BulkTagAction::AddToAll => theme::online_dot(),
+        BulkTagAction::AddToAll => theme::success(),
         BulkTagAction::RemoveFromAll => theme::error(),
     };
     let count = format!("{}/{}", row.initial_count, editable_count);
     let is_mixed = row.initial_count > 0 && row.initial_count < editable_count;
     let count_style = if row.initial_count == editable_count && editable_count > 0 {
-        theme::online_dot()
+        theme::success()
     } else if row.initial_count == 0 {
         theme::muted()
     } else {
@@ -197,7 +190,7 @@ fn preview_end_state(
                 None
             } else {
                 let delta = editable_count.saturating_sub(row.initial_count);
-                Some(("\u{2192}", format!("+{}", delta), theme::online_dot()))
+                Some(("\u{2192}", format!("+{}", delta), theme::success()))
             }
         }
         BulkTagAction::RemoveFromAll => {

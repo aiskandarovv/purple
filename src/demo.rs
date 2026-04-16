@@ -264,12 +264,11 @@ const DEMO_HISTORY_SPEC: &[(&str, u32, u64)] = &[
 
 fn build_demo_history() -> ConnectionHistory {
     use std::collections::HashMap;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock before Unix epoch")
-        .as_secs();
+    // Use the frozen demo clock so visual goldens are stable across slow CI
+    // runs that might otherwise straddle a minute boundary between build and
+    // render time.
+    let now = crate::demo_flag::now_secs();
     let day: u64 = 86400;
     let hour: u64 = 3600;
 
@@ -323,11 +322,7 @@ fn build_demo_history() -> ConnectionHistory {
 }
 
 fn build_demo_sync_history() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock before Unix epoch")
-        .as_secs();
+    let now = crate::demo_flag::now_secs();
     // All synced just now (within last few seconds)
     format!(
         "aws\t{now}\t0\tSynced 6 hosts (2 regions)\n\
@@ -337,11 +332,7 @@ fn build_demo_sync_history() -> String {
 }
 
 fn build_demo_container_cache() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock before Unix epoch")
-        .as_secs();
+    let now = crate::demo_flag::now_secs();
     let ts1 = now - 1200;
     let ts2 = now - 900;
     let ts3 = now - 600;

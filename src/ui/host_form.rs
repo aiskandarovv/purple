@@ -1,8 +1,7 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, List, ListItem, Paragraph};
+use ratatui::widgets::{Clear, ListItem, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 use super::design;
@@ -84,7 +83,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let block_height = 2 + visible_fields.len() as u16 * 2;
     let total_height = block_height + 1; // + footer
 
-    let form_area = design::overlay_area(frame, 70, 80, total_height);
+    let form_area = design::overlay_area(frame, design::OVERLAY_W, design::OVERLAY_H, total_height);
 
     let title = if app.form.is_pattern {
         match &app.screen {
@@ -190,7 +189,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         } else {
             format!(" {} ", field_label)
         };
-        render_divider(
+        super::render_divider(
             frame,
             block_area,
             divider_y,
@@ -212,46 +211,37 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         );
     }
 
-    // Footer below the block
-    let footer_area = design::form_footer(form_area, block_height);
-    let mut footer_spans = if app.pending_discard_confirm {
-        let mut spans = vec![Span::styled(" Discard changes? ", theme::error())];
-        spans.extend(
-            design::Footer::new()
-                .action("y", " yes ")
-                .action("Esc", " no")
-                .into_spans(),
-        );
-        spans
-    } else if !expanded {
-        // Collapsed: show hint about more options
-        design::Footer::new()
-            .primary("Enter", " save ")
-            .action("\u{2193}", " more options ")
-            .action("Esc", " cancel")
-            .into_spans()
+    // Footer below the block. Discard prompt takes precedence; otherwise the
+    // dynamic form-save footer reflects the focused field's kind (text /
+    // toggle / picker) so users discover Space-pick on picker fields.
+    let footer_area = design::render_overlay_footer(frame, block_area);
+    if app.pending_discard_confirm {
+        design::render_discard_prompt(frame, footer_area, app);
     } else {
-        design::Footer::new()
-            .primary("Enter", " save ")
-            .action("Tab", " next ")
-            .action("Esc", " cancel")
-            .into_spans()
-    };
-    if let Some(ref hint) = app.form.form_hint {
-        let hint_width: usize = hint.width() + 4; // " ⚠ {hint} "
-        let shortcuts_width: usize = footer_spans.iter().map(|s| s.width()).sum();
-        let total = footer_area.width as usize;
-        let gap = total.saturating_sub(shortcuts_width + hint_width);
-        if gap > 0 {
-            footer_spans.push(Span::raw(" ".repeat(gap)));
-            footer_spans.push(Span::styled(format!("\u{26A0} {} ", hint), theme::error()));
+        let mode = if !expanded {
+            design::FormFooterMode::Collapsed
+        } else {
+            design::FormFooterMode::Expanded(app.form.focused_field.kind())
+        };
+        let mut footer_spans = design::form_save_footer(mode).into_spans();
+        if let Some(ref hint) = app.form.form_hint {
+            let hint_width: usize = hint.width() + 4; // " ⚠ {hint} "
+            let shortcuts_width: usize = footer_spans.iter().map(|s| s.width()).sum();
+            let total = footer_area.width as usize;
+            let gap = total.saturating_sub(shortcuts_width + hint_width);
+            if gap > 0 {
+                footer_spans.push(Span::raw(" ".repeat(gap)));
+                footer_spans.push(Span::styled(
+                    format!("{} {} ", design::ICON_WARNING, hint),
+                    theme::warning(),
+                ));
+            }
+            // Hint takes the right-hand status slot, so render directly to
+            // avoid double status overlay.
+            frame.render_widget(Paragraph::new(Line::from(footer_spans)), footer_area);
+        } else {
+            super::render_footer_with_status(frame, footer_area, footer_spans, app);
         }
-    }
-    // Only use render_footer_with_status when no form_hint (to avoid double status)
-    if app.form.form_hint.is_some() {
-        frame.render_widget(Paragraph::new(Line::from(footer_spans)), footer_area);
-    } else {
-        super::render_footer_with_status(frame, footer_area, footer_spans, app);
     }
 
     // Key picker popup overlay
@@ -278,33 +268,22 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 /// Render the key picker popup overlay. Public for reuse from provider form.
 pub fn render_key_picker_overlay(frame: &mut Frame, app: &mut App) {
     if app.keys.is_empty() {
-        // Small popup saying no keys found
-        let area = super::centered_rect_fixed(design::PICKER_MIN_W, 5, frame.area());
-        frame.render_widget(Clear, area);
-        let block = design::overlay_block("Select Key");
-        let msg = Paragraph::new(Line::from(Span::styled(
-            "  No keys found in ~/.ssh/",
-            theme::muted(),
-        )))
-        .block(block);
-        frame.render_widget(msg, area);
+        super::render_picker_empty_overlay(frame, "Select Key", "No keys found in ~/.ssh/");
         return;
     }
 
-    let height = (app.keys.len() as u16 + 4).min(16);
-    let area = design::overlay_area(frame, 70, 80, height);
-    frame.render_widget(Clear, area);
+    // Use the canonical picker width range (60..=72) so the Key picker
+    // looks identical to every other picker that opens from this form.
+    // The 3-column layout (NAME, TYPE, COMMENT) trades comment-column
+    // width for visual consistency: long comments are truncated rather
+    // than widening the overlay.
+    let width = super::picker_overlay_width(frame);
+    // Inner usable: width − 2 borders − 2 highlight gutter − 1 leading
+    // space − 1 trailing margin = width − 6.
+    let usable = (width as usize).saturating_sub(6);
+    let gap: usize = design::COL_GAP as usize;
 
-    let block = design::overlay_block("Select Key");
-
-    let inner_width = block.inner(area).width;
-
-    // Column layout following containers.rs pattern
-    let usable = inner_width.saturating_sub(2) as usize; // 1 highlight + 1 right margin
-    let gap: usize = 2;
-    let padded = |w: usize| -> usize { if w == 0 { 0 } else { w + w / 10 + 1 } };
-
-    let name_w = padded(
+    let name_w = design::padded_usize(
         app.keys
             .iter()
             .map(|k| k.name.len())
@@ -312,7 +291,7 @@ pub fn render_key_picker_overlay(frame: &mut Frame, app: &mut App) {
             .unwrap_or(4)
             .max(4),
     );
-    let type_w = padded(
+    let type_w = design::padded_usize(
         app.keys
             .iter()
             .map(|k| k.type_display().len())
@@ -322,7 +301,7 @@ pub fn render_key_picker_overlay(frame: &mut Frame, app: &mut App) {
     );
     let left = name_w + gap + type_w;
     let comment_w = usable.saturating_sub(left + gap);
-    let gap_str = " ".repeat(gap);
+    let gap_str = design::COL_GAP_STR;
 
     let items: Vec<ListItem> = app
         .keys
@@ -336,11 +315,11 @@ pub fn render_key_picker_overlay(frame: &mut Frame, app: &mut App) {
             };
             let mut spans = vec![
                 Span::styled(format!(" {:<name_w$}", key.name), theme::bold()),
-                Span::raw(gap_str.clone()),
+                Span::raw(gap_str),
                 Span::styled(format!("{:<type_w$}", type_display), theme::muted()),
             ];
             if comment_w > 0 {
-                spans.push(Span::raw(gap_str.clone()));
+                spans.push(Span::raw(gap_str));
                 spans.push(Span::styled(comment, theme::muted()));
             }
             let line = Line::from(spans);
@@ -348,12 +327,13 @@ pub fn render_key_picker_overlay(frame: &mut Frame, app: &mut App) {
         })
         .collect();
 
-    let list = List::new(items)
-        .block(block)
-        .highlight_style(theme::selected_row())
-        .highlight_symbol(design::LIST_HIGHLIGHT);
-
-    frame.render_stateful_widget(list, area, &mut app.ui.key_picker_state);
+    super::render_picker_overlay(
+        frame,
+        "Select Key",
+        None,
+        items,
+        &mut app.ui.key_picker_state,
+    );
 }
 
 fn render_proxyjump_picker_overlay(frame: &mut Frame, app: &mut App) {
@@ -424,7 +404,6 @@ fn render_proxyjump_picker_overlay(frame: &mut Frame, app: &mut App) {
         None,
         items,
         &mut app.ui.proxyjump_picker_state,
-        16,
     );
 }
 
@@ -449,7 +428,6 @@ fn render_vault_role_picker_overlay(frame: &mut Frame, app: &mut App) {
         None,
         items,
         &mut app.ui.vault_role_picker_state,
-        12,
     );
 }
 
@@ -481,7 +459,6 @@ fn render_password_picker_overlay(frame: &mut Frame, app: &mut App) {
         Some("Ctrl+D: global default"),
         items,
         &mut app.ui.password_picker_state,
-        16,
     );
 }
 
@@ -494,18 +471,6 @@ pub fn placeholder_text(field: FormField) -> String {
 #[cfg(test)]
 pub fn placeholder_text_pattern(field: FormField) -> String {
     placeholder_for(field, true)
-}
-
-/// Delegate to shared render_divider in mod.rs.
-fn render_divider(
-    frame: &mut Frame,
-    block_area: Rect,
-    y: u16,
-    label: &str,
-    label_style: Style,
-    border_style: Style,
-) {
-    super::render_divider(frame, block_area, y, label, label_style, border_style);
 }
 
 /// Render a single field's content (value or placeholder) and set cursor.
@@ -571,7 +536,7 @@ fn render_field_content(
                     Span::styled(display, theme::muted()),
                     Span::styled(source_suffix, theme::muted()),
                     Span::raw(" ".repeat(gap)),
-                    Span::styled("\u{25B8}", theme::muted()),
+                    Span::styled(design::PICKER_ARROW, theme::muted()),
                 ])
             } else {
                 Line::from(vec![
@@ -611,7 +576,7 @@ fn render_field_content(
         Line::from(vec![
             Span::styled(display, display_style),
             Span::raw(" ".repeat(gap)),
-            Span::styled("\u{25B8}", theme::muted()),
+            Span::styled(design::PICKER_ARROW, theme::muted()),
         ])
     } else if value.is_empty() {
         Line::from(Span::raw(""))
@@ -864,8 +829,8 @@ mod tests {
     #[test]
     fn render_proxyjump_picker_right_aligns_on_narrow_terminal() {
         // Terminal width equals the overlay minimum width clamp so the
-        // picker uses PICKER_MIN_WIDTH (50) exactly.
-        let backend = TestBackend::new(50, 20);
+        // picker uses PICKER_MIN_W (60) exactly.
+        let backend = TestBackend::new(60, 20);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = proxyjump_picker_fixture(
             concat!(

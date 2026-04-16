@@ -16,13 +16,13 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let filtered = palette.filtered_commands();
     let max_visible: u16 = 16;
     let list_height = (filtered.len() as u16).min(max_visible).max(1);
-    // border(2) + input(1) + separator(1) + list + spacer(1) + footer(1)
-    let total_height = 2 + 1 + 1 + list_height + 1 + 1;
+    // border(2) + input(1) + separator(1) + list. Footer below the block.
+    let total_height = 2 + 1 + 1 + list_height;
 
     // Dynamic width: max(48, 60% of terminal), capped at terminal - 4
     let dynamic_width = 48u16.max(frame.area().width * 60 / 100);
     let overlay_width = dynamic_width.min(frame.area().width.saturating_sub(4));
-    let height = total_height.min(frame.area().height.saturating_sub(2));
+    let height = total_height.min(frame.area().height.saturating_sub(3));
     let area = super::centered_rect_fixed(overlay_width, height, frame.area());
 
     frame.render_widget(Clear, area);
@@ -35,8 +35,6 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         Constraint::Length(1), // input line
         Constraint::Length(1), // separator
         Constraint::Min(1),    // command list
-        Constraint::Length(1), // spacer
-        Constraint::Length(1), // footer
     ])
     .split(inner);
 
@@ -65,11 +63,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Command list or empty state
     if filtered.is_empty() {
-        let msg = Paragraph::new(Line::from(Span::styled(
-            "  no matching commands",
-            theme::muted(),
-        )));
-        frame.render_widget(msg, rows[2]);
+        design::render_empty(frame, rows[2], "no matching commands");
     } else {
         let items: Vec<ListItem> = filtered
             .iter()
@@ -90,12 +84,13 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         frame.render_stateful_widget(list, rows[2], &mut list_state);
     }
 
-    // Footer
+    // Footer below the block
+    let footer_area = design::render_overlay_footer(frame, area);
     design::Footer::new()
         .action("Enter", " run ")
         .action("\u{2191}\u{2193}", " select ")
         .action("Esc", " close")
-        .render_with_status(frame, rows[4], app);
+        .render_with_status(frame, footer_area, app);
 }
 
 #[cfg(test)]

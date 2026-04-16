@@ -94,10 +94,10 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
                     None
                 };
                 if let Some(hint) = stale_hint {
-                    app.notify_error(format!("Stale host.{}", hint));
+                    app.notify_warning(crate::messages::stale_host(&hint));
                 }
                 if app.demo_mode {
-                    app.notify("Demo mode. Connection disabled.".to_string());
+                    app.notify(crate::messages::DEMO_CONNECTION_DISABLED);
                     return;
                 }
                 app.pending_connect = Some((alias, askpass));
@@ -139,10 +139,7 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
         KeyCode::Char('e') => {
             if let Some(pattern) = app.selected_pattern().cloned() {
                 if pattern.source_file.is_some() {
-                    app.notify_error(format!(
-                        "{} is in an included file. Edit it there.",
-                        pattern.pattern
-                    ));
+                    app.notify_error(crate::messages::included_file_edit(&pattern.pattern));
                     return;
                 }
                 app.form = HostForm::from_pattern_entry(&pattern);
@@ -158,10 +155,7 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
         KeyCode::Char('d') => {
             if let Some(pattern) = app.selected_pattern() {
                 if pattern.source_file.is_some() {
-                    app.notify_error(format!(
-                        "{} is in an included file. Delete it there.",
-                        pattern.pattern
-                    ));
+                    app.notify_error(crate::messages::included_file_delete(&pattern.pattern));
                     return;
                 }
                 let alias = pattern.pattern.clone();
@@ -170,7 +164,7 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
                 if let Some(ref source) = host.source_file {
                     let alias = host.alias.clone();
                     let path = source.display();
-                    app.notify_error(format!("{} lives in {}. Edit it there.", alias, path));
+                    app.notify_warning(crate::messages::included_host_lives_in(&alias, &path));
                     return;
                 }
                 let stale_hint = if host.stale.is_some() {
@@ -180,7 +174,7 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
                 };
                 let alias = host.alias.clone();
                 if let Some(hint) = stale_hint {
-                    app.notify_error(format!("Stale host.{}", hint));
+                    app.notify_warning(crate::messages::stale_host(&hint));
                 }
                 app.screen = Screen::ConfirmDelete { alias };
             }
@@ -195,7 +189,7 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
                 let alias = host.alias.clone();
                 match clipboard::copy_to_clipboard(&cmd) {
                     Ok(()) => {
-                        app.notify(format!("Copied SSH command for {}.", alias));
+                        app.notify(crate::messages::copied_ssh_command(&alias));
                     }
                     Err(e) => {
                         app.notify_error(e);
@@ -214,7 +208,7 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
                 {
                     match clipboard::copy_to_clipboard(&block) {
                         Ok(()) => {
-                            app.notify(format!("Copied config block for {}.", alias));
+                            app.notify(crate::messages::copied_config_block(&alias));
                         }
                         Err(e) => {
                             app.notify_error(e);
@@ -266,14 +260,14 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
                             .status
                             .insert(alias.clone(), crate::app::PingStatus::Checking);
                     }
-                    app.notify_info("Pinging all the things...");
+                    app.notify_info(crate::messages::PINGING_ALL);
                     crate::ping::ping_all(&hosts_to_ping, events_tx.clone(), app.ping.generation);
                 }
             }
         }
         KeyCode::Char('!') => {
             if app.ping.status.is_empty() {
-                app.notify_error("Ping first (p/P), then filter with !.");
+                app.notify_warning(crate::messages::PING_FIRST);
             } else {
                 app.ping.filter_down_only = !app.ping.filter_down_only;
                 if app.ping.filter_down_only {
@@ -283,11 +277,7 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
                     }
                     app.apply_filter();
                     let count = app.search.filtered_indices.len();
-                    app.notify(format!(
-                        "Showing {} unreachable host{}.",
-                        count,
-                        if count == 1 { "" } else { "s" }
-                    ));
+                    app.notify(crate::messages::showing_unreachable(count));
                 } else {
                     // If search was only active for down-only, clear it
                     if app.search.query.as_ref().is_some_and(|q| q.is_empty()) {
@@ -315,7 +305,7 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
             // scope changes.
             if !app.multi_select.is_empty() {
                 if !app.open_bulk_tag_editor() {
-                    app.notify_error("No hosts to tag.");
+                    app.notify_warning(crate::messages::NO_HOSTS_TO_TAG);
                 }
                 return;
             }
@@ -326,10 +316,7 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
                 if let Some(ref source) = host.source_file {
                     let alias = host.alias.clone();
                     let path = source.display();
-                    app.notify_error(format!(
-                        "{} is included from {}. Tag it there.",
-                        alias, path
-                    ));
+                    app.notify_error(crate::messages::included_host_tag_there(&alias, &path));
                     return;
                 }
                 let current_tags = host.tags.join(", ");
@@ -341,13 +328,12 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
             app.sort_mode = app.sort_mode.next();
             app.apply_sort();
             if let Err(e) = preferences::save_sort_mode(app.sort_mode) {
-                app.notify_error(format!(
-                    "Sorted by {}. (save failed: {})",
+                app.notify_error(crate::messages::sorted_by_save_failed(
                     app.sort_mode.label(),
-                    e
+                    &e,
                 ));
             } else {
-                app.notify(format!("Sorted by {}.", app.sort_mode.label()));
+                app.notify(crate::messages::sorted_by(app.sort_mode.label()));
             }
         }
         KeyCode::Char('g') => {
@@ -358,13 +344,12 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
                     app.group_filter = None;
                     app.apply_sort();
                     if let Err(e) = preferences::save_group_by(&app.group_by) {
-                        app.notify_error(format!(
-                            "Grouped by {}. (save failed: {})",
-                            app.group_by.label(),
-                            e
+                        app.notify_error(crate::messages::grouped_by_save_failed(
+                            &app.group_by.label(),
+                            &e,
                         ));
                     } else {
-                        app.notify(format!("Grouped by {}.", app.group_by.label()));
+                        app.notify(crate::messages::grouped_by(&app.group_by.label()));
                     }
                 }
                 GroupBy::Provider => {
@@ -386,9 +371,9 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
                         app.group_filter = None;
                         app.apply_sort();
                         if let Err(e) = preferences::save_group_by(&app.group_by) {
-                            app.notify_error(format!("Ungrouped. (save failed: {})", e));
+                            app.notify_error(crate::messages::ungrouped_save_failed(&e));
                         } else {
-                            app.notify("Ungrouped.");
+                            app.notify(crate::messages::UNGROUPED);
                         }
                     } else {
                         // Switch to tag mode directly. The nav bar shows all
@@ -397,9 +382,9 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
                         app.group_filter = None;
                         app.apply_sort();
                         if let Err(e) = preferences::save_group_by(&app.group_by) {
-                            app.notify_error(format!("Grouped by tag. (save failed: {})", e));
+                            app.notify_error(crate::messages::grouped_by_tag_save_failed(&e));
                         } else {
-                            app.notify("Grouped by tag.");
+                            app.notify(crate::messages::GROUPED_BY_TAG);
                         }
                     }
                 }
@@ -408,9 +393,9 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
                     app.group_filter = None;
                     app.apply_sort();
                     if let Err(e) = preferences::save_group_by(&app.group_by) {
-                        app.notify_error(format!("Ungrouped. (save failed: {})", e));
+                        app.notify_error(crate::messages::ungrouped_save_failed(&e));
                     } else {
-                        app.notify("Ungrouped.");
+                        app.notify(crate::messages::UNGROUPED);
                     }
                 }
             }
@@ -453,16 +438,12 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
                 if let Err(e) = app.config.write() {
                     app.config = config_backup;
                     app.bulk_tag_undo = Some(snapshot);
-                    app.notify_error(format!("Failed to save: {}", e));
+                    app.notify_error(crate::messages::failed_to_save(&e));
                 } else {
                     let count = snapshot.len();
                     app.update_last_modified();
                     app.reload_hosts();
-                    app.notify(format!(
-                        "Restored tags on {} host{}.",
-                        count,
-                        if count == 1 { "" } else { "s" }
-                    ));
+                    app.notify(crate::messages::restored_tags(count));
                 }
             } else if let Some(deleted) = app.undo_stack.pop() {
                 let alias = match &deleted.element {
@@ -476,14 +457,14 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
                         app.undo_stack
                             .push(crate::app::DeletedHost { element, position });
                     }
-                    app.notify_error(format!("Failed to save: {}", e));
+                    app.notify_error(crate::messages::failed_to_save(&e));
                 } else {
                     app.update_last_modified();
                     app.reload_hosts();
-                    app.notify(format!("{} is back from the dead.", alias));
+                    app.notify(crate::messages::host_restored(&alias));
                 }
             } else {
-                app.notify_error("Nothing to undo.");
+                app.notify_warning(crate::messages::NOTHING_TO_UNDO);
             }
         }
         KeyCode::Char('#') => {
@@ -527,7 +508,7 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
                 };
                 let alias = host.alias.clone();
                 if let Some(hint) = stale_hint {
-                    app.notify_error(format!("Stale host.{}", hint));
+                    app.notify_warning(crate::messages::stale_host(&hint));
                 }
                 app.refresh_tunnel_list(&alias);
                 app.ui.tunnel_list_state = ratatui::widgets::ListState::default();
@@ -550,13 +531,13 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
             if count > 0 {
                 app.screen = Screen::ConfirmImport { count };
             } else {
-                app.notify_error("No importable hosts in known_hosts.");
+                app.notify_warning(crate::messages::NO_IMPORTABLE_HOSTS);
             }
         }
         KeyCode::Char('X') => {
             let stale = app.config.stale_hosts();
             if stale.is_empty() {
-                app.notify_error("No stale hosts.");
+                app.notify_warning(crate::messages::NO_STALE_HOSTS);
             } else {
                 let aliases: Vec<String> = stale.into_iter().map(|(a, _)| a).collect();
                 app.screen = Screen::ConfirmPurgeStale {
@@ -627,10 +608,10 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
                     )
                 };
             if let Some(hint) = stale_hint {
-                app.notify_error(format!("Stale host.{}", hint));
+                app.notify_warning(crate::messages::stale_host(&hint));
             }
             if aliases.is_empty() {
-                app.notify_error("No host selected.");
+                app.notify_warning(crate::messages::NO_HOST_SELECTED);
             } else {
                 super::snippet::open_snippet_picker(app, aliases);
             }
@@ -650,7 +631,7 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
                 })
                 .collect();
             if aliases.is_empty() {
-                app.notify_error("No hosts to run on.");
+                app.notify_warning(crate::messages::NO_HOSTS_TO_RUN);
             } else {
                 super::snippet::open_snippet_picker(app, aliases);
             }
@@ -691,10 +672,10 @@ pub(super) fn handle_host_list_search(
                 };
                 app.cancel_search();
                 if let Some(hint) = stale_hint {
-                    app.notify_error(format!("Stale host.{}", hint));
+                    app.notify_warning(crate::messages::stale_host(&hint));
                 }
                 if app.demo_mode {
-                    app.notify("Demo mode. Connection disabled.".to_string());
+                    app.notify(crate::messages::DEMO_CONNECTION_DISABLED);
                     return;
                 }
                 app.pending_connect = Some((alias, askpass));

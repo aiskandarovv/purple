@@ -45,7 +45,7 @@ pub(crate) fn handle_tick(
             if app.ping.filter_down_only {
                 app.cancel_search();
             }
-            app.notify_background("Ping expired. Press P to refresh.");
+            app.notify_background(crate::messages::PING_EXPIRED);
         }
     }
     // Throttle config file stat() to every 4 seconds
@@ -102,7 +102,7 @@ pub(crate) fn handle_sync_progress(app: &mut App, provider: String, message: Str
     // Late progress events (arriving after SyncComplete) are discarded.
     if app.syncing_providers.contains_key(&provider) && app.sync_done.is_empty() {
         let name = providers::provider_display_name(&provider);
-        app.notify_background(format!("{}: {}", name, message));
+        app.notify_background(crate::messages::provider_event(name, &message));
     }
 }
 
@@ -342,7 +342,7 @@ pub(crate) fn handle_scp_complete(
         false
     };
     if matched && success {
-        app.notify_background("Transfer complete.");
+        app.notify_background(crate::messages::TRANSFER_COMPLETE);
         // Rebuild display list so frecency sort and LAST column reflect the transfer
         app.apply_sort();
     }
@@ -507,7 +507,7 @@ pub(crate) fn handle_container_action_complete(
         None
     };
     if let Some((refresh_alias, askpass, cached_runtime)) = should_refresh {
-        app.notify_background(format!("Container {} complete.", action.as_str()));
+        app.notify_background(crate::messages::container_action_complete(action.as_str()));
         let has_tunnel = app.active_tunnels.contains_key(&refresh_alias);
         let ctx = crate::ssh_context::OwnedSshContext {
             alias: refresh_alias,
@@ -552,16 +552,12 @@ pub(crate) fn handle_vault_sign_result(
         }
         app.refresh_cert_cache(&alias);
         if host_missing {
-            app.notify_error(
-                format!(
-                    "Vault SSH cert saved for {} but host no longer in config (renamed or deleted). CertificateFile NOT written.",
-                    alias
-                ));
+            app.notify_error(crate::messages::vault_cert_saved_host_gone(&alias));
         } else {
-            app.notify(format!("Signed Vault SSH cert for {}", alias));
+            app.notify(crate::messages::vault_signed(&alias));
         }
     } else {
-        app.notify_error(format!("Vault SSH: failed to sign {}: {}", alias, message));
+        app.notify_error(crate::messages::vault_sign_failed(&alias, &message));
     }
 }
 
@@ -585,9 +581,11 @@ pub(crate) fn handle_vault_sign_progress(
     };
     let spinner = crate::animation::SPINNER_FRAMES
         [spinner_tick as usize % crate::animation::SPINNER_FRAMES.len()];
-    app.notify_progress(format!(
-        "{} Signing {}/{}: {} (V to cancel)",
-        spinner, done, total, display_alias
+    app.notify_progress(crate::messages::vault_signing_progress(
+        spinner,
+        done,
+        total,
+        &display_alias,
     ));
 }
 
@@ -613,14 +611,11 @@ pub(crate) fn handle_vault_sign_all_done(
         return std::ops::ControlFlow::Break(()); // caller should `continue`
     }
     if cancelled {
-        let mut msg = format!(
-            "Vault SSH signing cancelled ({} signed, {} failed)",
-            signed, failed
+        let msg = crate::messages::vault_signing_cancelled_summary(
+            signed,
+            failed,
+            first_error.as_deref(),
         );
-        if let Some(err) = first_error.as_ref() {
-            msg.push_str(": ");
-            msg.push_str(err);
-        }
         if failed > 0 {
             app.notify_sticky_error(msg);
         } else {
@@ -679,48 +674,45 @@ pub(crate) fn handle_vault_sign_all_done(
                     }
                     if reapplied > 0 {
                         if let Err(e) = app.config.write() {
-                            app.notify_sticky_error(
-                                format!(
-                                    "External edits detected; signed {} certs but failed to re-apply CertificateFile: {}",
-                                    signed, e
-                                ));
+                            app.notify_sticky_error(crate::messages::vault_config_reapply_failed(
+                                signed as usize,
+                                &e,
+                            ));
                         } else {
                             app.update_last_modified();
                             app.reload_hosts();
                             if failed > 0 {
                                 app.notify_sticky_error(
-                                    format!(
-                                        "{} External ssh config edits detected, merged {} CertificateFile directives.",
-                                        summary_msg, reapplied
-                                    ));
+                                    crate::messages::vault_external_edits_merged(
+                                        &summary_msg,
+                                        reapplied,
+                                    ),
+                                );
                             } else {
-                                app.notify_info(format!(
-                                    "{} External ssh config edits detected, merged {} CertificateFile directives.",
-                                    summary_msg, reapplied
+                                app.notify_info(crate::messages::vault_external_edits_merged(
+                                    &summary_msg,
+                                    reapplied,
                                 ));
                             }
                         }
                     } else {
                         app.reload_hosts();
-                        app.notify_sticky_error(
-                            format!(
-                                "{} External ssh config edits detected; certs on disk, no CertificateFile written.",
-                                summary_msg
-                            ));
+                        app.notify_sticky_error(crate::messages::vault_external_edits_no_write(
+                            &summary_msg,
+                        ));
                     }
                 }
                 Err(e) => {
-                    app.notify_sticky_error(
-                        format!(
-                            "Signed {} certs but cannot re-parse ssh config after external edit: {}. Certs are on disk under ~/.purple/certs/.",
-                            signed, e
-                        ));
+                    app.notify_sticky_error(crate::messages::vault_reparse_failed(
+                        signed as usize,
+                        &e,
+                    ));
                 }
             }
         } else if let Err(e) = app.config.write() {
-            app.notify_sticky_error(format!(
-                "Signed {} certs but failed to update SSH config: {}",
-                signed, e
+            app.notify_sticky_error(crate::messages::vault_config_update_failed(
+                signed as usize,
+                &e,
             ));
         } else {
             app.update_last_modified();
@@ -765,5 +757,5 @@ pub(crate) fn handle_cert_check_error(app: &mut App, alias: String, message: Str
             None,
         ),
     );
-    app.notify_background_error(format!("Cert check failed for {}: {}", alias, message));
+    app.notify_background_error(crate::messages::vault_cert_check_failed(&alias, &message));
 }

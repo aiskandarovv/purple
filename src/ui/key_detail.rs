@@ -20,8 +20,9 @@ pub fn render(frame: &mut Frame, app: &App, index: usize) {
     } else {
         0
     };
-    // 2 (border) + 1 (blank) + 4 (metadata) + 1 (blank) + 2 (header+sep) + hosts + overflow + 1 (blank) + 1 (spacer) + 1 (footer)
-    let height = (13 + visible_hosts.max(1) + overflow_line) as u16;
+    // 2 (border) + 1 (blank) + 4 (metadata) + 1 (blank) + 2 (header+sep) + hosts + overflow + 1 (blank).
+    // Footer renders below the block via `design::form_footer`, so no row reserved here.
+    let height = (11 + visible_hosts.max(1) + overflow_line) as u16;
     let width = frame.area().width.clamp(58, 80);
     let area = super::centered_rect_fixed(width, height, frame.area());
 
@@ -32,24 +33,24 @@ pub fn render(frame: &mut Frame, app: &App, index: usize) {
     let type_display = key.type_display();
     let mut lines = vec![
         Line::from(""),
-        detail_line("  Type                  ", &type_display),
-        detail_line("  Fingerprint           ", &key.fingerprint),
-        detail_line(
-            "  Comment               ",
+        design::kv_line("Type", &type_display, design::KV_LABEL_WIDE),
+        design::kv_line("Fingerprint", &key.fingerprint, design::KV_LABEL_WIDE),
+        design::kv_line(
+            "Comment",
             if key.comment.is_empty() {
                 "(none)"
             } else {
                 &key.comment
             },
+            design::KV_LABEL_WIDE,
         ),
-        detail_line("  Path                  ", &key.display_path),
+        design::kv_line("Path", &key.display_path, design::KV_LABEL_WIDE),
         Line::from(""),
-        Line::from(Span::styled("  Linked Hosts", theme::section_header())),
-        design::section_divider(),
     ];
+    lines.extend(design::content_section("Linked Hosts"));
 
     if key.linked_hosts.is_empty() {
-        lines.push(Line::from(Span::styled("  (none)", theme::muted())));
+        lines.push(design::empty_line("(none)"));
     } else {
         for alias in key.linked_hosts.iter().take(max_visible_hosts) {
             let hostname = app
@@ -74,21 +75,12 @@ pub fn render(frame: &mut Frame, app: &App, index: usize) {
 
     lines.push(Line::from(""));
 
-    let inner = block.inner(area);
     let paragraph = Paragraph::new(lines).block(block);
     frame.render_widget(paragraph, area);
 
-    // Footer with Esc close
-    let (_content, footer) = design::content_and_footer(inner);
-
+    // Footer below the block
+    let footer_area = design::render_overlay_footer(frame, area);
     design::Footer::new()
         .action("Esc", " close")
-        .render_with_status(frame, footer, app);
-}
-
-fn detail_line<'a>(label: &'a str, value: &'a str) -> Line<'a> {
-    Line::from(vec![
-        Span::styled(label, theme::muted()),
-        Span::styled(value, theme::bold()),
-    ])
+        .render_with_status(frame, footer_area, app);
 }

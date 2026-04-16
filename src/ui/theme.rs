@@ -1353,7 +1353,7 @@ pub fn init() {
 }
 
 #[cfg(test)]
-fn init_with_mode(m: u8) {
+pub(crate) fn init_with_mode(m: u8) {
     COLOR_MODE.store(m, Ordering::Release);
     let _ = THEME.get_or_init(|| RwLock::new(ThemeDef::purple()));
 }
@@ -1497,11 +1497,24 @@ pub fn toast_border_success() -> Style {
     style
 }
 
-/// Toast border for error/alert messages.
+/// Toast border for error messages (red, bold-on-NO_COLOR).
 pub fn toast_border_error() -> Style {
     let m = mode();
     let t = active_theme();
     let mut style = t.error.to_style(m);
+    if m == 0 {
+        style = Style::default().add_modifier(Modifier::BOLD);
+    }
+    style
+}
+
+/// Toast border for warning messages (yellow, bold-on-NO_COLOR).
+/// Visually distinct from `toast_border_error` so warnings (recoverable)
+/// and errors (require acknowledgement) can be told apart at a glance.
+pub fn toast_border_warning() -> Style {
+    let m = mode();
+    let t = active_theme();
+    let mut style = t.warning.to_style(m);
     if m == 0 {
         style = Style::default().add_modifier(Modifier::BOLD);
     }

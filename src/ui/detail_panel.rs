@@ -238,8 +238,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect, spinner_tick: u64) {
     let host = match app.selected_host() {
         Some(h) => h,
         None => {
-            let empty = Paragraph::new(" Select a host to see details.").style(theme::muted());
-            frame.render_widget(empty, area);
+            design::render_empty(frame, area, "Select a host to see details.");
             return;
         }
     };
@@ -399,7 +398,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect, spinner_tick: u64) {
                     format!("{:<width$}", "Stale", width = LABEL_WIDTH),
                     theme::muted(),
                 ),
-                Span::styled(display, theme::error()),
+                Span::styled(display, theme::warning()),
             ],
             box_width,
         );
@@ -547,7 +546,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect, spinner_tick: u64) {
                     section_line(
                         &mut lines,
                         vec![
-                            Span::styled("  \u{25CF} ", theme::muted()),
+                            Span::styled(format!("  {} ", design::ICON_ONLINE), theme::muted()),
                             Span::styled(name_trunc, name_style),
                             Span::styled(ip, theme::muted()),
                         ],
@@ -572,7 +571,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect, spinner_tick: u64) {
                 section_line(
                     &mut lines,
                     vec![
-                        Span::styled("  \u{25CF} ", theme::accent()),
+                        Span::styled(format!("  {} ", design::ICON_ONLINE), theme::accent()),
                         Span::styled(alias_trunc, theme::bold()),
                         Span::styled(target_ip, theme::muted()),
                     ],
@@ -807,9 +806,10 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect, spinner_tick: u64) {
         );
         for container in &cache_entry.containers {
             let (icon, icon_style) = match container.state.as_str() {
-                "running" => ("\u{2713}", theme::success()),
-                "exited" | "dead" => ("\u{2717}", theme::error()),
-                _ => ("\u{25cf}", theme::bold()),
+                "running" => (design::ICON_SUCCESS, theme::success()),
+                "dead" => ("\u{2717}", theme::error()),
+                "exited" => ("\u{2717}", theme::warning()),
+                _ => (design::ICON_ONLINE, theme::bold()),
             };
             let name = crate::containers::truncate_str(
                 &container.names,

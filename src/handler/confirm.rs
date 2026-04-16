@@ -16,7 +16,7 @@ pub(super) fn handle_confirm_delete(app: &mut App, key: KeyEvent) {
                     if let Err(e) = app.config.write() {
                         // Restore the element on write failure
                         app.config.insert_host_at(element, position);
-                        app.notify_error(format!("Failed to save: {}", e));
+                        app.notify_error(crate::messages::failed_to_save(&e));
                     } else {
                         // Stop active tunnel for the deleted host
                         if let Some(mut tunnel) = app.active_tunnels.remove(&alias) {
@@ -34,11 +34,11 @@ pub(super) fn handle_confirm_delete(app: &mut App, key: KeyEvent) {
                                     Ok(()) => {}
                                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                                     Err(e) => {
-                                        cert_cleanup_warning = Some(format!(
-                                            "Warning: failed to clean up Vault SSH cert {}: {}",
-                                            cert_path.display(),
-                                            e
-                                        ));
+                                        cert_cleanup_warning =
+                                            Some(crate::messages::cert_cleanup_warning(
+                                                &cert_path.display(),
+                                                &e,
+                                            ));
                                     }
                                 }
                             }
@@ -53,14 +53,11 @@ pub(super) fn handle_confirm_delete(app: &mut App, key: KeyEvent) {
                         if let Some(warning) = cert_cleanup_warning {
                             app.notify_error(warning);
                         } else {
-                            app.notify(format!(
-                                "Goodbye, {}. We barely knew ye. (u to undo)",
-                                alias
-                            ));
+                            app.notify(crate::messages::goodbye_host(&alias));
                         }
                     }
                 } else {
-                    app.notify_error(format!("Host '{}' not found.", alias));
+                    app.notify_warning(crate::messages::host_not_found(&alias));
                 }
             }
             app.screen = Screen::HostList;
@@ -109,10 +106,11 @@ fn start_vault_bulk_sign(
     if total == 0 {
         return;
     }
-    app.notify_progress(format!(
-        "{} Signing 0/{} (V to cancel)",
+    app.notify_progress(crate::messages::vault_signing_progress(
         crate::animation::SPINNER_FRAMES[0],
-        total
+        0,
+        total,
+        "",
     ));
 
     let cancel = Arc::new(AtomicBool::new(false));
@@ -257,7 +255,7 @@ fn start_vault_bulk_sign(
             // "Signing 0/N" with no way for the user to recover.
             app.vault.signing_cancel = None;
             app.vault.sign_thread = None;
-            app.notify_error(format!("Vault SSH: failed to spawn signing thread: {}", e));
+            app.notify_error(crate::messages::vault_spawn_failed(&e));
         }
     }
 }
@@ -300,22 +298,19 @@ pub(super) fn handle_confirm_host_key_reset(app: &mut App, key: KeyEvent) {
 
                 match output {
                     Ok(result) if result.status.success() => {
-                        app.notify(format!(
-                            "Removed host key for {}. Reconnecting...",
-                            hostname
-                        ));
+                        app.notify(crate::messages::removed_host_key(&hostname));
                         if app.demo_mode {
-                            app.notify("Demo mode. Connection disabled.".to_string());
+                            app.notify(crate::messages::DEMO_CONNECTION_DISABLED);
                         } else {
                             app.pending_connect = Some((alias, askpass));
                         }
                     }
                     Ok(result) => {
                         let stderr = String::from_utf8_lossy(&result.stderr);
-                        app.notify_error(format!("Failed to remove host key: {}", stderr.trim()));
+                        app.notify_error(crate::messages::host_key_remove_failed(stderr.trim()));
                     }
                     Err(e) => {
-                        app.notify_error(format!("Failed to run ssh-keygen: {}", e));
+                        app.notify_error(crate::messages::ssh_keygen_failed(&e));
                     }
                 }
             }

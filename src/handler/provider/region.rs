@@ -97,12 +97,7 @@ pub(crate) fn handle_region_picker(app: &mut App, key: KeyEvent) {
             app.ui.show_region_picker = false;
             let count = selected.len();
             if count > 0 {
-                app.notify(format!(
-                    "{} {}{} selected.",
-                    count,
-                    zone_label,
-                    if count == 1 { "" } else { "s" }
-                ));
+                app.notify(crate::messages::regions_selected_count(count, zone_label));
             }
         }
         KeyCode::Enter => {
@@ -121,12 +116,7 @@ pub(crate) fn handle_region_picker(app: &mut App, key: KeyEvent) {
             app.ui.show_region_picker = false;
             let count = selected.len();
             if count > 0 {
-                app.notify(format!(
-                    "{} {}{} selected.",
-                    count,
-                    zone_label,
-                    if count == 1 { "" } else { "s" }
-                ));
+                app.notify(crate::messages::regions_selected_count(count, zone_label));
             }
         }
         KeyCode::Down | KeyCode::Char('j') => {

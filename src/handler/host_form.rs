@@ -193,7 +193,7 @@ fn maybe_smart_paste(app: &mut App) {
                 .unwrap_or(&parsed.hostname)
                 .to_string();
             app.form.alias = clean_alias;
-            app.notify("Smart-parsed that for you. Check the fields.");
+            app.notify(crate::messages::SMART_PARSED);
             log::debug!(
                 "host_form: smart-paste parsed alias={} host={} user={} port={}",
                 app.form.alias,
@@ -223,7 +223,7 @@ fn maybe_smart_paste(app: &mut App) {
         // Copy the value to the Host field as a suggestion. The Name field
         // stays unchanged so the user keeps full control over the alias.
         app.form.hostname = trimmed.to_string();
-        app.notify("Looks like an address. Suggested as Host.");
+        app.notify(crate::messages::LOOKS_LIKE_ADDRESS);
         log::debug!("host_form: auto-suggest hostname={trimmed}");
     }
 }
@@ -231,7 +231,7 @@ fn maybe_smart_paste(app: &mut App) {
 pub(super) fn submit_form(app: &mut App) {
     // Check for external config changes since form was opened
     if app.config_changed_since_form_open() {
-        app.notify_error("Config changed externally. Press Esc and re-open to pick up changes.");
+        app.notify_warning(crate::messages::CONFIG_CHANGED_EXTERNALLY);
         return;
     }
 

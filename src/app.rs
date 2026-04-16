@@ -372,10 +372,7 @@ impl App {
         // call flush_pending_vault_write() itself to avoid recursion.
         if self.pending_vault_config_write && !self.is_form_open() {
             if let Err(e) = self.config.write() {
-                self.notify_error(format!(
-                    "Failed to update config after vault signing: {}",
-                    e
-                ));
+                self.notify_error(crate::messages::vault_config_write_after_sign(&e));
             }
         }
         // Always clear the flag: either we flushed, or the form-submit path
@@ -554,15 +551,18 @@ impl App {
     #[deprecated(note = "use notify() / notify_error() instead")]
     pub fn set_status(&mut self, text: impl Into<String>, is_error: bool) {
         let class = if is_error {
-            MessageClass::Alert
+            MessageClass::Error
         } else {
-            MessageClass::Confirmation
+            MessageClass::Success
         };
+        // Errors are sticky by default so the user cannot miss them.
+        let sticky = matches!(class, MessageClass::Error);
         let msg = StatusMessage {
             text: text.into(),
             class,
             tick_count: 0,
-            sticky: false,
+            sticky,
+            created_at: std::time::Instant::now(),
         };
         if msg.is_toast() {
             self.push_toast(msg);
@@ -572,13 +572,13 @@ impl App {
         }
     }
 
-    /// Push a toast message. Confirmation toasts replace the current toast
-    /// immediately (last-write-wins). Alert toasts are queued (max 5) so
-    /// errors are never lost.
+    /// Push a toast message. Success toasts replace the current toast
+    /// immediately (last-write-wins). Warning and Error toasts are queued
+    /// (max `TOAST_QUEUE_MAX`) so they are never lost.
     fn push_toast(&mut self, msg: StatusMessage) {
         log::debug!("toast <- {:?}: {}", msg.class, msg.text);
-        if msg.class == MessageClass::Confirmation {
-            // Confirmation replaces any active toast and clears the queue.
+        if msg.class == MessageClass::Success {
+            // Success replaces any active toast and clears the queue.
             self.toast = Some(msg);
             self.toast_queue.clear();
         } else if self.toast.is_some() {
@@ -604,21 +604,23 @@ impl App {
             class: MessageClass::Info,
             tick_count: 0,
             sticky: false,
+            created_at: std::time::Instant::now(),
         });
     }
 
     /// Like `notify` but skips the write when a sticky message is active.
     /// Use for background/timer events (ping expiry, sync ticks) that must
     /// not clobber an in-progress or critical sticky message.
-    /// Routes to Info (footer) by default, Alert to toast if is_error.
+    /// Routes to Info (footer) by default, Error toast if is_error.
     #[deprecated(note = "use notify_background() / notify_background_error() instead")]
     pub fn set_background_status(&mut self, text: impl Into<String>, is_error: bool) {
         if is_error {
             let msg = StatusMessage {
                 text: text.into(),
-                class: MessageClass::Alert,
+                class: MessageClass::Error,
                 tick_count: 0,
-                sticky: false,
+                sticky: true,
+                created_at: std::time::Instant::now(),
             };
             self.push_toast(msg);
             return;
@@ -631,14 +633,14 @@ impl App {
     }
 
     /// Sticky messages always go to the footer (`self.status`), even when the
-    /// class is Alert. The `sticky` flag overrides the normal toast routing
+    /// class is Error. The `sticky` flag overrides the normal toast routing
     /// because sticky messages (Vault SSH signing summaries, progress spinners)
     /// must remain visible in the footer until explicitly replaced.
     #[deprecated(note = "use notify_progress() / notify_sticky_error() instead")]
     pub fn set_sticky_status(&mut self, text: impl Into<String>, is_error: bool) {
         let text = text.into();
         let class = if is_error {
-            MessageClass::Alert
+            MessageClass::Error
         } else {
             MessageClass::Progress
         };
@@ -648,33 +650,61 @@ impl App {
             class,
             tick_count: 0,
             sticky: true,
+            created_at: std::time::Instant::now(),
         });
     }
 
-    /// User action feedback → toast (4s, last-write-wins).
-    /// For: copy, sort, delete, save, demo mode messages.
+    /// User action feedback → Success toast (length-proportional timeout,
+    /// last-write-wins). For: copy, sort, delete, save, demo mode messages.
     #[allow(deprecated)]
     pub fn notify(&mut self, text: impl Into<String>) {
         self.set_status(text, false);
     }
 
-    /// User action error → toast queue (5s, max 5).
+    /// User action error → Error toast (sticky by default, queued).
+    /// Errors require user acknowledgement; they do not auto-expire.
     #[allow(deprecated)]
     pub fn notify_error(&mut self, text: impl Into<String>) {
         self.set_status(text, true);
     }
 
-    /// Background event → footer (4s, suppressed if sticky active).
-    /// For: ping expiry, sync progress, tunnel exit.
+    /// Background event → Info footer (length-proportional timeout,
+    /// suppressed if sticky active). For: ping expiry, sync progress,
+    /// tunnel exit.
     #[allow(deprecated)]
     pub fn notify_background(&mut self, text: impl Into<String>) {
         self.set_background_status(text, false);
     }
 
-    /// Background error → toast queue (bypasses sticky suppression).
+    /// Background error → Error toast (sticky, queued, bypasses sticky
+    /// suppression). Same semantics as `notify_error` but for events that
+    /// arise from background workers rather than direct user actions.
     #[allow(deprecated)]
     pub fn notify_background_error(&mut self, text: impl Into<String>) {
         self.set_background_status(text, true);
+    }
+
+    /// Caution / degraded state → Warning toast (length-proportional
+    /// timeout, queued). For: precondition violations ("Nothing to undo."),
+    /// validation hints ("Project ID can't be empty."), empty-state
+    /// notices ("No stale hosts."), stale-host warnings, deprecated
+    /// config detected, partial sync results. Warnings are NOT sticky;
+    /// the user acknowledges them by continuing to interact.
+    ///
+    /// Use `notify_error` only for system-level failures (I/O, network,
+    /// subprocess) that require explicit acknowledgement. Use
+    /// `notify_warning` for everything that is "this can't happen given
+    /// current state" or "you forgot something".
+    pub fn notify_warning(&mut self, text: impl Into<String>) {
+        let msg = StatusMessage {
+            text: text.into(),
+            class: MessageClass::Warning,
+            tick_count: 0,
+            sticky: false,
+            created_at: std::time::Instant::now(),
+        };
+        log::debug!("toast <- Warning: {}", msg.text);
+        self.push_toast(msg);
     }
 
     /// Long-running progress → footer sticky (never expires).
@@ -697,33 +727,37 @@ impl App {
         self.set_info_status(text);
     }
 
-    /// Tick the footer status message timer. Info shows for 4s.
+    /// Tick the footer status message timer. Uses wall-clock time.
     /// Sticky/Progress messages never expire automatically.
     pub fn tick_status(&mut self) {
         // Don't expire status while providers are still syncing
         if !self.syncing_providers.is_empty() {
             return;
         }
-        if let Some(ref mut status) = self.status {
+        if let Some(ref status) = self.status {
             if status.sticky {
                 return;
             }
-            status.tick_count += 1;
-            if status.tick_count > status.timeout() {
+            let timeout_ms = status.timeout_ms();
+            if timeout_ms != u64::MAX && status.created_at.elapsed().as_millis() as u64 > timeout_ms
+            {
                 log::debug!("footer status expired: {}", status.text);
                 self.status = None;
             }
         }
     }
 
-    /// Tick the toast message timer. Expires current toast and pops queue.
+    /// Tick the toast message timer. Uses wall-clock time via `created_at`
+    /// so expiry is independent of the tick rate. Called every tick; the
+    /// actual check is `created_at.elapsed() > timeout_ms()`.
     pub fn tick_toast(&mut self) {
-        if let Some(ref mut toast) = self.toast {
+        if let Some(ref toast) = self.toast {
             if toast.sticky {
                 return;
             }
-            toast.tick_count += 1;
-            if toast.tick_count > toast.timeout() {
+            let timeout_ms = toast.timeout_ms();
+            if timeout_ms != u64::MAX && toast.created_at.elapsed().as_millis() as u64 > timeout_ms
+            {
                 log::debug!("toast expired: {}", toast.text);
                 self.toast = self.toast_queue.pop_front();
             }
@@ -791,7 +825,7 @@ impl App {
                 self.reload.include_mtimes = Self::snapshot_include_mtimes(&self.config);
                 self.reload.include_dir_mtimes = Self::snapshot_include_dir_mtimes(&self.config);
                 let count = self.hosts.len();
-                self.notify_background(format!("Config reloaded. {} hosts.", count));
+                self.notify_background(crate::messages::config_reloaded(count));
             }
         }
     }

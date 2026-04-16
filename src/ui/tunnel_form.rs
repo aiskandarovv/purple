@@ -1,6 +1,5 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
@@ -38,7 +37,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let block_height = 2 + fields.len() as u16 * 2;
     let total_height = block_height + 1; // + footer
 
-    let form_area = design::overlay_area(frame, 70, 80, total_height);
+    let form_area = design::overlay_area(frame, design::OVERLAY_W, design::OVERLAY_H, total_height);
     frame.render_widget(Clear, form_area);
 
     let block_area = Rect::new(form_area.x, form_area.y, form_area.width, block_height);
@@ -58,7 +57,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             theme::muted()
         };
         let label = format!(" {}* ", field.label());
-        render_divider(
+        super::render_divider(
             frame,
             block_area,
             divider_y,
@@ -72,7 +71,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 
     // Footer below the block
-    let footer_area = design::form_footer(form_area, block_height);
+    let footer_area = design::render_overlay_footer(frame, block_area);
     if app.pending_discard_confirm {
         let footer = design::Footer::new()
             .action("y", " yes ")
@@ -104,17 +103,6 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 }
 
-fn render_divider(
-    frame: &mut Frame,
-    block_area: Rect,
-    y: u16,
-    label: &str,
-    label_style: Style,
-    border_style: Style,
-) {
-    super::render_divider(frame, block_area, y, label, label_style, border_style);
-}
-
 fn render_field_content(
     frame: &mut Frame,
     area: Rect,
@@ -132,7 +120,7 @@ fn render_field_content(
             Line::from(vec![
                 Span::styled(type_label, theme::bold()),
                 Span::raw(" ".repeat(gap)),
-                Span::styled("\u{2423}", theme::muted()),
+                Span::styled(design::TOGGLE_HINT, theme::muted()),
             ])
         } else {
             Line::from(Span::styled(type_label, theme::bold()))

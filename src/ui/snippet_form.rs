@@ -1,6 +1,5 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
@@ -23,7 +22,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let block_height = 2 + fields.len() as u16 * 2;
     let total_height = block_height + 1; // + footer
 
-    let form_area = design::overlay_area(frame, 70, 80, total_height);
+    let form_area = design::overlay_area(frame, design::OVERLAY_W, design::OVERLAY_H, total_height);
     frame.render_widget(Clear, form_area);
 
     let block_area = Rect::new(form_area.x, form_area.y, form_area.width, block_height);
@@ -48,7 +47,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         } else {
             format!(" {} ", field.label())
         };
-        render_divider(
+        super::render_divider(
             frame,
             block_area,
             divider_y,
@@ -62,7 +61,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 
     // Footer below the block
-    let footer_area = design::form_footer(form_area, block_height);
+    let footer_area = design::render_overlay_footer(frame, block_area);
     let footer = if app.pending_discard_confirm {
         design::Footer::new()
             .action("y", " yes ")
@@ -83,17 +82,6 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     } else {
         footer.render_with_status(frame, footer_area, app);
     }
-}
-
-fn render_divider(
-    frame: &mut Frame,
-    block_area: Rect,
-    y: u16,
-    label: &str,
-    label_style: Style,
-    border_style: Style,
-) {
-    super::render_divider(frame, block_area, y, label, label_style, border_style);
 }
 
 fn render_field_content(

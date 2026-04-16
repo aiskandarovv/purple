@@ -87,7 +87,7 @@ pub fn init(verbose: bool, cli_stderr: bool) {
 
     if !loggers.is_empty() {
         if let Err(e) = CombinedLogger::init(loggers) {
-            eprintln!("[purple] Failed to initialize logger: {e}");
+            eprintln!("{}", crate::messages::logging::init_failed(&e));
         }
     }
 }
@@ -212,7 +212,7 @@ pub fn detect_ssh_version() -> String {
         .spawn();
 
     let Ok(child) = child else {
-        eprintln!("[purple] Failed to detect SSH version. Is ssh installed?");
+        eprintln!("{}", crate::messages::logging::SSH_VERSION_FAILED);
         return "unknown".to_string();
     };
 

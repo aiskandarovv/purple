@@ -37,9 +37,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     };
     let search_row = if searching { 1u16 } else { 0 };
     let header_row = if has_snippets { 1u16 } else { 0 };
-    let height = (item_count as u16 + 6 + search_row + header_row)
-        .min(frame.area().height.saturating_sub(4));
-    let area = design::overlay_area(frame, 70, 80, height);
+    // Reserve 1 row below the block for the external footer.
+    let height = (item_count as u16 + 4 + search_row + header_row)
+        .min(frame.area().height.saturating_sub(5));
+    let area = design::overlay_area(frame, design::OVERLAY_W, design::OVERLAY_H, height);
     frame.render_widget(Clear, area);
 
     let block = if searching {
@@ -51,7 +52,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // Layout: optional search bar + optional header + list + footer
+    // Layout inside the block: optional search bar + optional header + list.
+    // Footer renders BELOW the block via design::form_footer.
     let mut constraints = Vec::new();
     if searching {
         constraints.push(Constraint::Length(1));
@@ -60,8 +62,6 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         constraints.push(Constraint::Length(1));
     }
     constraints.push(Constraint::Min(0));
-    constraints.push(Constraint::Length(1)); // spacer
-    constraints.push(Constraint::Length(1)); // footer
     let chunks = Layout::vertical(constraints).split(inner);
 
     // Resolve chunk indices based on which optional rows are present
@@ -72,7 +72,6 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         None
     };
     let list_ci = searching as usize + has_snippets as usize;
-    let footer_ci = list_ci + 2;
 
     // Search bar
     if let Some(si) = search_ci {
@@ -92,7 +91,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 
     let list_area = chunks[list_ci];
-    let footer_area = chunks[footer_ci];
+    let footer_area = design::render_overlay_footer(frame, area);
 
     // Build snippet list (filtered when searching)
     let indices = if searching {
@@ -124,7 +123,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     if let Some(hi) = header_ci {
         let style = theme::bold();
         let mut hdr = vec![
-            Span::styled(format!("   {:<name_w$}", "NAME"), style),
+            Span::styled(
+                format!("{}{:<name_w$}", design::COLUMN_HEADER_PREFIX, "NAME"),
+                style,
+            ),
             Span::raw(gap_str.clone()),
             Span::styled(format!("{:<cmd_w$}", "COMMAND"), style),
         ];
@@ -136,12 +138,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 
     if indices.is_empty() {
-        let msg = if searching {
-            "  No matches."
+        if searching {
+            design::render_empty(frame, list_area, "No matches.");
         } else {
-            "  No snippets yet. Press 'a' to add one."
-        };
-        frame.render_widget(Paragraph::new(msg).style(theme::muted()), list_area);
+            design::render_empty_with_hint(frame, list_area, "No snippets yet.", "a", "add one");
+        }
     } else {
         let items: Vec<ListItem> = indices
             .iter()
@@ -218,37 +219,15 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use ratatui::layout::{Constraint, Layout, Rect};
+    use ratatui::layout::Rect;
+
+    use super::design;
 
     #[test]
-    fn layout_has_spacer_between_content_and_footer() {
-        // Simplest case: no search, no header — just list + spacer + footer
+    fn footer_sits_directly_below_block() {
         let area = Rect::new(0, 0, 60, 20);
-        let chunks = Layout::vertical([
-            Constraint::Min(0),
-            Constraint::Length(1),
-            Constraint::Length(1),
-        ])
-        .split(area);
-        assert_eq!(chunks[1].height, 1);
-        assert_eq!(chunks[2].height, 1);
-        assert!(chunks[2].y > chunks[0].y + chunks[0].height);
-    }
-
-    #[test]
-    fn layout_with_search_and_header_has_spacer() {
-        // search bar + header + list + spacer + footer
-        let area = Rect::new(0, 0, 60, 20);
-        let chunks = Layout::vertical([
-            Constraint::Length(1), // search
-            Constraint::Length(1), // header
-            Constraint::Min(0),
-            Constraint::Length(1), // spacer
-            Constraint::Length(1), // footer
-        ])
-        .split(area);
-        let list_ci = 2;
-        let footer_ci = 4;
-        assert!(chunks[footer_ci].y > chunks[list_ci].y + chunks[list_ci].height);
+        let footer = design::form_footer(area, area.height);
+        assert_eq!(footer.height, 1);
+        assert_eq!(footer.y, area.y + area.height);
     }
 }

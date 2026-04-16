@@ -28,10 +28,7 @@ fn clipboard_cmd() -> Result<&'static str, String> {
                 }
             }
 
-            Err(
-                "No clipboard tool found. Install pbcopy (macOS), wl-copy (Wayland), or xclip/xsel (X11)."
-                    .to_string(),
-            )
+            Err(crate::messages::NO_CLIPBOARD_TOOL.to_string())
         })
         .clone()
 }

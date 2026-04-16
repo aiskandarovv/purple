@@ -14,8 +14,17 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     let has_custom = !custom.is_empty();
     let total = builtins.len() + if has_custom { 1 + custom.len() } else { 0 };
-    let height = (total as u16 + 4).min(frame.area().height.saturating_sub(4));
-    let area = super::centered_rect_fixed(design::PICKER_MIN_W, height, frame.area());
+    // Use the canonical picker geometry: width clamp[PICKER_MIN_W,
+    // PICKER_MAX_W], height grows with item count up to PICKER_MAX_H.
+    // Reserve 1 row below the block for the external footer.
+    let width = super::picker_overlay_width(frame);
+    let height = (total as u16 + 2)
+        .min(design::PICKER_MAX_H)
+        .min(frame.area().height.saturating_sub(3));
+    if height < super::PICKER_MIN_HEIGHT {
+        return;
+    }
+    let area = super::centered_rect_fixed(width, height, frame.area());
     frame.render_widget(Clear, area);
 
     let mut items: Vec<ListItem> = Vec::new();
@@ -39,25 +48,24 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let (content, footer) = design::content_and_footer(inner);
-
     let list = List::new(items)
         .highlight_style(theme::selected_row())
         .highlight_symbol(design::LIST_HIGHLIGHT);
 
-    frame.render_stateful_widget(list, content, &mut app.ui.theme_picker_state);
+    frame.render_stateful_widget(list, inner, &mut app.ui.theme_picker_state);
 
+    let footer_area = design::render_overlay_footer(frame, area);
     design::Footer::new()
         .primary("Enter", " select ")
         .action("Esc", " cancel")
-        .render_with_status(frame, footer, app);
+        .render_with_status(frame, footer_area, app);
 }
 
 fn theme_item<'a>(t: &ThemeDef, current_name: &str) -> ListItem<'a> {
-    let marker = if t.name.eq_ignore_ascii_case(current_name) {
-        "\u{2713} "
+    let marker: String = if t.name.eq_ignore_ascii_case(current_name) {
+        format!("{} ", design::ICON_SUCCESS)
     } else {
-        "  "
+        "  ".to_string()
     };
 
     let mode = theme::color_mode();

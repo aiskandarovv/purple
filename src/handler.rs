@@ -170,23 +170,13 @@ fn execute_known_hosts_import(app: &mut App) {
             if imported > 0 {
                 if let Err(e) = app.config.write() {
                     app.config = config_backup;
-                    app.notify_error(format!("Failed to save: {}", e));
+                    app.notify_error(crate::messages::failed_to_save(&e));
                     return;
                 }
                 app.reload_hosts();
-                app.notify(format!(
-                    "Imported {} host{}, skipped {} duplicate{}.",
-                    imported,
-                    if imported == 1 { "" } else { "s" },
-                    skipped,
-                    if skipped == 1 { "" } else { "s" },
-                ));
+                app.notify(crate::messages::imported_hosts(imported, skipped));
             } else {
-                app.notify(if skipped == 1 {
-                    "Host already exists.".to_string()
-                } else {
-                    format!("All {} hosts already exist.", skipped)
-                });
+                app.notify(crate::messages::all_hosts_exist(skipped));
             }
             app.known_hosts_count = 0;
         }
@@ -225,7 +215,7 @@ fn execute_purge_stale(app: &mut App, provider: Option<&str>) {
     }
     if let Err(e) = app.config.write() {
         app.config = config_backup;
-        app.notify_error(format!("Failed to save: {}", e));
+        app.notify_error(crate::messages::failed_to_save(&e));
         return;
     }
     // Kill active tunnels only after successful write (no rollback needed)
@@ -268,10 +258,9 @@ pub(super) fn stale_provider_hint(host: &crate::ssh_config::model::HostEntry) ->
 /// `false` if the host is from an include file (status message set instead).
 pub(super) fn open_edit_form(app: &mut App, host: HostEntry) -> bool {
     if let Some(ref source) = host.source_file {
-        app.notify_error(format!(
-            "{} lives in {}. Edit it there.",
-            host.alias,
-            source.display()
+        app.notify_error(crate::messages::included_host_lives_in(
+            &host.alias,
+            &source.display(),
         ));
         return false;
     }
@@ -281,14 +270,14 @@ pub(super) fn open_edit_form(app: &mut App, host: HostEntry) -> bool {
     let raw = match app.config.raw_host_entry(&host.alias) {
         Some(entry) => entry,
         None => {
-            app.notify_error("Host not found in config.".to_string());
+            app.notify_warning(crate::messages::HOST_NOT_FOUND_IN_CONFIG);
             return false;
         }
     };
     let inherited = app.config.inherited_hints(&host.alias);
     app.form = HostForm::from_entry(&raw, inherited);
     if let Some(hint) = stale_hint {
-        app.notify_error(format!("Stale host.{}", hint));
+        app.notify_warning(crate::messages::stale_host(&hint));
     }
     app.screen = Screen::EditHost { alias: host.alias };
     app.capture_form_mtime();

@@ -188,15 +188,30 @@ pub enum Screen {
 }
 
 /// Classification of status messages for routing to toast overlay vs footer.
+///
+/// Five levels: Success / Info / Warning / Error / Progress. Severity rises
+/// from Info to Error. Toast vs footer routing follows attention-urgency:
+/// Success, Warning and Error draw the eye via toast; Info and Progress
+/// sit in the footer for passive consumption.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageClass {
-    /// User action succeeded (copy, sort, delete). Toast, 16 ticks (4s at 250ms tick rate).
-    Confirmation,
-    /// Background event (sync complete, config reload). Footer, 16 ticks.
+    /// User action succeeded (copy, sort, delete). Toast, length-proportional timeout.
+    /// Color: green `\u{2713}`.
+    Success,
+    /// Background event (sync complete, config reload). Footer, length-proportional timeout.
+    /// Color: muted.
     Info,
-    /// Error or warning requiring attention. Toast, 20 ticks.
-    Alert,
+    /// Caution or degraded state (stale hosts, deprecated config,
+    /// validation failure, empty-state notice). Toast, length-proportional
+    /// timeout (longer than Success). Auto-expires.
+    /// Color: yellow `\u{26A0}`.
+    Warning,
+    /// Error condition requiring acknowledgement. Toast, **sticky by default**
+    /// so the user cannot miss it. Cleared by next user action.
+    /// Color: red `\u{2716}`.
+    Error,
     /// Long-running operation with spinner. Footer, sticky.
+    /// Color: muted with spinner.
     Progress,
 }
 
@@ -205,31 +220,62 @@ pub enum MessageClass {
 pub struct StatusMessage {
     pub text: String,
     pub class: MessageClass,
+    /// Retained for backward compatibility with tests that inspect it.
+    /// Expiry logic uses `created_at` (wall-clock) instead.
+    #[allow(dead_code)]
     pub tick_count: u32,
     /// When true the message never auto-expires and `notify_background`
     /// will not overwrite it. Cleared by `notify` or `notify_progress`.
     pub sticky: bool,
+    /// Wall-clock instant when the message was created. Used by the drain
+    /// bar renderer for smooth (frame-rate-independent) animation instead
+    /// of the discrete `tick_count`.
+    pub created_at: std::time::Instant,
 }
 
 impl StatusMessage {
-    /// Backward compat: is this an error-class message?
+    /// Backward compat: is this an error- or warning-class message?
     pub fn is_error(&self) -> bool {
-        matches!(self.class, MessageClass::Alert)
+        matches!(self.class, MessageClass::Error | MessageClass::Warning)
     }
 
-    /// Timeout in ticks for this message class.
-    pub fn timeout(&self) -> u32 {
-        match self.class {
-            MessageClass::Confirmation => crate::ui::design::TIMEOUT_CONFIRM,
-            MessageClass::Info => crate::ui::design::TIMEOUT_INFO,
-            MessageClass::Alert => crate::ui::design::TIMEOUT_ALERT,
-            MessageClass::Progress => u32::MAX,
+    /// Timeout in milliseconds for this message class.
+    ///
+    /// Length-proportional: shorter messages clear faster, longer messages
+    /// stay visible longer to give the user time to read. The minimum keeps
+    /// 1-word messages on screen long enough to register; the per-word
+    /// component scales with reading time. Errors and Progress are sticky
+    /// (return `u64::MAX`).
+    ///
+    /// All timing is in wall-clock milliseconds, independent of the tick
+    /// rate. Both `tick_toast` (expiry) and `render_toast` (drain bar)
+    /// compare `created_at.elapsed()` against this value.
+    pub fn timeout_ms(&self) -> u64 {
+        if matches!(self.class, MessageClass::Error | MessageClass::Progress) {
+            return u64::MAX;
         }
+        let words = self
+            .text
+            .split_whitespace()
+            .count()
+            .min(crate::ui::design::WORD_CAP) as u64;
+        let proportional = words.saturating_mul(crate::ui::design::MS_PER_WORD);
+        let min_ms = match self.class {
+            MessageClass::Success | MessageClass::Info => crate::ui::design::TIMEOUT_MIN_MS,
+            MessageClass::Warning => crate::ui::design::TIMEOUT_MIN_WARNING_MS,
+            MessageClass::Error | MessageClass::Progress => {
+                unreachable!("Error and Progress return early above")
+            }
+        };
+        min_ms.max(proportional)
     }
 
     /// Should this message render as a toast overlay?
     pub fn is_toast(&self) -> bool {
-        matches!(self.class, MessageClass::Confirmation | MessageClass::Alert)
+        matches!(
+            self.class,
+            MessageClass::Success | MessageClass::Warning | MessageClass::Error
+        )
     }
 }
 

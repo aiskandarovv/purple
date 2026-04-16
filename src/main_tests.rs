@@ -1047,16 +1047,18 @@ fn confirm_import_dialog_has_same_structure_as_confirm_delete() {
     let delete_bottom = find_bottom_border_row(&delete_buf);
     assert_eq!(
         delete_bottom - delete_top + 1,
-        7,
-        "ConfirmDelete dialog height should be 7 rows"
+        5,
+        "ConfirmDelete dialog height should be 5 rows (footer renders below)"
+    );
+    // Footer renders one row below the block border (external footer pattern).
+    let footer_row = delete_bottom + 1;
+    assert!(
+        (delete_top..=footer_row).any(|y| row_contains(&delete_buf, y, "y")),
+        "ConfirmDelete dialog should contain 'y' key in external footer"
     );
     assert!(
-        (delete_top..=delete_bottom).any(|y| row_contains(&delete_buf, y, "y")),
-        "ConfirmDelete dialog should contain 'y' key in footer"
-    );
-    assert!(
-        (delete_top..=delete_bottom).any(|y| row_contains(&delete_buf, y, "Esc")),
-        "ConfirmDelete dialog should contain 'Esc' key in footer"
+        (delete_top..=footer_row).any(|y| row_contains(&delete_buf, y, "Esc")),
+        "ConfirmDelete dialog should contain 'Esc' key in external footer"
     );
 
     // --- ConfirmImport ---
@@ -1070,16 +1072,17 @@ fn confirm_import_dialog_has_same_structure_as_confirm_delete() {
     let import_bottom = find_bottom_border_row(&import_buf);
     assert_eq!(
         import_bottom - import_top + 1,
-        7,
-        "ConfirmImport dialog height should be 7 rows"
+        5,
+        "ConfirmImport dialog height should be 5 rows (footer renders below)"
+    );
+    let import_footer_row = import_bottom + 1;
+    assert!(
+        (import_top..=import_footer_row).any(|y| row_contains(&import_buf, y, "y")),
+        "ConfirmImport dialog should contain 'y' key in external footer"
     );
     assert!(
-        (import_top..=import_bottom).any(|y| row_contains(&import_buf, y, "y")),
-        "ConfirmImport dialog should contain 'y' key in footer"
-    );
-    assert!(
-        (import_top..=import_bottom).any(|y| row_contains(&import_buf, y, "Esc")),
-        "ConfirmImport dialog should contain 'Esc' key in footer"
+        (import_top..=import_footer_row).any(|y| row_contains(&import_buf, y, "Esc")),
+        "ConfirmImport dialog should contain 'Esc' key in external footer"
     );
 }
 

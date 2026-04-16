@@ -73,7 +73,7 @@ impl Columns {
     /// Add ~10% breathing room to a content-measured column width.
     /// Returns 0 for 0-width columns (no content = no column).
     fn padded(w: usize) -> usize {
-        if w == 0 { 0 } else { w + w / 10 + 1 }
+        design::padded_usize(w)
     }
 
     fn compute(
@@ -459,9 +459,9 @@ fn render_display_list(
         let msg = if matches!(app.screen, app::Screen::Welcome { .. }) {
             ""
         } else {
-            "  It's quiet in here... Press 'a' to add a host or 'S' for cloud sync."
+            "It's quiet in here... Press 'a' to add a host or 'S' for cloud sync."
         };
-        let empty_msg = Paragraph::new(msg).style(theme::muted()).block(block);
+        let empty_msg = Paragraph::new(design::empty_line(msg)).block(block);
         frame.render_widget(empty_msg, area);
         return;
     }
@@ -672,9 +672,8 @@ fn render_search_list(
         if let Some(update) = update_title {
             block = block.title_top(update.right_aligned());
         }
-        let empty_msg = Paragraph::new("  No matches. Try a different search.")
-            .style(theme::muted())
-            .block(block);
+        let empty_msg =
+            Paragraph::new(design::empty_line("No matches. Try a different search.")).block(block);
         frame.render_widget(empty_msg, area);
         return;
     }
@@ -878,10 +877,10 @@ fn build_host_item<'a>(
     } else {
         theme::bold()
     };
-    let marker = if ctx.multi_selected {
-        " \u{2713}"
+    let marker: String = if ctx.multi_selected {
+        format!(" {}", design::ICON_SUCCESS)
     } else {
-        "  "
+        "  ".to_string()
     };
     spans.push(Span::styled(marker, alias_style));
 

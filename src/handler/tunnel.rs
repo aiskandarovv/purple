@@ -21,12 +21,12 @@ pub(super) fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
                     let value = rule.to_directive_value();
                     let config_backup = app.config.clone();
                     if !app.config.remove_forward(&alias, &key, &value) {
-                        app.notify_error("Tunnel not found in config.");
+                        app.notify_warning(crate::messages::TUNNEL_NOT_FOUND);
                         return;
                     }
                     if let Err(e) = app.config.write() {
                         app.config = config_backup;
-                        app.notify_error(format!("Failed to save: {}", e));
+                        app.notify_error(crate::messages::failed_to_save(&e));
                     } else {
                         app.update_last_modified();
                         app.refresh_tunnel_list(&alias);
@@ -38,7 +38,7 @@ pub(super) fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
                                 .tunnel_list_state
                                 .select(Some(app.tunnel_list.len() - 1));
                         }
-                        app.notify("Tunnel removed.");
+                        app.notify(crate::messages::TUNNEL_REMOVED);
                     }
                 }
             }
@@ -70,7 +70,7 @@ pub(super) fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
             // Check if host is from an included file (read-only)
             if let Some(host) = app.hosts.iter().find(|h| h.alias == alias) {
                 if host.source_file.is_some() {
-                    app.notify_error("Included host. Tunnels are read-only.");
+                    app.notify_warning(crate::messages::TUNNEL_INCLUDED_READ_ONLY);
                     return;
                 }
             }
@@ -86,7 +86,7 @@ pub(super) fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
             // Check if host is from an included file (read-only)
             if let Some(host) = app.hosts.iter().find(|h| h.alias == alias) {
                 if host.source_file.is_some() {
-                    app.notify_error("Included host. Tunnels are read-only.");
+                    app.notify_warning(crate::messages::TUNNEL_INCLUDED_READ_ONLY);
                     return;
                 }
             }
@@ -106,7 +106,7 @@ pub(super) fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
             // Check if host is from an included file (read-only)
             if let Some(host) = app.hosts.iter().find(|h| h.alias == alias) {
                 if host.source_file.is_some() {
-                    app.notify_error("Included host. Tunnels are read-only.");
+                    app.notify_warning(crate::messages::TUNNEL_INCLUDED_READ_ONLY);
                     return;
                 }
             }
@@ -125,12 +125,12 @@ pub(super) fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
                         debug!("[external] Failed to kill tunnel process for {alias}: {e}");
                     }
                     let _ = tunnel.child.wait();
-                    app.notify(format!("Tunnel for {} stopped.", alias));
+                    app.notify(crate::messages::tunnel_stopped(&alias));
                 }
             } else if !app.tunnel_list.is_empty() {
                 // Start
                 if app.demo_mode {
-                    app.notify("Demo mode. Tunnels disabled.".to_string());
+                    app.notify(crate::messages::DEMO_TUNNELS_DISABLED);
                     return;
                 }
                 let askpass = app
@@ -156,10 +156,10 @@ pub(super) fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
                         }
                         app.active_tunnels
                             .insert(alias.clone(), crate::tunnel::ActiveTunnel { child });
-                        app.notify(format!("Tunnel for {} started.", alias));
+                        app.notify(crate::messages::tunnel_started(&alias));
                     }
                     Err(e) => {
-                        app.notify_error(format!("Failed to start tunnel: {}", e));
+                        app.notify_error(crate::messages::tunnel_start_failed(&e));
                     }
                 }
             }
@@ -263,7 +263,7 @@ pub(super) fn handle_tunnel_form(app: &mut App, key: KeyEvent) {
 fn submit_tunnel_form(app: &mut App, alias: &str, editing: Option<usize>) {
     // Check for external config changes since form was opened
     if app.config_changed_since_form_open() {
-        app.notify_error("Config changed externally. Press Esc and re-open to pick up changes.");
+        app.notify_warning(crate::messages::CONFIG_CHANGED_EXTERNALLY);
         return;
     }
 
@@ -282,12 +282,12 @@ fn submit_tunnel_form(app: &mut App, alias: &str, editing: Option<usize>) {
             let old_value = old_rule.to_directive_value();
             if !app.config.remove_forward(alias, &old_key, &old_value) {
                 app.config = config_backup;
-                app.notify_error("Original tunnel not found in config.");
+                app.notify_warning(crate::messages::TUNNEL_ORIGINAL_NOT_FOUND);
                 return;
             }
         } else {
             // Index out of bounds (external config change) — abort
-            app.notify_error("Tunnel list changed externally. Press Esc and re-open.");
+            app.notify_warning(crate::messages::TUNNEL_LIST_CHANGED);
             return;
         }
     }
@@ -298,7 +298,7 @@ fn submit_tunnel_form(app: &mut App, alias: &str, editing: Option<usize>) {
         .has_forward(alias, directive_key, &directive_value)
     {
         app.config = config_backup;
-        app.notify_error("Duplicate tunnel already configured.");
+        app.notify_warning(crate::messages::TUNNEL_DUPLICATE);
         return;
     }
 
@@ -306,7 +306,7 @@ fn submit_tunnel_form(app: &mut App, alias: &str, editing: Option<usize>) {
         .add_forward(alias, directive_key, &directive_value);
     if let Err(e) = app.config.write() {
         app.config = config_backup;
-        app.notify_error(format!("Failed to save: {}", e));
+        app.notify_error(crate::messages::failed_to_save(&e));
         return;
     }
 
@@ -329,7 +329,7 @@ fn submit_tunnel_form(app: &mut App, alias: &str, editing: Option<usize>) {
     }
     app.clear_form_mtime();
     app.tunnel_form_baseline = None;
-    app.notify("Tunnel saved.");
+    app.notify(crate::messages::TUNNEL_SAVED);
     app.screen = Screen::TunnelList {
         alias: alias.to_string(),
     };

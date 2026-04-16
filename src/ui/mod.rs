@@ -42,7 +42,7 @@ pub fn render(frame: &mut Frame, app: &mut App, anim: &mut crate::animation::Ani
     // Terminal too small guard
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
         let msg = Paragraph::new(Line::from(vec![
-            Span::styled("\u{26A0}", theme::error()),
+            Span::styled(design::ICON_WARNING, theme::warning()),
             Span::raw(" Terminal too small. Need at least 50x14."),
         ]));
         frame.render_widget(msg, area);
@@ -441,8 +441,18 @@ fn render_footer_status_right(
         // is embedded in the status text by the caller, so no extra
         // glyph prefix is needed here.
         ("", Style::default(), format!(" {} ", status.text))
-    } else if status.is_error() {
-        ("\u{26A0}", theme::error(), format!(" {} ", status.text))
+    } else if matches!(status.class, crate::app::MessageClass::Error) {
+        (
+            design::ICON_ERROR,
+            theme::error(),
+            format!(" {} ", status.text),
+        )
+    } else if matches!(status.class, crate::app::MessageClass::Warning) {
+        (
+            design::ICON_WARNING,
+            theme::warning(),
+            format!(" {} ", status.text),
+        )
     } else {
         ("", theme::muted(), format!(" {} ", status.text))
     };
@@ -466,7 +476,10 @@ fn render_footer_status_right(
 }
 
 /// Render a toast notification overlay in the bottom-right corner.
-/// Toast is a small bordered box (max 40 cols wide, 3 rows tall).
+/// Toast is a small bordered box (max 60% of terminal width, 3 rows tall)
+/// with a thin "drain bar" along the bottom border that visualises the
+/// remaining lifetime of the toast (full = just shown, empty = about to
+/// expire). Sticky toasts (Errors, Progress) skip the drain bar.
 fn render_toast(frame: &mut Frame, app: &App) {
     let toast = match app.toast.as_ref() {
         Some(t) => t,
@@ -479,14 +492,18 @@ fn render_toast(frame: &mut Frame, app: &App) {
     }
 
     let (icon, border_style) = match toast.class {
-        crate::app::MessageClass::Alert => (
-            format!("{} ", design::TOAST_ICON_ALERT),
+        crate::app::MessageClass::Error => (
+            format!("{} ", design::ICON_ERROR),
             theme::toast_border_error(),
         ),
-        crate::app::MessageClass::Confirmation
+        crate::app::MessageClass::Warning => (
+            format!("{} ", design::ICON_WARNING),
+            theme::toast_border_warning(),
+        ),
+        crate::app::MessageClass::Success
         | crate::app::MessageClass::Info
         | crate::app::MessageClass::Progress => (
-            format!("{} ", design::TOAST_ICON_OK),
+            format!("{} ", design::ICON_SUCCESS),
             theme::toast_border_success(),
         ),
     };
@@ -524,6 +541,36 @@ fn render_toast(frame: &mut Frame, app: &App) {
 
     let paragraph = Paragraph::new(display).block(block);
     frame.render_widget(paragraph, rect);
+
+    // Drain bar: thin horizontal bar across the bottom border that shrinks
+    // smoothly from full to empty as the toast nears expiry. The bar uses
+    // wall-clock time (Instant) so it animates at render frame-rate
+    // (currently 50ms / 20fps). Skips sticky toasts (Errors, Progress)
+    // where there is no expiry.
+    if !toast.sticky && !matches!(toast.class, crate::app::MessageClass::Progress) {
+        let total_ms = toast.timeout_ms();
+        if total_ms != u64::MAX && total_ms > 0 {
+            let elapsed_ms = toast.created_at.elapsed().as_millis() as u64;
+            // remaining_ratio: 1.0 = just shown, 0.0 = about to expire.
+            let remaining_ratio = if elapsed_ms >= total_ms {
+                0.0
+            } else {
+                1.0 - (elapsed_ms as f64 / total_ms as f64)
+            };
+            let inner_w = box_width.saturating_sub(2);
+            let bar_cols = (remaining_ratio * f64::from(inner_w)) as u16;
+            if bar_cols > 0 {
+                let bar_y = rect.y + rect.height.saturating_sub(1);
+                let bar_x = rect.x + 1;
+                let bar_rect = Rect::new(bar_x, bar_y, bar_cols.min(inner_w), 1);
+                let bar = Paragraph::new(Line::from(Span::styled(
+                    "\u{2501}".repeat(bar_rect.width as usize),
+                    border_style,
+                )));
+                frame.render_widget(bar, bar_rect);
+            }
+        }
+    }
 }
 
 /// Create a centered rect of given percentage within the parent rect.
@@ -643,28 +690,33 @@ fn picker_title_text(title: &str, title_hint: Option<&str>, width: u16) -> Strin
     }
 }
 
-/// Render a simple list-style picker overlay with the canonical purple
-/// look: clamped width, rounded border, muted accent, highlight on the
-/// selected row and a two-space highlight gutter. The `title_hint`, if
-/// present and space permits, is appended to the block title separated
-/// by a middle dot so picker-specific keybindings (e.g. Ctrl+D for
-/// Password Source) can be surfaced without adding a divergent footer.
-/// If the full hinted title would overflow, the hint is dropped rather
-/// than silently clipped.
-#[allow(clippy::too_many_arguments)] // keeps call sites readable; each param is distinct.
+/// Render a list-style picker overlay with the canonical purple look:
+/// fixed width range (`design::PICKER_MIN_W..=PICKER_MAX_W`), height grows
+/// with item count up to `design::PICKER_MAX_H`, rounded border, muted
+/// accent, highlight on the selected row and a two-space highlight gutter.
+///
+/// The `title_hint`, if present and space permits, is appended to the block
+/// title separated by a middle dot so picker-specific keybindings (e.g.
+/// Ctrl+D for Password Source) can be surfaced without adding a divergent
+/// footer. If the full hinted title would overflow, the hint is dropped
+/// rather than silently clipped.
+///
+/// All pickers share this single helper so they look identical regardless
+/// of which form field opened them. The previous `_wide` variant has been
+/// removed; pickers that need more horizontal room (Key Picker's 3-column
+/// layout) truncate their secondary metadata instead of widening.
 pub fn render_picker_overlay<'a>(
     frame: &mut Frame,
     title: &str,
     title_hint: Option<&str>,
     items: Vec<ratatui::widgets::ListItem<'a>>,
     list_state: &mut ratatui::widgets::ListState,
-    height_cap: u16,
 ) {
     use ratatui::widgets::{Block, BorderType, Clear, List};
 
     let width = picker_overlay_width(frame);
     let content_rows = items.len() as u16;
-    let height = (content_rows + 2).min(height_cap);
+    let height = (content_rows + 2).min(design::PICKER_MAX_H);
     if height < PICKER_MIN_HEIGHT {
         return;
     }
@@ -1104,11 +1156,11 @@ mod tests {
     }
 
     #[test]
-    fn render_toast_shows_alert_with_warning_icon() {
+    fn render_toast_shows_error_with_error_icon() {
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = make_app();
-        app.notify_error("Connection failed"); // Goes to toast (Alert)
+        app.notify_error("Connection failed"); // Routes to Error toast
         terminal
             .draw(|frame| {
                 render_toast(frame, &app);
@@ -1125,12 +1177,126 @@ mod tests {
             if line.contains("Connection failed") {
                 found_text = true;
             }
-            if line.contains("\u{26A0}") {
+            // Errors use the heavy multiplication X glyph (ICON_ERROR),
+            // distinct from the warning sign used by Warning-class toasts.
+            if line.contains(design::ICON_ERROR) {
                 found_icon = true;
             }
         }
-        assert!(found_text, "alert text should appear in buffer");
-        assert!(found_icon, "alert should show warning icon");
+        assert!(found_text, "error text should appear in buffer");
+        assert!(found_icon, "error should show error icon");
+    }
+
+    #[test]
+    fn render_toast_shows_warning_with_alert_icon() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = make_app();
+        app.notify_warning("Stale host configuration");
+        terminal.draw(|frame| render_toast(frame, &app)).unwrap();
+        let buf = terminal.backend().buffer();
+        let mut found_text = false;
+        let mut found_icon = false;
+        for y in 0..24 {
+            let mut line = String::new();
+            for x in 0..80 {
+                line.push_str(buf[(x, y)].symbol());
+            }
+            if line.contains("Stale host configuration") {
+                found_text = true;
+            }
+            // Warnings keep the warning sign glyph; errors use a different glyph.
+            if line.contains(design::ICON_WARNING) {
+                found_icon = true;
+            }
+        }
+        assert!(found_text, "warning text should appear in buffer");
+        assert!(
+            found_icon,
+            "warning should show warning sign (ICON_WARNING)"
+        );
+    }
+
+    #[test]
+    fn render_toast_drain_bar_shrinks_over_time() {
+        // Non-sticky toast (Success) → drain bar should appear at the
+        // bottom border row and shrink smoothly as wall-clock time
+        // advances toward the timeout. At created_at = now the bar fills
+        // the inner width; at elapsed >= timeout_ms the bar is gone.
+        use std::time::{Duration, Instant};
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = make_app();
+        app.notify("Saved profile changes successfully");
+        let timeout_ms = app.toast.as_ref().unwrap().timeout_ms();
+
+        // Helper: count `\u{2501}` cells in the rendered buffer.
+        let count_drain_bar = |app: &App, terminal: &mut Terminal<TestBackend>| -> usize {
+            terminal.draw(|frame| render_toast(frame, app)).unwrap();
+            let buf = terminal.backend().buffer();
+            let mut count = 0;
+            for y in 0..24 {
+                for x in 0..80 {
+                    if buf[(x, y)].symbol() == "\u{2501}" {
+                        count += 1;
+                    }
+                }
+            }
+            count
+        };
+
+        // Just created → full bar.
+        let bar_full = count_drain_bar(&app, &mut terminal);
+        assert!(
+            bar_full > 0,
+            "non-sticky Success toast must render a drain bar when just created"
+        );
+
+        // Simulate halfway elapsed by backdating created_at.
+        if let Some(toast) = app.toast.as_mut() {
+            toast.created_at = Instant::now() - Duration::from_millis(timeout_ms / 2);
+        }
+        let bar_half = count_drain_bar(&app, &mut terminal);
+        assert!(
+            bar_half < bar_full,
+            "drain bar must shrink as time passes ({} >= {})",
+            bar_half,
+            bar_full
+        );
+
+        // Simulate past expiry.
+        if let Some(toast) = app.toast.as_mut() {
+            toast.created_at = Instant::now() - Duration::from_millis(timeout_ms + 1000);
+        }
+        let bar_empty = count_drain_bar(&app, &mut terminal);
+        assert_eq!(
+            bar_empty, 0,
+            "drain bar must be empty once elapsed time exceeds timeout"
+        );
+    }
+
+    #[test]
+    fn render_toast_drain_bar_absent_for_sticky_error() {
+        // Sticky toasts (Errors, Progress) carry no expiry, so no drain bar.
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = make_app();
+        app.notify_error("Permission denied");
+        terminal.draw(|frame| render_toast(frame, &app)).unwrap();
+        let buf = terminal.backend().buffer();
+        let mut count = 0;
+        for y in 0..24 {
+            for x in 0..80 {
+                if buf[(x, y)].symbol() == "\u{2501}" {
+                    count += 1;
+                }
+            }
+        }
+        assert_eq!(
+            count, 0,
+            "sticky error toast must NOT render a drain bar (nothing to drain)"
+        );
     }
 
     #[test]
@@ -1246,11 +1412,12 @@ mod tests {
     /// available space without exceeding the cap.
     #[test]
     fn picker_overlay_width_passes_through_midrange() {
-        let backend = TestBackend::new(58, 20);
+        // PICKER_MIN_W (60) < 66 < PICKER_MAX_W (72), so passes through unclamped.
+        let backend = TestBackend::new(66, 20);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|frame| {
-                assert_eq!(picker_overlay_width(frame), 58);
+                assert_eq!(picker_overlay_width(frame), 66);
             })
             .unwrap();
     }
@@ -1288,7 +1455,6 @@ mod tests {
                     Some("Ctrl+D: global default"),
                     items,
                     &mut state,
-                    16,
                 );
                 let dump = buffer_dump(frame.buffer_mut());
                 assert!(
@@ -1311,7 +1477,7 @@ mod tests {
             .draw(|frame| {
                 let mut state = ListState::default();
                 let items = vec![ListItem::new("one")];
-                render_picker_overlay(frame, "ProxyJump", None, items, &mut state, 16);
+                render_picker_overlay(frame, "ProxyJump", None, items, &mut state);
                 let dump = buffer_dump(frame.buffer_mut());
                 assert!(dump.contains("ProxyJump"));
                 assert!(
@@ -1323,32 +1489,33 @@ mod tests {
     }
 
     /// `render_picker_overlay` must cap the rendered height at
-    /// `height_cap` even when the item count would demand more. The
-    /// overlay is pinned at exactly `height_cap` rows so a long list
+    /// `design::PICKER_MAX_H` even when the item count would demand more.
+    /// The overlay is pinned at exactly that height so a long list
     /// scrolls inside the overlay instead of growing off-screen.
     #[test]
-    fn render_picker_overlay_caps_height_at_height_cap() {
+    fn render_picker_overlay_caps_height_at_design_max() {
         use ratatui::widgets::{ListItem, ListState};
         let backend = TestBackend::new(80, 40);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|frame| {
                 let mut state = ListState::default();
-                let items: Vec<ListItem> = (0..20)
+                let items: Vec<ListItem> = (0..40)
                     .map(|i| ListItem::new(format!("item {}", i)))
                     .collect();
-                render_picker_overlay(frame, "Many", None, items, &mut state, 16);
+                render_picker_overlay(frame, "Many", None, items, &mut state);
                 let dump = buffer_dump(frame.buffer_mut());
                 // Count rows that contain any overlay glyph (border or
                 // title or list content) to assert the overlay itself
-                // is exactly `height_cap` rows tall.
+                // is exactly `PICKER_MAX_H` rows tall.
                 let rows_with_overlay = dump
                     .lines()
                     .filter(|line| line.contains('╭') || line.contains('╰') || line.contains('│'))
                     .count();
                 assert_eq!(
-                    rows_with_overlay, 16,
-                    "overlay must be capped at height_cap=16, got:\n{dump}"
+                    rows_with_overlay,
+                    design::PICKER_MAX_H as usize,
+                    "overlay must be capped at design::PICKER_MAX_H, got:\n{dump}"
                 );
             })
             .unwrap();
@@ -1376,7 +1543,6 @@ mod tests {
                     Some("this is an excessively long keybinding description that will not fit"),
                     items,
                     &mut state,
-                    12,
                 );
                 let dump = buffer_dump(frame.buffer_mut());
                 assert!(
@@ -1420,7 +1586,7 @@ mod tests {
             .draw(|frame| {
                 let mut state = ListState::default();
                 let items = vec![ListItem::new("entry")];
-                render_picker_overlay(frame, "Tiny", None, items, &mut state, 16);
+                render_picker_overlay(frame, "Tiny", None, items, &mut state);
                 let dump = buffer_dump(frame.buffer_mut());
                 assert!(
                     !dump.contains("Tiny"),

@@ -1,6 +1,5 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, List, ListItem, Paragraph};
 use unicode_width::UnicodeWidthStr;
@@ -14,10 +13,11 @@ use crate::history::ConnectionHistory;
 pub fn render_provider_list(frame: &mut Frame, app: &mut App) {
     let sorted_names = app.sorted_provider_names();
 
-    // Overlay: percentage-based width, height fits content
+    // Overlay: percentage-based width, height fits content. Reserve 1 row
+    // below the block for the external footer.
     let item_count = sorted_names.len();
-    let height = (item_count as u16 + 5).min(frame.area().height.saturating_sub(4));
-    let area = design::overlay_area(frame, 70, 80, height);
+    let height = (item_count as u16 + 3).min(frame.area().height.saturating_sub(5));
+    let area = design::overlay_area(frame, design::OVERLAY_W, design::OVERLAY_H, height);
     frame.render_widget(Clear, area);
 
     let block = design::overlay_block("Providers");
@@ -44,9 +44,9 @@ pub fn render_provider_list(frame: &mut Frame, app: &mut App) {
                     .get(name.as_str())
                     .is_some_and(|r| r.is_error);
                 if has_error {
-                    spans.push(Span::styled("\u{26A0}", theme::error()));
+                    spans.push(Span::styled(design::ICON_WARNING, theme::error()));
                 } else {
-                    spans.push(Span::styled("\u{2713}", theme::success()));
+                    spans.push(Span::styled(design::ICON_SUCCESS, theme::success()));
                 }
                 used += 1;
 
@@ -92,7 +92,7 @@ pub fn render_provider_list(frame: &mut Frame, app: &mut App) {
                     if max > 1 && total_len <= max {
                         spans.push(Span::styled(prefix, theme::muted()));
                         if stale_count > 0 {
-                            spans.push(Span::styled(stale_text, theme::error()));
+                            spans.push(Span::styled(stale_text, theme::warning()));
                         }
                         if !ago_text.is_empty() {
                             spans.push(Span::styled(ago_text, theme::muted()));
@@ -112,15 +112,14 @@ pub fn render_provider_list(frame: &mut Frame, app: &mut App) {
         })
         .collect();
 
-    let (content, footer_area) = design::content_and_footer(inner);
-
     let list = List::new(items)
         .highlight_style(theme::selected_row())
         .highlight_symbol(design::LIST_HIGHLIGHT);
 
-    frame.render_stateful_widget(list, content, &mut app.ui.provider_list_state);
+    frame.render_stateful_widget(list, inner, &mut app.ui.provider_list_state);
 
-    // Footer with status
+    // Footer below the block
+    let footer_area = design::render_overlay_footer(frame, area);
     if app.pending_provider_delete.is_some() {
         let name = app.pending_provider_delete.as_deref().unwrap_or("");
         let display = crate::providers::provider_display_name(name);
@@ -193,7 +192,7 @@ pub fn render_provider_form(frame: &mut Frame, app: &mut App, provider_name: &st
     let block_height = 2 + visible_fields.len() as u16 * 2;
     let total_height = block_height + 1; // + footer
 
-    let form_area = design::overlay_area(frame, 70, 80, total_height);
+    let form_area = design::overlay_area(frame, design::OVERLAY_W, design::OVERLAY_H, total_height);
     frame.render_widget(Clear, form_area);
 
     let block_area = Rect::new(form_area.x, form_area.y, form_area.width, block_height);
@@ -231,7 +230,7 @@ pub fn render_provider_form(frame: &mut Frame, app: &mut App, provider_name: &st
         } else {
             format!(" {} ", field_label)
         };
-        render_divider(
+        super::render_divider(
             frame,
             block_area,
             divider_y,
@@ -251,7 +250,7 @@ pub fn render_provider_form(frame: &mut Frame, app: &mut App, provider_name: &st
     }
 
     // Footer below the block
-    let footer_area = design::form_footer(form_area, block_height);
+    let footer_area = design::render_overlay_footer(frame, block_area);
     if app.pending_discard_confirm {
         let mut spans = vec![Span::styled(" Discard changes? ", theme::error())];
         spans.extend(
@@ -345,17 +344,6 @@ fn placeholder_for(field: ProviderFormField, provider_name: &str) -> &'static st
     }
 }
 
-fn render_divider(
-    frame: &mut Frame,
-    block_area: Rect,
-    y: u16,
-    label: &str,
-    label_style: Style,
-    border_style: Style,
-) {
-    super::render_divider(frame, block_area, y, label, label_style, border_style);
-}
-
 fn render_field_content(
     frame: &mut Frame,
     area: Rect,
@@ -445,7 +433,7 @@ fn render_field_content(
         Line::from(vec![
             Span::styled(display, display_style),
             Span::raw(" ".repeat(gap)),
-            Span::styled("\u{25B8}", theme::muted()),
+            Span::styled(design::PICKER_ARROW, theme::muted()),
         ])
     } else if display_value.is_empty() {
         Line::from(Span::raw(""))
@@ -475,7 +463,7 @@ fn render_toggle_content(frame: &mut Frame, area: Rect, value_text: &str, is_foc
         Line::from(vec![
             Span::styled(value_text, theme::bold()),
             Span::raw(" ".repeat(gap)),
-            Span::styled("\u{2423}", theme::muted()),
+            Span::styled(design::TOGGLE_HINT, theme::muted()),
         ])
     } else {
         Line::from(Span::styled(value_text, theme::bold()))
@@ -556,7 +544,11 @@ fn render_region_picker_overlay(frame: &mut Frame, app: &mut App) {
         if let Some(code) = region_code {
             // Region row
             let is_selected = selected.contains(code);
-            let check = if is_selected { " \u{2713} " } else { "   " };
+            let check: String = if is_selected {
+                format!(" {} ", design::ICON_SUCCESS)
+            } else {
+                "   ".to_string()
+            };
             let display = format!("{}{}", check, label);
             let style = if is_cursor {
                 theme::selected_row()
@@ -591,7 +583,7 @@ fn render_region_picker_overlay(frame: &mut Frame, app: &mut App) {
         }
     }
 
-    let footer_area = design::form_footer(picker_area, block_height);
+    let footer_area = design::render_overlay_footer(frame, block_area);
     design::Footer::new()
         .action("Space", " toggle ")
         .primary("Enter", " done ")
