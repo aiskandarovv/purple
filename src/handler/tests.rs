@@ -1986,7 +1986,7 @@ fn test_askpass_placeholder_text() {
     let placeholder = crate::ui::host_form::placeholder_text(FormField::AskPass);
     // When no global default is set, shows the "Space to pick..." guidance.
     // When a default exists, shows "default: <name>". Per the keyboard
-    // invariants (CLAUDE.md), pickers open on Space, never Enter.
+    // invariants, pickers open on Space, never Enter.
     assert!(
         placeholder.contains("Space") || placeholder.contains("default:"),
         "Should show Space guidance or default prefix: {}",
@@ -7197,4 +7197,120 @@ fn bulk_editor_is_dirty_added_leave_row_still_clean() {
         action: BulkTagAction::Leave,
     });
     assert!(!state.is_dirty(), "appended Leave row is not dirty");
+}
+
+// --- WhatsNew overlay handler tests ---
+
+#[test]
+fn whats_new_esc_closes_and_marks_seen() {
+    crate::preferences::tests_helpers::with_temp_prefs("whats_new_esc", |_| {
+        let mut app = make_app("");
+        app.screen = Screen::WhatsNew(crate::app::WhatsNewState::default());
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        assert!(matches!(app.screen, Screen::HostList));
+        assert_eq!(
+            crate::preferences::load_last_seen_version()
+                .unwrap()
+                .as_deref(),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+    });
+}
+
+#[test]
+fn whats_new_q_closes() {
+    crate::preferences::tests_helpers::with_temp_prefs("whats_new_q", |_| {
+        let mut app = make_app("");
+        app.screen = Screen::WhatsNew(crate::app::WhatsNewState::default());
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('q')), &tx);
+        assert!(matches!(app.screen, Screen::HostList));
+    });
+}
+
+#[test]
+fn whats_new_n_toggles_closed() {
+    crate::preferences::tests_helpers::with_temp_prefs("whats_new_n", |_| {
+        let mut app = make_app("");
+        app.screen = Screen::WhatsNew(crate::app::WhatsNewState::default());
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Char('n')), &tx);
+        assert!(matches!(app.screen, Screen::HostList));
+    });
+}
+
+#[test]
+fn whats_new_enter_does_nothing() {
+    crate::preferences::tests_helpers::with_temp_prefs("whats_new_enter", |_| {
+        let mut app = make_app("");
+        app.screen = Screen::WhatsNew(crate::app::WhatsNewState::default());
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
+        assert!(
+            matches!(app.screen, Screen::WhatsNew(_)),
+            "Enter must not close the overlay"
+        );
+        assert_eq!(
+            crate::preferences::load_last_seen_version().unwrap(),
+            None,
+            "Enter must not persist last_seen_version"
+        );
+    });
+}
+
+#[test]
+fn whats_new_scroll_j_advances_state() {
+    let mut app = make_app("");
+    app.screen = Screen::WhatsNew(crate::app::WhatsNewState::default());
+    let (tx, _rx) = mpsc::channel();
+    let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
+    if let Screen::WhatsNew(ref s) = app.screen {
+        assert_eq!(s.scroll, 1);
+    } else {
+        panic!("expected WhatsNew screen");
+    }
+}
+
+#[test]
+fn whats_new_close_dismisses_sticky_toast() {
+    crate::preferences::tests_helpers::with_temp_prefs("whats_new_dismiss", |_| {
+        let mut app = make_app("");
+        app.toast = Some(crate::app::StatusMessage {
+            text: crate::messages::whats_new_toast::upgraded("2.42.0"),
+            class: crate::app::MessageClass::Success,
+            tick_count: 0,
+            sticky: true,
+            created_at: std::time::Instant::now(),
+        });
+        app.screen = Screen::WhatsNew(crate::app::WhatsNewState::default());
+        let (tx, _rx) = mpsc::channel();
+        let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
+        let fragment = crate::messages::whats_new_toast::INVITE_FRAGMENT;
+        let contains_invite = app
+            .toast
+            .as_ref()
+            .is_some_and(|t| t.text.contains(fragment));
+        assert!(!contains_invite, "sticky toast should be dismissed");
+    });
+}
+
+#[test]
+fn host_list_n_opens_whats_new_when_search_inactive() {
+    let mut app = make_app("");
+    app.screen = Screen::HostList;
+    let (tx, _rx) = mpsc::channel();
+    let _ = handle_key_event(&mut app, key(KeyCode::Char('n')), &tx);
+    assert!(matches!(app.screen, Screen::WhatsNew(_)));
+}
+
+#[test]
+fn host_list_n_types_into_search_when_active() {
+    let mut app = make_app("");
+    app.screen = Screen::HostList;
+    app.search.query = Some(String::new());
+    let (tx, _rx) = mpsc::channel();
+    let _ = handle_key_event(&mut app, key(KeyCode::Char('n')), &tx);
+    assert!(matches!(app.screen, Screen::HostList));
+    assert_eq!(app.search.query.as_deref(), Some("n"));
 }

@@ -62,6 +62,8 @@ I wanted one place for all of that. So I built it.
 
 ![containers](screenshots/containers.png)
 
+- **What's new** Sticky toast and overlay summarising releases since you last opened. See [What's New](https://github.com/erickochen/purple/wiki/Whats-New)
+
 **And more.** Visual file transfer with split-pane explorer. Multi-host command execution with snippets. Automatic password retrieval from OS Keychain, 1Password, Bitwarden, pass and the HashiCorp Vault KV secrets engine. Short-lived SSH certificates signed via the HashiCorp Vault SSH secrets engine. Command palette (`:`) for quick access to all actions. MCP server for AI agents like Claude Code and Cursor. See the [wiki](https://github.com/erickochen/purple/wiki) for details.
 
 ## How it works
@@ -73,6 +75,10 @@ Written in Rust. Single binary. 6200+ tests. MIT license.
 ## Links
 
 📖 [Wiki](https://github.com/erickochen/purple/wiki) · ☁️ [Cloud Providers](https://github.com/erickochen/purple/wiki/Cloud-Providers) · 🤖 [MCP Server](https://github.com/erickochen/purple/wiki/MCP-Server) · ❓ [FAQ](https://github.com/erickochen/purple/wiki/FAQ) · 🔒 [Security](SECURITY.md) · 🧠 [llms.txt](https://getpurple.sh/llms.txt)
+
+## Credits
+
+The font used in the demo videos and screenshots is [Berkeley Mono™](https://usgraphics.com/products/berkeley-mono) by U.S. Graphics Company.
 
 ## Feedback
 

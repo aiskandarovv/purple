@@ -60,7 +60,11 @@ KEYWORDS='deprecated|deprecate|sunset|breaking|removed|end[- ]of[- ]life|eol|dis
 
 declare -A SERVICE_KEYWORDS=(
     [aws]="ec2|describeinstances|describeimages|instance|ami"
-    [azure]="virtual.machine|compute|network.interface|public.ip|microsoft\.compute|microsoft\.network|vm|nic"
+    # Azure Compute has many sub-services (AKS, Batch, VM Scale Sets). purple
+    # only touches virtual machines, network interfaces and public IPs. Match
+    # on specific nouns, not the broad "compute" or "vm" token, so entries
+    # like "Azure Kubernetes Service" under Compute do not trigger alerts.
+    [azure]="virtual.?machine|network.?interface|public.?ip|microsoft\.compute/virtualmachines|microsoft\.network/networkinterfaces|microsoft\.network/publicipaddresses"
     [digitalocean]="droplet|/v2/droplet"
     [gcp]="compute.engine|instances|aggregated.?list|compute/v1"
     [hetzner]="server|/v1/server|datacenter|location|image"
@@ -70,7 +74,6 @@ declare -A SERVICE_KEYWORDS=(
     [scaleway]="instance|/instance/v1|server"
     [tailscale]="device|/api/v2/device|tailnet"
     [transip]="vps|/v6/vps"
-    [vultr]="instance|/v2/instance"
 )
 
 # --- provider feeds ---------------------------------------------------------
@@ -87,6 +90,7 @@ declare -A SERVICE_KEYWORDS=(
 #   i3D.net   — Tier B, JS SPA, no published spec (docs-only validation)
 #   UpCloud   — Tier B, JS SPA, has vendored OpenAPI spec
 #   Linode    — JS SPA, GitHub releases empty, OpenAPI spec has 154 deprecated markers
+#   Vultr     — Returns 403 to curl; no RSS or raw-markdown source available
 
 FEEDS=(
     "aws|rss|https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/amazon-ec2-release-notes.rss"
@@ -100,7 +104,6 @@ FEEDS=(
     "scaleway|ghdir|https://api.github.com/repos/scaleway/docs-content/contents/changelog"
     "tailscale|rss|https://tailscale.com/changelog/index.xml"
     "transip|html|https://api.transip.nl/rest/docs.html"
-    "vultr|html|https://www.vultr.com/api/"
 )
 
 # --- state management -------------------------------------------------------

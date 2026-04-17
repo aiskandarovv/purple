@@ -7815,3 +7815,36 @@ fn bulk_open_with_zero_tags_in_config_succeeds() {
     assert_eq!(app.bulk_tag_editor.rows.len(), 1);
     assert_eq!(app.bulk_tag_editor.rows[0].tag, "fresh");
 }
+
+#[test]
+fn post_init_enqueues_toast_when_version_advanced() {
+    crate::preferences::tests_helpers::with_temp_prefs("post_init_toast", |_path| {
+        crate::preferences::save_last_seen_version("0.0.1").unwrap();
+        let mut app = make_app("");
+        app.post_init();
+        let fragment = crate::messages::whats_new_toast::INVITE_FRAGMENT;
+        assert!(
+            app.toast
+                .as_ref()
+                .is_some_and(|t| t.text.contains(fragment)),
+            "expected sticky upgrade toast"
+        );
+        assert!(app.toast.as_ref().is_some_and(|t| t.sticky));
+    });
+}
+
+#[test]
+fn post_init_silent_when_versions_equal() {
+    crate::preferences::tests_helpers::with_temp_prefs("post_init_silent", |_path| {
+        crate::preferences::save_last_seen_version(env!("CARGO_PKG_VERSION")).unwrap();
+        let mut app = make_app("");
+        app.post_init();
+        let fragment = crate::messages::whats_new_toast::INVITE_FRAGMENT;
+        assert!(
+            !app.toast
+                .as_ref()
+                .is_some_and(|t| t.text.contains(fragment)),
+            "no toast when last_seen matches current"
+        );
+    });
+}

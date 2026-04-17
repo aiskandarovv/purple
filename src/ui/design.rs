@@ -25,6 +25,17 @@ pub const FOOTER_GAP: &str = "  ";
 /// Gap between columns in list rows.
 pub const COL_GAP: u16 = 2;
 
+/// Canonical lowercase "purple" wordmark (6 lines, figlet Standard font).
+/// Single source of truth for every overlay that shows the brand.
+pub const LOGO: [&str; 6] = [
+    "                        _      ",
+    " _ __  _   _ _ __ _ __ | | ___ ",
+    "| '_ \\| | | | '__| '_ \\| |/ _ \\",
+    "| |_) | |_| | |  | |_) | |  __/",
+    "| .__/ \\__,_|_|  | .__/|_|\\___|",
+    "|_|              |_|           ",
+];
+
 // ---------------------------------------------------------------------------
 // Overlay sizing tokens
 // ---------------------------------------------------------------------------

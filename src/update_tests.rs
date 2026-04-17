@@ -128,79 +128,28 @@ fn test_extract_headline_only_blanks() {
     assert_eq!(extract_headline("\n\n\n"), None);
 }
 
-// --- strip_markdown tests ---
-
 #[test]
-fn test_strip_markdown_plain_text() {
-    assert_eq!(strip_markdown("hello world"), "hello world");
-}
-
-#[test]
-fn test_strip_markdown_bullet() {
-    assert_eq!(strip_markdown("- Added feature X"), "- Added feature X");
-}
-
-#[test]
-fn test_strip_markdown_bold() {
-    assert_eq!(strip_markdown("This is **bold** text"), "This is bold text");
-}
-
-#[test]
-fn test_strip_markdown_underscore_bold() {
-    assert_eq!(strip_markdown("This is __bold__ text"), "This is bold text");
-}
-
-#[test]
-fn test_strip_markdown_heading() {
-    assert_eq!(strip_markdown("## What's new"), "What's new");
-}
-
-#[test]
-fn test_strip_markdown_heading_h3() {
-    assert_eq!(strip_markdown("### Details"), "Details");
-}
-
-#[test]
-fn test_strip_markdown_link() {
-    assert_eq!(
-        strip_markdown("See [the docs](https://example.com) for details"),
-        "See the docs for details"
+fn test_extract_headline_truncates_long_input() {
+    let long = "- ".to_string() + &"a".repeat(500);
+    let result = extract_headline(&long).expect("headline must be returned");
+    assert!(
+        result.len() <= 200,
+        "expected truncation, got {} bytes",
+        result.len()
     );
+    assert!(result.starts_with('a'), "bullet marker must be stripped");
 }
 
 #[test]
-fn test_strip_markdown_multiple_links() {
-    assert_eq!(
-        strip_markdown("[a](http://a.com) and [b](http://b.com)"),
-        "a and b"
-    );
-}
-
-#[test]
-fn test_strip_markdown_bare_brackets() {
-    assert_eq!(strip_markdown("array[0] = 1"), "array[0] = 1");
-}
-
-#[test]
-fn test_strip_markdown_nested_brackets_in_link() {
-    // Link text contains a bracket — must not infinite loop
-    assert_eq!(
-        strip_markdown("See [[x]](http://example.com) here"),
-        "See [x] here"
-    );
-}
-
-#[test]
-fn test_strip_markdown_escape_sequences() {
-    assert_eq!(
-        strip_markdown("hello \x1b[31mred\x1b[0m world"),
-        "hello [31mred[0m world"
-    );
-}
-
-#[test]
-fn test_strip_markdown_control_chars() {
-    assert_eq!(strip_markdown("a\x07b\x08c"), "abc");
+fn test_extract_headline_truncates_on_char_boundary() {
+    // Build a 300-byte string where byte 200 lands mid-codepoint.
+    // 'ü' is 2 bytes, so 150 of them = 300 bytes. Cutting at 200 lands
+    // between the two bytes of a 'ü' and must back off to 199.
+    let long = "ü".repeat(150);
+    let result = extract_headline(&long).expect("headline must be returned");
+    assert!(result.len() <= 200);
+    // The result must be valid UTF-8 that we can still inspect.
+    assert!(result.chars().all(|c| c == 'ü'));
 }
 
 #[test]

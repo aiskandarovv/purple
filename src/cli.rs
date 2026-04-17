@@ -1310,3 +1310,64 @@ pub(super) fn handle_vault_sign_command(
     }
     Ok(())
 }
+
+pub(super) fn run_whats_new(since: Option<&str>) -> Result<String> {
+    use crate::changelog::{self, EntryKind};
+    use semver::Version;
+
+    let current = Version::parse(env!("CARGO_PKG_VERSION"))
+        .with_context(|| "failed to parse current version")?;
+    let last = match since {
+        Some(s) => Some(Version::parse(s).with_context(|| format!("invalid --since version {s}"))?),
+        None => None,
+    };
+
+    let sections = changelog::cached();
+    let shown = changelog::versions_to_show(sections, last.as_ref(), &current, sections.len());
+
+    let mut out = String::new();
+    out.push_str(crate::messages::cli::whats_new::HEADER);
+    out.push_str("\n\n");
+    for section in shown {
+        out.push_str(&format!("## {}", section.version));
+        if let Some(date) = &section.date {
+            out.push_str(&format!(" - {}", date));
+        }
+        out.push('\n');
+        for entry in &section.entries {
+            let prefix = match entry.kind {
+                EntryKind::Feature => "+ ",
+                EntryKind::Change => "~ ",
+                EntryKind::Fix => "! ",
+            };
+            out.push_str(prefix);
+            out.push_str(&entry.text);
+            out.push('\n');
+        }
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod whats_new_tests {
+    use super::*;
+
+    #[test]
+    fn whats_new_cli_outputs_header() {
+        let output = run_whats_new(None).unwrap();
+        assert!(output.contains("purple release notes"));
+    }
+
+    #[test]
+    fn whats_new_cli_filters_by_since() {
+        let output = run_whats_new(Some("999.0.0")).unwrap();
+        assert!(!output.contains("## "));
+    }
+
+    #[test]
+    fn whats_new_cli_returns_error_on_bad_version() {
+        let result = run_whats_new(Some("not-a-version"));
+        assert!(result.is_err());
+    }
+}

@@ -248,6 +248,45 @@ pub fn save_theme(name: &str) -> io::Result<()> {
     save_value("theme", name)
 }
 
+const LAST_SEEN_VERSION_KEY: &str = "last_seen_version";
+
+/// Save the last seen version string to ~/.purple/preferences.
+pub fn save_last_seen_version(version: &str) -> io::Result<()> {
+    log::debug!("[purple] saving last_seen_version={}", version);
+    save_value(LAST_SEEN_VERSION_KEY, version)
+}
+
+/// Load the last seen version string from ~/.purple/preferences. Returns None if missing.
+pub fn load_last_seen_version() -> io::Result<Option<String>> {
+    Ok(load_value(LAST_SEEN_VERSION_KEY))
+}
+
+/// Public test helpers for other test modules that need isolated preferences I/O.
+#[cfg(test)]
+pub(crate) mod tests_helpers {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static TEST_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    pub fn with_temp_prefs<F: FnOnce(&std::path::Path)>(label: &str, f: F) {
+        let _guard = super::GLOBAL_TEST_IO_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "purple_prefs_{}_{}_{id}",
+            label,
+            std::process::id(),
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("preferences");
+        super::set_path_override(path.clone());
+        f(&path);
+        std::fs::remove_dir_all(&dir).ok();
+        super::clear_path_override();
+    }
+}
+
 /// Load auto_ping preference. Returns true if missing (default: enabled).
 pub fn load_auto_ping() -> bool {
     load_value("auto_ping")
@@ -519,26 +558,8 @@ mod tests {
     // which is also held by visual_regression_tests::setup() so the two
     // suites cannot race on PATH_OVERRIDE or on demo_flag::DEMO_MODE.
 
-    static TEST_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
     fn with_temp_prefs<F: FnOnce(&std::path::Path)>(label: &str, f: F) {
-        let _guard = super::GLOBAL_TEST_IO_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let id = TEST_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "purple_prefs_{}_{}_{id}",
-            label,
-            std::process::id(),
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("preferences");
-        set_path_override(path.clone());
-        f(&path);
-        std::fs::remove_dir_all(&dir).ok();
-        // Clear override so other test threads (e.g. App::new() → load_auto_ping())
-        // fall back to the real path instead of reading a stale temp file.
-        clear_path_override();
+        super::tests_helpers::with_temp_prefs(label, f);
     }
 
     #[test]
@@ -859,6 +880,23 @@ mod tests {
     // to avoid poisoning the real lock permanently. The same
     // `.lock().unwrap_or_else(|e| e.into_inner())` pattern is used wherever a
     // shared Mutex guards cross-test state.
+    #[test]
+    fn last_seen_version_round_trip() {
+        with_temp_prefs("last_seen_roundtrip", |_path| {
+            save_last_seen_version("2.41.0").unwrap();
+            let loaded = load_last_seen_version().unwrap();
+            assert_eq!(loaded.as_deref(), Some("2.41.0"));
+        });
+    }
+
+    #[test]
+    fn last_seen_version_returns_none_when_unset() {
+        with_temp_prefs("last_seen_none", |_path| {
+            let loaded = load_last_seen_version().unwrap();
+            assert_eq!(loaded, None);
+        });
+    }
+
     #[test]
     fn recovered_lock_survives_poison() {
         let lock: std::sync::Arc<std::sync::Mutex<Option<PathBuf>>> =

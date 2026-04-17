@@ -26,6 +26,7 @@ mod sync;
 mod tag_picker;
 mod theme_picker;
 mod tunnel;
+mod whats_new;
 
 pub(crate) use provider::zone_data_for;
 pub use sync::spawn_provider_sync;
@@ -176,6 +177,13 @@ pub fn handle_key_event(
             known_hosts_count, ..
         } => {
             let known_hosts_count = *known_hosts_count;
+            // Closing Welcome marks the first launch as complete. Seed
+            // last_seen_version so the next launch compares against the
+            // current release instead of triggering the "upgraded" flow.
+            let version = env!("CARGO_PKG_VERSION");
+            if let Err(e) = crate::preferences::save_last_seen_version(version) {
+                log::warn!("[purple] failed to seed last_seen_version on welcome close: {e}");
+            }
             if key.code == KeyCode::Char('?') {
                 app.screen = Screen::Help {
                     return_screen: Box::new(Screen::HostList),
@@ -187,6 +195,7 @@ pub fn handle_key_event(
                 app.screen = Screen::HostList;
             }
         }
+        Screen::WhatsNew(_) => whats_new::handle_whats_new(app, key),
     }
     Ok(())
 }

@@ -194,7 +194,14 @@ step "Top/bottom (G, gg)"
 send "G"; sleep 0.2; send "g"; send "g"; sleep 0.2
 if alive; then ok; else fail "crash"; fi
 
-# 22. Clean exit
+# 22. What's new overlay
+step "What's new overlay (n, j, Esc)"
+send "n"; sleep 0.3
+send "j"; sleep 0.2
+send_key Escape; sleep 0.3
+if alive; then ok; else fail "crash"; fi
+
+# 23. Clean exit
 step "Clean exit (q)"
 send "q"; sleep 1
 if alive; then

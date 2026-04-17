@@ -642,6 +642,11 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
         }
         KeyCode::Char('F') => actions::open_file_browser(app, events_tx),
         KeyCode::Char('C') => actions::open_container_overlay(app, events_tx),
+        KeyCode::Char('n') if app.search.query.is_none() => {
+            log::debug!("[purple] opening whats-new overlay via n");
+            super::whats_new::dismiss_whats_new_toast(app);
+            app.screen = Screen::WhatsNew(crate::app::WhatsNewState::default());
+        }
         KeyCode::Char('?') => {
             let old = std::mem::replace(&mut app.screen, Screen::HostList);
             app.screen = Screen::Help {

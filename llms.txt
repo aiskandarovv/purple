@@ -120,6 +120,7 @@ purple is an open-source terminal SSH manager and SSH config editor written in R
 - Shell completions (bash, zsh, fish)
 - Command palette (: key): searchable overlay with 24 actions. Type to filter by name, press Enter to execute. Case-insensitive matching
 - 11 built-in color themes (default: Purple) with custom theme support (~/.purple/themes/*.toml). Works in any terminal, respects NO_COLOR
+- What's new overlay aggregates release notes from skipped versions on first launch after upgrade. Sticky toast invites press n for the modal. Reopen anytime via n or command palette
 
 ## Install
 
@@ -175,6 +176,8 @@ purple password remove myserver     # Remove from keychain
 purple vault sign myserver                                            # Sign one host via the HashiCorp Vault SSH secrets engine
 purple vault sign --all                                               # Sign every host with a Vault SSH role configured
 purple vault sign --all --vault-addr https://vault.example.com:8200   # Override Vault address for this run
+purple whats-new                    # Print recent release notes to stdout
+purple whats-new --since 2.40.0     # Print release notes since a specific version
 purple update                       # Self-update
 purple mcp                          # Start MCP server for AI agents (stdio JSON-RPC)
 purple --theme ocean                # Launch TUI with a specific theme
@@ -352,7 +355,7 @@ Q: Can I transfer files with purple?
 A: Yes. Press F on any host to open the remote file explorer. It shows your local files on the left and the remote server on the right. Navigate directories with j/k and Enter, select files with Ctrl+Space and press Enter to copy via scp. Works through ProxyJump, password sources and active tunnels. Paths are remembered per host.
 
 Q: Which terminal emulators work with purple?
-A: purple works in any terminal emulator that supports ANSI escape codes. Tested with iTerm2, Terminal.app, Alacritty, kitty, WezTerm, Warp and Windows Terminal (via WSL). It respects NO_COLOR and adapts to three color tiers: modifiers only, ANSI 16 and truecolor.
+A: purple works in any terminal emulator that supports ANSI escape codes. Developed and tested primarily on Ghostty. Also tested with iTerm2, Terminal.app, Alacritty, kitty, WezTerm, Warp and Windows Terminal (via WSL). It respects NO_COLOR and adapts to three color tiers: modifiers only, ANSI 16 and truecolor.
 
 Q: Does purple require an account or subscription?
 A: No. No account, no signup, no telemetry. purple is a local binary that reads and writes your SSH config. Provider sync calls cloud APIs with your own credentials. The only network request purple makes on its own is a GitHub release check for updates (cached 24 hours).
@@ -404,7 +407,7 @@ A: Press m in the host list to open the theme picker with live preview. 11 built
 
 ## Status
 
-- Current version: 2.41.1 (April 2026)
+- Current version: 2.42.0 (April 2026)
 - Release cadence: approximately bi-weekly
 - Test suite: 6200+ tests (unit, integration, property-based and HTTP mocking)
 - CI: fmt, clippy, test on macOS and Linux, cargo-deny, MSRV 1.86 check

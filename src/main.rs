@@ -2,6 +2,7 @@ mod animation;
 mod app;
 mod askpass;
 mod askpass_env;
+mod changelog;
 mod cli;
 mod clipboard;
 mod connection;
@@ -17,6 +18,7 @@ mod import;
 mod logging;
 mod mcp;
 mod messages;
+mod onboarding;
 mod ping;
 mod preferences;
 mod providers;
@@ -172,6 +174,12 @@ enum Commands {
         /// Delete the log file
         #[arg(long)]
         clear: bool,
+    },
+    /// Print release notes since a prior version
+    WhatsNew {
+        /// Only include entries newer than this version (e.g. 2.40.0)
+        #[arg(long)]
+        since: Option<String>,
     },
 }
 
@@ -434,7 +442,8 @@ fn main() -> Result<()> {
     }
 
     if cli.demo {
-        let app = demo::build_demo_app();
+        let mut app = demo::build_demo_app();
+        demo::seed_whats_new_toast(&mut app);
         return run_tui(app);
     }
 
@@ -457,6 +466,11 @@ fn main() -> Result<()> {
     }
     if let Some(Commands::Theme { command }) = cli.command {
         return cli::handle_theme_command(command);
+    }
+    if let Some(Commands::WhatsNew { since }) = &cli.command {
+        let output = cli::run_whats_new(since.as_deref())?;
+        print!("{}", output);
+        return Ok(());
     }
 
     let config_path = resolve_config_path(&cli.config)?;
@@ -569,7 +583,8 @@ fn main() -> Result<()> {
         | Some(Commands::Password { .. })
         | Some(Commands::Mcp)
         | Some(Commands::Theme { .. })
-        | Some(Commands::Logs { .. }) => unreachable!(),
+        | Some(Commands::Logs { .. })
+        | Some(Commands::WhatsNew { .. }) => unreachable!(),
         None => {}
     }
 
@@ -667,6 +682,7 @@ fn main() -> Result<()> {
         }
         // No exact match — open TUI with search pre-filled
         let mut app = App::new(config);
+        app.post_init();
         apply_saved_sort(&mut app);
         if repaired_groups > 0 || orphaned_headers > 0 {
             app.notify(crate::messages::config_repaired(
@@ -683,6 +699,7 @@ fn main() -> Result<()> {
 
     // Interactive TUI mode
     let mut app = App::new(config);
+    app.post_init();
     apply_saved_sort(&mut app);
     if repaired_groups > 0 || orphaned_headers > 0 {
         app.notify(crate::messages::config_repaired(
@@ -815,8 +832,25 @@ pub(crate) fn set_sync_summary(app: &mut App) {
 
 /// First-launch initialization: create ~/.purple/ and back up the original SSH config.
 /// Returns `Some(has_backup)` if this was a first launch, or `None` if already initialized.
+///
+/// Detection is deliberately forgiving. The `~/.purple/` directory itself is
+/// not a first-launch signal because `logging::init` creates it early to
+/// place the log file. Instead, check a set of markers written by long-lived
+/// purple features. Users who installed before `config.original` existed
+/// still have preferences, history or a container cache, so we treat any of
+/// those as "already initialized" and do not show Welcome again.
 fn first_launch_init(purple_dir: &Path, config_path: &Path) -> Option<bool> {
-    if purple_dir.exists() {
+    let markers = [
+        "config.original",
+        "preferences",
+        "history.tsv",
+        "container_cache.jsonl",
+        "last_version_check",
+        "providers",
+        "snippets.toml",
+        "themes",
+    ];
+    if markers.iter().any(|m| purple_dir.join(m).exists()) {
         return None;
     }
     if let Err(e) = std::fs::create_dir_all(purple_dir) {

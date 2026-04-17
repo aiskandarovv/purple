@@ -177,9 +177,9 @@ const LANDING_PAGE = `<!DOCTYPE html>
   "url": "https://getpurple.sh",
   "downloadUrl": "https://getpurple.sh",
   "installUrl": "https://github.com/erickochen/purple/releases",
-  "softwareVersion": "2.41.1",
+  "softwareVersion": "2.42.0",
   "datePublished": "2024-10-01",
-  "dateModified": "2026-04-16",
+  "dateModified": "2026-04-17",
   "softwareRequirements": "macOS or Linux",
   "programmingLanguage": "Rust",
   "license": "https://opensource.org/licenses/MIT",
@@ -914,7 +914,7 @@ footer .sep { margin: 0 0.3em; }
           <button class="copy-btn copy-inline" id="copy-btn" onclick="copy(this)" style="display:none">copy</button>
         </div>
         <div class="install-output" id="install-output" style="display:none">
-          <div>Downloading purple v2.41.1 for darwin-arm64...</div>
+          <div>Downloading purple v2.42.0 for darwin-arm64...</div>
           <div>Installing to /usr/local/bin/purple... <span class="success">done.</span></div>
         </div>
         <div class="alt-installs" id="alt-installs" style="display:none">
@@ -978,6 +978,10 @@ footer .sep { margin: 0 0.3em; }
       <span class="feat-icon">🤖</span>
       <span class="feat-text"><strong>Let AI agents manage your servers.</strong> Built-in MCP server. Claude Code, Cursor and other tools get direct access to your hosts and containers.</span>
     </div>
+    <div class="feat">
+      <span class="feat-icon">📬</span>
+      <span class="feat-text"><strong>What's new overlay.</strong> Sticky toast and overlay summarising releases since you last opened. Press n to reopen.</span>
+    </div>
   </div>
 
   <div class="providers-section">
@@ -1032,7 +1036,7 @@ footer .sep { margin: 0 0.3em; }
         <summary>How do I troubleshoot connection problems?</summary>
         <div class="answer">Run with <code>--verbose</code> to enable debug logging, then <code>purple logs --tail</code> in another terminal. Logs are written to <code>~/.purple/purple.log</code> with fault domain prefixes: <code>[external]</code> for remote/tool errors, <code>[config]</code> for local config issues. Set <code>PURPLE_LOG=trace</code> for maximum detail.</div>
       </details>
-      <div class="man-foot"><span>purple v2.41.1</span><span>2026-04-16</span><span>PURPLE(1)</span></div>
+      <div class="man-foot"><span>purple v2.42.0</span><span>2026-04-17</span><span>PURPLE(1)</span></div>
     </div>
   </div>
 
@@ -1192,7 +1196,7 @@ purple is an open-source terminal SSH manager and SSH config editor written in R
 - Remote file explorer: dual-pane local/remote file browsing with scp transfer. Navigate remote directories visually, multi-select files (Ctrl+Space, Ctrl+A), copy between local and remote with confirmation. Works through ProxyJump, password sources and active tunnels. Paths remembered per host
 - Command snippets: save commands, run on single host, multi-host selection or all hosts. Sequential or parallel execution. TUI and CLI
 - Password management: OS Keychain, 1Password (op://), Bitwarden (bw:), pass (pass:), HashiCorp Vault KV secrets engine (vault:), custom command. Automatic SSH_ASKPASS integration
-- Short-lived SSH certificates via the HashiCorp Vault SSH secrets engine. Per-host or per-provider role configuration (# purple:vault-ssh). Bulk sign with V key. Cert cache under ~/.purple/certs/ with TTL tracking and renewal. Vault SSH address resolved from CLI flag > per-host \`# purple:vault-addr\` > provider \`vault_addr\` > parent shell \`VAULT_ADDR\` env, so users no longer need to export \`VAULT_ADDR\` before launching purple. Distinct from the Vault KV password source above
+- Short-lived SSH certificates via the HashiCorp Vault SSH secrets engine. Per-host or per-provider role configuration (# purple:vault-ssh). Bulk sign with V key. Cert cache under ~/.purple/certs/ with TTL tracking and renewal. Vault SSH address resolved from CLI flag > per-host `# purple:vault-addr` > provider `vault_addr` > parent shell `VAULT_ADDR` env, so users no longer need to export `VAULT_ADDR` before launching purple. Distinct from the Vault KV password source above
 - Container management via SSH (Docker and Podman). View, start, stop and restart containers. Auto-detected runtime. No agent. No web UI. No extra ports. Works with both Docker and Podman
 - SSH tunnel management: LocalForward, RemoteForward, DynamicForward. Start/stop from TUI or CLI
 - Host tagging via SSH config comments. User tags in # purple:tags, provider tags in # purple:provider_tags (exact mirror of remote). Tag picker, fuzzy and exact tag filtering. Bulk tag editor: select hosts with Space, press t to add or remove tags across all selected hosts at once with tri-state checkboxes. Undoable with u
@@ -1209,6 +1213,7 @@ purple is an open-source terminal SSH manager and SSH config editor written in R
 - Shell completions (bash, zsh, fish)
 - Command palette (: key): searchable overlay with 24 actions. Type to filter by name, press Enter to execute. Case-insensitive matching
 - 11 built-in color themes (default: Purple) with custom theme support (~/.purple/themes/*.toml). Works in any terminal, respects NO_COLOR
+- What's new overlay aggregates release notes from skipped versions on first launch after upgrade. Sticky toast invites press n for the modal. Reopen anytime via n or command palette
 
 ## Install
 
@@ -1264,6 +1269,8 @@ purple password remove myserver     # Remove from keychain
 purple vault sign myserver                                            # Sign one host via the HashiCorp Vault SSH secrets engine
 purple vault sign --all                                               # Sign every host with a Vault SSH role configured
 purple vault sign --all --vault-addr https://vault.example.com:8200   # Override Vault address for this run
+purple whats-new                    # Print recent release notes to stdout
+purple whats-new --since 2.40.0     # Print release notes since a specific version
 purple update                       # Self-update
 purple mcp                          # Start MCP server for AI agents (stdio JSON-RPC)
 purple --theme ocean                # Launch TUI with a specific theme
@@ -1289,8 +1296,8 @@ Provider-specific details:
 - Proxmox VE: self-signed TLS certificates supported. Per-VM detail API calls. Guest agent OS detection (shows real OS like "Debian 13" instead of generic kernel version) and LXC interface detection
 - Scaleway: multi-zone sync across Paris, Amsterdam, Warsaw and Milan
 - i3D.net: syncs dedicated/game servers and FlexMetal on-demand bare metal via the i3D.net REST API v3. Static API key via PRIVATE-TOKEN header. Cursor-based pagination for dedicated hosts, offset-based for FlexMetal. FlexMetal tags synced as provider tags
-- Tailscale: dual mode. Without a token it uses the local \`tailscale status --json\` CLI (no API key needed). With a token it uses the Tailscale HTTP API. Tags are synced (tag: prefix stripped). IPv4 (100.x) preferred over IPv6
-- TransIP: syncs VPS instances via the TransIP REST API v6. JWT token authentication (login + private key). Page pagination. \`transip\` alias prefix
+- Tailscale: dual mode. Without a token it uses the local `tailscale status --json` CLI (no API key needed). With a token it uses the Tailscale HTTP API. Tags are synced (tag: prefix stripped). IPv4 (100.x) preferred over IPv6
+- TransIP: syncs VPS instances via the TransIP REST API v6. JWT token authentication (login + private key). Page pagination. `transip` alias prefix
 
 Per-provider auto_sync toggle controls startup sync. Default is true for all providers except Proxmox (default false). Manual sync via the TUI (s key) or CLI always works. Preview changes with --dry-run. Remove deleted hosts with --remove.
 
@@ -1320,7 +1327,7 @@ Supported password sources:
 purple supports HashiCorp's Vault SSH secrets engine for short-lived SSH certificates. This is the SSH signing workflow and is distinct from the Vault KV password source above.
 
 - Configure a role per host (Vault SSH Role field in the host form, stored as # purple:vault-ssh on the host block) or per provider (shared default in the provider config under vault_role, inherited by every host of that provider). Host overrides take precedence over the provider default. Format: mount/sign/role, e.g. ssh-client-signer/sign/engineer. Configure the Vault SSH server address the same way: per-host via the Vault SSH Address field (stored as # purple:vault-addr <url>) or per-provider via vault_addr in the provider config. Both fields are progressively disclosed in the host and provider forms only when a Vault SSH Role is set
-- Signed certs cached under ~/.purple/certs/<alias>-cert.pub, with TTL tracking and automatic renewal when the remaining lifetime drops below threshold. The TUI detail panel reflects external \`purple vault sign\` runs within one render frame via mtime-based cache invalidation (no 5-minute TTL wait)
+- Signed certs cached under ~/.purple/certs/<alias>-cert.pub, with TTL tracking and automatic renewal when the remaining lifetime drops below threshold. The TUI detail panel reflects external `purple vault sign` runs within one render frame via mtime-based cache invalidation (no 5-minute TTL wait)
 - On the first successful signing, purple writes a CertificateFile directive into the host block automatically when the host has none, so OpenSSH actually picks up the signed cert. A user-set CertificateFile is never overwritten. The detail panel's VAULT SSH section shows the role name with a (from <provider>) suffix when inherited. The full address is visible in the edit form (e)
 - Press V in the host list to bulk-sign every host with a role. Progress and errors are reported inline. Press V again to cancel an in-progress run
 - CLI: purple vault sign <alias> signs one host; purple vault sign --all signs every host with a role. Both accept --vault-addr <url> to override the resolved address for that run
@@ -1435,13 +1442,13 @@ Q: How does provider sync handle name conflicts?
 A: Synced hosts get an alias prefix (e.g. do-web-1 for DigitalOcean). If a name collides, purple appends a numeric suffix (do-web-1-2).
 
 Q: How do I install purple?
-A: Three options: \`curl -fsSL getpurple.sh | sh\` (macOS and Linux, recommended), \`brew install erickochen/purple/purple\` (Homebrew on macOS) or \`cargo install purple-ssh\` (any platform with Rust).
+A: Three options: `curl -fsSL getpurple.sh | sh` (macOS and Linux, recommended), `brew install erickochen/purple/purple` (Homebrew on macOS) or `cargo install purple-ssh` (any platform with Rust).
 
 Q: Can I transfer files with purple?
 A: Yes. Press F on any host to open the remote file explorer. It shows your local files on the left and the remote server on the right. Navigate directories with j/k and Enter, select files with Ctrl+Space and press Enter to copy via scp. Works through ProxyJump, password sources and active tunnels. Paths are remembered per host.
 
 Q: Which terminal emulators work with purple?
-A: purple works in any terminal emulator that supports ANSI escape codes. Tested with iTerm2, Terminal.app, Alacritty, kitty, WezTerm, Warp and Windows Terminal (via WSL). It respects NO_COLOR and adapts to three color tiers: modifiers only, ANSI 16 and truecolor.
+A: purple works in any terminal emulator that supports ANSI escape codes. Developed and tested primarily on Ghostty. Also tested with iTerm2, Terminal.app, Alacritty, kitty, WezTerm, Warp and Windows Terminal (via WSL). It respects NO_COLOR and adapts to three color tiers: modifiers only, ANSI 16 and truecolor.
 
 Q: Does purple require an account or subscription?
 A: No. No account, no signup, no telemetry. purple is a local binary that reads and writes your SSH config. Provider sync calls cloud APIs with your own credentials. The only network request purple makes on its own is a GitHub release check for updates (cached 24 hours).
@@ -1493,7 +1500,7 @@ A: Press m in the host list to open the theme picker with live preview. 11 built
 
 ## Status
 
-- Current version: 2.41.1 (April 2026)
+- Current version: 2.42.0 (April 2026)
 - Release cadence: approximately bi-weekly
 - Test suite: 6200+ tests (unit, integration, property-based and HTTP mocking)
 - CI: fmt, clippy, test on macOS and Linux, cargo-deny, MSRV 1.86 check
@@ -1501,7 +1508,7 @@ A: Press m in the host list to open the theme picker with live preview. 11 built
 
 ## Logging and troubleshooting
 
-purple writes structured logs to ~/.purple/purple.log. By default only warnings and errors are logged. Pass --verbose or set the PURPLE_LOG environment variable (trace, debug, info, warn, error, off) for more detail. Run \`purple logs --tail\` to follow the log in real time or \`purple logs --clear\` to delete it. The log file is rotated automatically at 5 MB. Each log entry carries a fault domain prefix: [external] for problems in remote hosts or third-party tools, [config] for local configuration issues and [purple] for internal errors. The startup banner records the purple version, SSH version, terminal capabilities, configured providers and askpass sources so support questions can be diagnosed from the log alone.
+purple writes structured logs to ~/.purple/purple.log. By default only warnings and errors are logged. Pass --verbose or set the PURPLE_LOG environment variable (trace, debug, info, warn, error, off) for more detail. Run `purple logs --tail` to follow the log in real time or `purple logs --clear` to delete it. The log file is rotated automatically at 5 MB. Each log entry carries a fault domain prefix: [external] for problems in remote hosts or third-party tools, [config] for local configuration issues and [purple] for internal errors. The startup banner records the purple version, SSH version, terminal capabilities, configured providers and askpass sources so support questions can be diagnosed from the log alone.
 
 ## Data storage
 

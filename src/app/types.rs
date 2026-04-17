@@ -99,6 +99,12 @@ impl SyncRecord {
     }
 }
 
+/// State for the What's New overlay.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct WhatsNewState {
+    pub scroll: u16,
+}
+
 /// Which screen is currently displayed.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Screen {
@@ -185,6 +191,9 @@ pub enum Screen {
     /// all hosts in `multi_select` in one go. Opened via `t` when a
     /// multi-host selection is active.
     BulkTagEditor,
+    /// What's New overlay: shows recent changelog sections to the user
+    /// after an upgrade. Opened via the upgrade toast or `n` key.
+    WhatsNew(WhatsNewState),
 }
 
 /// Classification of status messages for routing to toast overlay vs footer.

@@ -133,6 +133,17 @@ mod tests {
     }
 
     #[test]
+    fn palette_includes_whats_new() {
+        let commands = crate::app::PaletteCommand::all();
+        assert!(
+            commands
+                .iter()
+                .any(|c| c.key == 'n' && c.label == "what's new"),
+            "palette must include what's new command"
+        );
+    }
+
+    #[test]
     fn palette_renders_filtered_commands() {
         let mut app = test_app();
         app.palette.as_mut().unwrap().push_query('t');

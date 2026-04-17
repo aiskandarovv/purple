@@ -530,6 +530,19 @@ pub fn build_demo_app() -> App {
     app
 }
 
+/// Seed the upgrade toast so `--demo` always demonstrates the what's new flow.
+/// Kept out of `build_demo_app` so visual regression tests get a stable baseline.
+pub fn seed_whats_new_toast(app: &mut App) {
+    let version = env!("CARGO_PKG_VERSION");
+    app.toast = Some(crate::app::StatusMessage {
+        text: crate::messages::whats_new_toast::upgraded(version),
+        class: crate::app::MessageClass::Success,
+        tick_count: 0,
+        sticky: true,
+        created_at: std::time::Instant::now(),
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

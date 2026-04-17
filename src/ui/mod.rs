@@ -21,6 +21,9 @@ pub mod theme;
 mod theme_picker;
 mod tunnel_form;
 mod tunnel_list;
+mod whats_new;
+#[cfg(test)]
+mod whats_new_tests;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -191,6 +194,9 @@ pub fn render(frame: &mut Frame, app: &mut App, anim: &mut crate::animation::Ani
                     known_hosts_count,
                 )
             });
+        }
+        Screen::WhatsNew(_) => {
+            render_overlay(frame, app, anim, |frame, app| whats_new::render(frame, app));
         }
     }
 

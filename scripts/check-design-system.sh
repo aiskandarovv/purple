@@ -93,7 +93,7 @@ fi
 
 # 9. Golden file count matches expected screen count.
 GOLDEN_COUNT=$(ls tests/visual_golden/*.golden 2>/dev/null | wc -l | tr -d ' ')
-EXPECTED_GOLDEN=29
+EXPECTED_GOLDEN=30
 if [ "$GOLDEN_COUNT" != "$EXPECTED_GOLDEN" ]; then
     echo "ERROR: Expected $EXPECTED_GOLDEN golden files, found $GOLDEN_COUNT."
     echo "If you added a new Screen variant, add a visual regression test and update EXPECTED_GOLDEN."

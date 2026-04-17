@@ -12,14 +12,27 @@ pub fn current_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
+/// Max bytes kept from a release-notes headline before caching.
+/// Bounds attacker-controlled input written to ~/.purple/last_version_check.
+const HEADLINE_MAX_BYTES: usize = 200;
+
 /// Extract a one-line headline from release notes for the TUI update badge.
-/// Takes the first non-empty content line, strips leading `- ` bullet marker.
+/// Takes the first non-empty content line, strips leading `- ` bullet marker,
+/// and truncates to `HEADLINE_MAX_BYTES` on a char boundary.
 fn extract_headline(notes: &str) -> Option<String> {
-    notes
+    let line = notes
         .lines()
         .map(|l| l.trim())
-        .find(|l| !l.is_empty() && !l.starts_with('#'))
-        .map(|l| l.strip_prefix("- ").unwrap_or(l).to_string())
+        .find(|l| !l.is_empty() && !l.starts_with('#'))?;
+    let trimmed = line.strip_prefix("- ").unwrap_or(line);
+    if trimmed.len() <= HEADLINE_MAX_BYTES {
+        return Some(trimmed.to_string());
+    }
+    let mut cut = HEADLINE_MAX_BYTES;
+    while cut > 0 && !trimmed.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    Some(trimmed[..cut].to_string())
 }
 
 /// Parse a semver string "X.Y.Z" into a tuple.
@@ -88,8 +101,8 @@ fn check_latest_release(agent: &ureq::Agent) -> Result<ReleaseInfo> {
     extract_release_info(&json)
 }
 
-/// TTL for version check cache (24 hours).
-const VERSION_CHECK_TTL: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+/// TTL for version check cache (1 hour).
+const VERSION_CHECK_TTL: std::time::Duration = std::time::Duration::from_secs(60 * 60);
 
 /// Cached version info: version string and optional headline.
 #[derive(Debug, PartialEq)]
@@ -159,16 +172,16 @@ fn write_version_cache(version: &str, headline: Option<&str>) {
         .unwrap_or_default()
         .as_secs();
     let hl = headline.unwrap_or("");
-    if let Err(e) = std::fs::write(
-        dir.join("last_version_check"),
-        format!("{}\n{}\n{}\n", now, version, hl),
-    ) {
+    let content = format!("{}\n{}\n{}\n", now, version, hl);
+    if let Err(e) =
+        crate::fs_util::atomic_write(&dir.join("last_version_check"), content.as_bytes())
+    {
         debug!("[config] Failed to write version cache: {e}");
     }
 }
 
 /// Spawn a background thread to check for updates. Sends an event if a newer version exists.
-/// Uses a local cache (~/.purple/last_version_check) with a 24h TTL to avoid unnecessary
+/// Uses a local cache (~/.purple/last_version_check) with a 1h TTL to avoid unnecessary
 /// GitHub API calls on frequent startup. Silently does nothing on any error.
 pub fn spawn_version_check(tx: mpsc::Sender<AppEvent>) {
     let _ = std::thread::Builder::new()
@@ -337,47 +350,6 @@ pub fn update_hint() -> &'static str {
     "purple update"
 }
 
-/// Strip light markdown formatting for terminal display.
-/// Removes `#` headers, `**bold**`, `__bold__` and `[text](url)` links.
-/// Also strips control characters (except newline) to prevent terminal escape injection.
-fn strip_markdown(line: &str) -> String {
-    let mut s = line.to_string();
-    // Strip heading markers (longest prefix first)
-    if let Some(rest) = s.strip_prefix("### ") {
-        s = rest.to_string();
-    } else if let Some(rest) = s.strip_prefix("## ") {
-        s = rest.to_string();
-    } else if let Some(rest) = s.strip_prefix("# ") {
-        s = rest.to_string();
-    }
-    // Strip bold markers
-    s = s.replace("**", "");
-    s = s.replace("__", "");
-    // Strip markdown links [text](url) -> text
-    // Search forward from `pos` to guarantee progress and avoid infinite loops
-    let mut pos = 0;
-    while pos < s.len() {
-        if let Some(rel) = s[pos..].find('[') {
-            let start = pos + rel;
-            if let Some(mid) = s[start..].find("](") {
-                if let Some(end) = s[start + mid..].find(')') {
-                    let text = s[start + 1..start + mid].to_string();
-                    s = format!("{}{}{}", &s[..start], text, &s[start + mid + end + 1..]);
-                    pos = start + text.len();
-                    continue;
-                }
-            }
-            // No valid link from this `[`, skip past it
-            pos = start + 1;
-        } else {
-            break;
-        }
-    }
-    // Strip control characters to prevent terminal escape injection
-    s.retain(|c| c == '\n' || !c.is_control());
-    s
-}
-
 /// Self-update the purple binary to the latest release.
 pub fn self_update() -> Result<()> {
     // macOS and Linux only
@@ -420,7 +392,6 @@ pub fn self_update() -> Result<()> {
         .new_agent();
     let info = check_latest_release(&agent)?;
     let latest = info.version;
-    let release_notes = info.notes;
     let current = current_version();
 
     if !is_newer(current, &latest) {
@@ -429,7 +400,7 @@ pub fn self_update() -> Result<()> {
     }
 
     println!("{}", crate::messages::update::available(&latest, current));
-    info!("Update started: {current} -> {latest}");
+    info!("[purple] Update started: {current} -> {latest}");
 
     // Detect target
     let target = match (std::env::consts::ARCH, std::env::consts::OS) {
@@ -561,21 +532,14 @@ pub fn self_update() -> Result<()> {
     }
 
     println!("done.");
-    info!("Update completed: {latest}");
+    info!("[purple] Update completed: {latest}");
     println!(
         "\n  {} installed at {}.",
         bold_purple(&format!("purple v{}", latest)),
         exe_path.display()
     );
 
-    // Show release notes if available from GitHub
-    if !release_notes.is_empty() {
-        println!("\n  {}", bold(crate::messages::update::WHATS_NEW));
-        for line in release_notes.lines() {
-            println!("  {}", strip_markdown(line));
-        }
-    }
-
+    println!("\n  {}", crate::messages::update::WHATS_NEW_HINT);
     println!();
 
     Ok(())

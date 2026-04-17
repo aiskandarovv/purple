@@ -1,6 +1,6 @@
 [package]
 name = "purple-ssh"
-version = "2.41.1"
+version = "2.42.0"
 edition = "2024"
 description = "Open-source terminal SSH manager and SSH config editor. Search hundreds of hosts, sync from 16 clouds, transfer files, manage Docker and Podman over SSH, sign short-lived Vault SSH certs and expose an MCP server for AI agents. Rust TUI, MIT licensed."
 license = "MIT"
@@ -42,6 +42,7 @@ base64 = "0.22"
 libc = "0.2"
 log = "0.4"
 simplelog = "0.12"
+semver = "1"
 
 [dev-dependencies]
 mockito = "1.7.2"

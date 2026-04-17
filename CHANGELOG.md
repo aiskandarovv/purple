@@ -1,34 +1,41 @@
-## 2.41.1
+## 2.42.0 - 2026-04-17
 
-- Picker hints now say Space, matching the actual key
-- Form placeholder hints in the Password Source, ProxyJump, SSH Key, Vault SSH Role and provider Regions/Endpoint fields said "Enter to pick..." while the design system (2.41.0) moved those pickers to Space. The text now matches the keystroke you actually press
-- Every user-facing form hint is now centralized in `src/messages::hints` next to the rest of the message copy, so future edits happen in one place and cannot drift between forms
-- Documentation caught up: `llms.txt`, the landing page, the wiki pages for Password Management, Vault SSH Certificates, Host Patterns and Cloud Providers now instruct "Space" for picker opens
-- Eliminated a flaky test caused by a cross-suite race on the preferences path override. The override is now thread-local in test builds, so handler tests and preferences tests can set and read it independently without colliding on a shared mutex
+- feat: What's New catches up even if you skipped releases
+- feat: Press n on the host list or command palette to reopen the overlay
+- fix: Overlay bullets render without raw markdown and wrap cleanly on narrow terminals
+- fix: Version-check cache writes atomically and survives long release headlines
 
-## 2.41.0
+## 2.41.1 - 2026-04-16
 
-- One consistent look, feel and keyboard everywhere
-- Every screen now shares the same borders, spacing, colors and layout. Pickers, forms, confirm dialogs and detail panels feel like one coherent product instead of 22 pages that drifted apart over time. Future releases cannot regress visually because the rules are locked in at commit time
-- Keyboard shortcuts work the same across every form, picker and confirm. Enter always submits. Space activates the focused field: flip a toggle, open a picker or insert a literal space. No more guessing which key does what on which screen
-- Destructive actions are harder to trigger by accident. A stray keypress next to `y` no longer silently cancels a delete, a Vault SSH bulk sign or a host purge. Confirm dialogs accept only `y`, `n` or Esc, and their labels spell out the stakes (`y delete | Esc keep`, `y sign | Esc skip`) so you know what each choice does before you commit
-- Forms tell you what Space does on the field you're editing. Toggles say `Space toggle`, picker fields say `Space pick`, text fields say `Space insert space`. You learn the shortcuts without opening the help screen
-- Smarter notifications. A shrinking purple bar under each toast shows how much time you have to read it. Errors stay until you acknowledge them so you never miss one. Warnings auto-expire. The queue caps at three so the screen never clutters when things go sideways
-- Unsaved work is protected. Closing the bulk tag editor with pending changes now asks before discarding them
-- Closes [#27](https://github.com/erickochen/purple/issues/27)
+- fix: Picker hints now say Space, matching the key you actually press
+- fix: Password Source, ProxyJump, SSH Key, Vault SSH Role and provider Regions/Endpoint fields all show the correct Space hint
+- fix: Flaky preferences test race eliminated. Handler and preferences tests no longer collide
+- change: Form hint copy centralized in one place so wording stays consistent across forms
+- change: Docs caught up. llms.txt, landing page and wiki now say Space for picker opens
 
-## 2.40.0
+## 2.41.0 - 2026-04-16
 
-- Provider API verification pipeline ([#28](https://github.com/erickochen/purple/issues/28))
-- OpenAPI schema fragments for all 16 providers validate that golden fixtures match the upstream spec. `tests/schema_validation.rs` catches field drift before it breaks syncs
-- Daily changelog monitoring via `scripts/check-api-changelogs.sh` watches 12 provider changelog pages for deprecation keywords. Runs as a GitHub Actions workflow at 06:00 UTC
-- CVE fix: rustls-webpki updated to 0.103.12
-- Fix flaky `bulk_tag_undo` test caused by shared temp file path
+- feat: One consistent look, feel and keyboard everywhere
+- feat: Enter always submits. Space activates the focused field. No more guessing which key does what
+- feat: Confirm dialogs accept only y, n or Esc. Labels spell out the stakes before you commit
+- feat: Toast notifications show a shrinking bar. Errors stay until acknowledged. Warnings auto-expire
+- feat: Focused form fields tell you what Space does. Toggles, pickers and text fields each show their own hint
+- fix: A stray keypress no longer silently triggers destructive actions. Closes [#27](https://github.com/erickochen/purple/issues/27)
+- fix: Closing the bulk tag editor with unsaved changes now asks before discarding them
 
-## 2.39.0
+## 2.40.0 - 2026-04-15
 
-- Contract snapshot tests for API drift detection
-- 32 golden fixture files verified against current provider API docs cover all 16 providers and every documented endpoint. 35 integration tests run on every push to catch response structure changes before they break real syncs
+- feat: Provider sync catches API drift before your config breaks
+- fix: Security update. rustls-webpki CVE patched
+- feat: All 16 providers validated against upstream OpenAPI specs on every push. See [#28](https://github.com/erickochen/purple/issues/28)
+- feat: Daily GitHub Actions watches 12 provider changelog pages for deprecation keywords
+- fix: Flaky bulk_tag_undo test from a shared temp file path
+
+## 2.39.0 - 2026-04-14
+
+- feat: API contract tests catch provider drift before it breaks your syncs
+- feat: 32 golden fixtures cover all 16 providers and every documented endpoint
+- feat: 35 integration tests run on every push to detect response structure changes early
 
 ## 2.38.1
 

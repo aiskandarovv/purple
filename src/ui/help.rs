@@ -58,11 +58,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     };
 
     // chrome = non-content rows the overlay consumes regardless of content.
-    // Host list: 2 borders + top + 2 above info + 2 info + 1 bottom = 8.
+    // Host list: 2 borders + top + logo(6) + gap(1) + 2 above info + 2 info + 1 bottom = 15.
     // Others:   2 borders + top + 1 bottom breathing = 4.
     // Footer renders BELOW the block via `design::form_footer`, so the
     // overlay reserves 1 row of vertical margin for it (saturating_sub(3)).
-    let chrome = if is_host_list { 8 } else { 4 };
+    let chrome = if is_host_list { 15 } else { 4 };
     let max_body = frame.area().height.saturating_sub(chrome);
     let height = (total_lines + chrome).min(frame.area().height.saturating_sub(3));
     let area = super::centered_rect_fixed(overlay_width, height, frame.area());
@@ -87,6 +87,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let rows = if is_host_list {
         Layout::vertical([
             Constraint::Length(1), // top breathing
+            Constraint::Length(6), // logo
+            Constraint::Length(1), // gap after logo
             Constraint::Min(0),    // content cols
             Constraint::Length(2), // breathing above info
             Constraint::Length(2), // wiki + issues info rows
@@ -117,6 +119,18 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     const COL2_W: u16 = 24;
     const CONTENT_W: u16 = COL1_W + COL_GAP + COL2_W;
 
+    // Row indices: host-list layout reserves extra rows for the logo.
+    let content_row = if is_host_list { rows[3] } else { rows[1] };
+    if is_host_list {
+        let logo_lines: Vec<Line> = design::LOGO
+            .iter()
+            .map(|l| {
+                Line::from(Span::styled(*l, theme::accent_bold()))
+                    .alignment(ratatui::layout::Alignment::Center)
+            })
+            .collect();
+        frame.render_widget(Paragraph::new(logo_lines), rows[1]);
+    }
     if use_two_cols {
         let cols = Layout::horizontal([
             Constraint::Fill(1),
@@ -125,19 +139,19 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             Constraint::Length(COL2_W),
             Constraint::Fill(1),
         ])
-        .split(rows[1]);
+        .split(content_row);
         let para1 = Paragraph::new(col1).scroll((app.ui.help_scroll, 0));
         let para2 = Paragraph::new(col2).scroll((app.ui.help_scroll, 0));
         frame.render_widget(para1, cols[1]);
         frame.render_widget(para2, cols[3]);
     } else if col2.is_empty() {
         let para = Paragraph::new(col1).scroll((app.ui.help_scroll, 0));
-        frame.render_widget(para, rows[1]);
+        frame.render_widget(para, content_row);
     } else {
         let mut all = col1;
         all.extend(col2);
         let para = Paragraph::new(all).scroll((app.ui.help_scroll, 0));
-        frame.render_widget(para, rows[1]);
+        frame.render_widget(para, content_row);
     }
 
     // Wiki + issues info block. The wiki line clearly tells the user this
@@ -152,7 +166,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             Constraint::Length(CONTENT_W),
             Constraint::Fill(1),
         ])
-        .split(rows[3]);
+        .split(rows[5]);
         // Prefixes padded to the same column so both URLs line up exactly.
         // "All commands and docs:" = 22 chars + 2 spaces = 24.
         // "Got an idea or a bug?" = 21 chars + 3 spaces = 24.
@@ -271,7 +285,7 @@ fn host_list_columns() -> (Vec<Line<'static>>, Vec<Line<'static>>) {
         section_header("CLIPBOARD"), // row 16 ↔ col2 TOOLS
         blank(),
         help_line("y", "copy ssh command"),
-        blank(),
+        help_line("n", "what's new"),
         blank(),
         blank(),
         blank(),

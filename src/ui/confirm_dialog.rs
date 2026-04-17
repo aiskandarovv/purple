@@ -227,16 +227,7 @@ pub fn render_confirm_vault_sign(frame: &mut Frame, _app: &App, signable: &[Stri
     frame.render_widget(Paragraph::new(footer), footer_area);
 }
 
-/// Block-art logo for the welcome screen (6 lines, ANSI Shadow style).
-/// Lines are trimmed; render code pads to max display width for alignment.
-const LOGO: [&str; 6] = [
-    "\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557} \u{2588}\u{2588}\u{2557}   \u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557} \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557} \u{2588}\u{2588}\u{2557}     \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557}",
-    "\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2551}   \u{2588}\u{2588}\u{2551}\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2551}     \u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2550}\u{2550}\u{255D}",
-    "\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2554}\u{255D}\u{2588}\u{2588}\u{2551}   \u{2588}\u{2588}\u{2551}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2554}\u{255D}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2554}\u{255D}\u{2588}\u{2588}\u{2551}     \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557}  ",
-    "\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2550}\u{255D} \u{2588}\u{2588}\u{2551}   \u{2588}\u{2588}\u{2551}\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2550}\u{255D} \u{2588}\u{2588}\u{2551}     \u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{255D}  ",
-    "\u{2588}\u{2588}\u{2551}     \u{255A}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2554}\u{255D}\u{2588}\u{2588}\u{2551}  \u{2588}\u{2588}\u{2551}\u{2588}\u{2588}\u{2551}     \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557}",
-    "\u{255A}\u{2550}\u{255D}      \u{255A}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{255D} \u{255A}\u{2550}\u{255D}  \u{255A}\u{2550}\u{255D}\u{255A}\u{2550}\u{255D}     \u{255A}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{255D}\u{255A}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{255D}",
-];
+// Welcome logo now pulled from `design::LOGO` (single source of truth).
 
 /// Typewriter delay: ms after logo reveal before text starts.
 const TYPEWRITER_DELAY_MS: u128 = 100;
@@ -306,12 +297,12 @@ pub fn render_welcome(
     let logo_lines_visible = if elapsed <= logo_start {
         0usize
     } else {
-        (((elapsed - logo_start) / LOGO_LINE_INTERVAL_MS) as usize + 1).min(LOGO.len())
+        (((elapsed - logo_start) / LOGO_LINE_INTERVAL_MS) as usize + 1).min(design::LOGO.len())
     };
 
     // Phase 2: Typewriter for text after logo is fully revealed
     let text_start =
-        logo_start + (LOGO.len() as u128) * LOGO_LINE_INTERVAL_MS + TYPEWRITER_DELAY_MS;
+        logo_start + (design::LOGO.len() as u128) * LOGO_LINE_INTERVAL_MS + TYPEWRITER_DELAY_MS;
     let mut char_budget = if elapsed <= text_start {
         0usize
     } else {
@@ -330,7 +321,7 @@ pub fn render_welcome(
     }
 
     // Compute logo display width (max across lines) for alignment padding
-    let logo_max_w = LOGO
+    let logo_max_w = design::LOGO
         .iter()
         .map(|l| UnicodeWidthStr::width(*l))
         .max()
@@ -356,7 +347,7 @@ pub fn render_welcome(
     text.push(Line::from(""));
 
     // Logo (phased line-by-line reveal, padded to uniform width)
-    for (i, logo_line) in LOGO.iter().enumerate() {
+    for (i, logo_line) in design::LOGO.iter().enumerate() {
         if i < logo_lines_visible {
             let w = UnicodeWidthStr::width(*logo_line);
             let pad = logo_max_w.saturating_sub(w);

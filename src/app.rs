@@ -66,8 +66,9 @@ pub use types::{
     ContainerState, DeletedHost, FormBaseline, GroupBy, HostListItem, MessageClass, PingStatus,
     ProviderFormBaseline, ProxyJumpCandidate, ReloadState, Screen, SearchState,
     SnippetFormBaseline, SortMode, StatusMessage, SyncRecord, TagState, TunnelFormBaseline,
-    UiSelection, ViewMode, classify_ping, health_summary_spans, health_summary_spans_for,
-    ping_sort_key, propagate_ping_to_dependents, select_display_tags, status_glyph,
+    UiSelection, ViewMode, WhatsNewState, classify_ping, health_summary_spans,
+    health_summary_spans_for, ping_sort_key, propagate_ping_to_dependents, select_display_tags,
+    status_glyph,
 };
 pub use update::UpdateState;
 pub use vault::VaultState;
@@ -594,6 +595,28 @@ impl App {
         }
     }
 
+    /// Run once after App::new: queue the upgrade toast if the user just
+    /// upgraded past their last-seen version, otherwise seed the preference
+    /// so the next launch is silent.
+    pub fn post_init(&mut self) {
+        let outcome = crate::onboarding::evaluate();
+        if let Some(text) = outcome.upgrade_toast {
+            self.enqueue_sticky_toast(text);
+        }
+    }
+
+    fn enqueue_sticky_toast(&mut self, text: String) {
+        log::debug!("[purple] enqueue sticky toast: {}", text);
+        let msg = StatusMessage {
+            text,
+            class: MessageClass::Success,
+            tick_count: 0,
+            sticky: true,
+            created_at: std::time::Instant::now(),
+        };
+        self.toast = Some(msg);
+    }
+
     /// Set an Info-class status message that displays in the footer only.
     #[deprecated(note = "use notify_info() instead")]
     pub fn set_info_status(&mut self, text: impl Into<String>) {
@@ -795,6 +818,7 @@ impl App {
                 | Screen::TagPicker
                 | Screen::BulkTagEditor
                 | Screen::ThemePicker
+                | Screen::WhatsNew(_)
         ) || self.tags.input.is_some()
         {
             return;
@@ -1085,6 +1109,11 @@ static ALL_PALETTE_COMMANDS: &[PaletteCommand] = &[
     PaletteCommand {
         key: 'm',
         label: "theme",
+        section: "tools",
+    },
+    PaletteCommand {
+        key: 'n',
+        label: "what's new",
         section: "tools",
     },
     PaletteCommand {
