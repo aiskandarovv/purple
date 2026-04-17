@@ -903,3 +903,67 @@ fn container_error_debug() {
     );
     assert!(dbg.contains("test"), "Debug should include message: {dbg}");
 }
+
+// -- Host key verification --------------------------------------------------
+
+#[test]
+fn friendly_error_host_key_verification_failed() {
+    let msg = friendly_container_error("Host key verification failed.", Some(255));
+    assert_eq!(msg, crate::messages::HOST_KEY_UNKNOWN);
+}
+
+#[test]
+fn friendly_error_host_key_not_known() {
+    let stderr = "No ED25519 host key is known for 10.30.0.51 and you have \
+                  requested strict checking.";
+    let msg = friendly_container_error(stderr, Some(255));
+    assert_eq!(msg, crate::messages::HOST_KEY_UNKNOWN);
+}
+
+#[test]
+fn friendly_error_host_key_rsa_not_known() {
+    let msg = friendly_container_error("No RSA host key is known for example.com", Some(255));
+    assert_eq!(msg, crate::messages::HOST_KEY_UNKNOWN);
+}
+
+#[test]
+fn friendly_error_host_key_is_not_known() {
+    let msg = friendly_container_error("This host key is not known by any other names.", Some(255));
+    assert_eq!(msg, crate::messages::HOST_KEY_UNKNOWN);
+}
+
+#[test]
+fn friendly_error_host_key_wins_over_other_matches() {
+    // Stderr containing both a permission-denied fragment and a host-key
+    // failure should route to the host-key message; host-key trust must
+    // always be fixed first before any auth-level diagnosis.
+    let stderr = "Host key verification failed.\nPermission denied (publickey)";
+    let msg = friendly_container_error(stderr, Some(255));
+    assert_eq!(msg, crate::messages::HOST_KEY_UNKNOWN);
+}
+
+#[test]
+fn friendly_error_host_key_changed_remote_identification() {
+    let stderr = "WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!\n\
+                  IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!";
+    let msg = friendly_container_error(stderr, Some(255));
+    assert_eq!(msg, crate::messages::HOST_KEY_CHANGED);
+}
+
+#[test]
+fn friendly_error_host_key_changed_has_changed_variant() {
+    let stderr = "Host key for server.example.com has changed and \
+                  you have requested strict checking.";
+    let msg = friendly_container_error(stderr, Some(255));
+    assert_eq!(msg, crate::messages::HOST_KEY_CHANGED);
+}
+
+#[test]
+fn friendly_error_changed_wins_over_unknown() {
+    // A stderr that contains both "verification failed" and "has changed"
+    // must route to the CHANGED message. Changed-key is security-critical
+    // and takes precedence over the generic "unknown" bucket.
+    let stderr = "Host key for x has changed.\nHost key verification failed.";
+    let msg = friendly_container_error(stderr, Some(255));
+    assert_eq!(msg, crate::messages::HOST_KEY_CHANGED);
+}

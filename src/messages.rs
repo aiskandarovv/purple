@@ -343,6 +343,10 @@ pub fn container_action_complete(action: &str) -> String {
     format!("Container {} complete.", action)
 }
 
+pub const HOST_KEY_UNKNOWN: &str = "Host key unknown. Connect first (Enter) to trust the host.";
+pub const HOST_KEY_CHANGED: &str =
+    "Host key changed. Possible tampering or server re-install. Clear with ssh-keygen -R.";
+
 // ── Import ──────────────────────────────────────────────────────────
 
 pub fn imported_hosts(imported: usize, skipped: usize) -> String {

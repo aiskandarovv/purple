@@ -7,6 +7,7 @@ pub mod event;
 pub mod file_browser;
 pub mod fs_util;
 pub mod mcp;
+pub mod messages;
 pub mod providers;
 pub mod snippet;
 pub mod ssh_config;

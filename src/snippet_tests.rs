@@ -874,3 +874,44 @@ fn test_sanitize_multiple_mixed_sequences() {
     let input = "\x1b[1mbold\x1b[0m \x1b]0;title\x07normal \x01gone";
     assert_eq!(sanitize_output(input), "bold normal gone");
 }
+
+// =========================================================================
+// base_ssh_command: non_interactive flag
+// =========================================================================
+
+fn base_ssh_args(non_interactive: bool) -> Vec<String> {
+    use std::path::Path;
+    let cmd = base_ssh_command(
+        "host1",
+        Path::new("/tmp/cfg"),
+        "true",
+        None,
+        None,
+        false,
+        non_interactive,
+    );
+    cmd.get_args()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect()
+}
+
+#[test]
+fn base_ssh_non_interactive_sets_strict_host_key_checking() {
+    let args = base_ssh_args(true);
+    let pairs: Vec<(&String, &String)> = args.windows(2).map(|w| (&w[0], &w[1])).collect();
+    assert!(
+        pairs
+            .iter()
+            .any(|(k, v)| *k == "-o" && *v == "StrictHostKeyChecking=yes"),
+        "non-interactive ssh must include StrictHostKeyChecking=yes, got: {args:?}"
+    );
+}
+
+#[test]
+fn base_ssh_interactive_omits_strict_host_key_checking() {
+    let args = base_ssh_args(false);
+    assert!(
+        !args.iter().any(|a| a.contains("StrictHostKeyChecking")),
+        "interactive ssh must NOT set StrictHostKeyChecking (let user confirm TOFU), got: {args:?}"
+    );
+}

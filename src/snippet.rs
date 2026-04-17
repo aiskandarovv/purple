@@ -466,6 +466,12 @@ fn read_pipe_capped<R: io::Read>(reader: R) -> String {
 /// Build the base SSH command with shared options for snippet execution.
 /// Sets -F, ConnectTimeout, ControlMaster/ControlPath and ClearAllForwardings.
 /// Also configures askpass and Bitwarden session env vars.
+///
+/// When `non_interactive` is true, adds `-o StrictHostKeyChecking=yes` so an
+/// unknown host returns an error instead of writing a prompt to the controlling
+/// tty. Background fetches (container listings, file browser listings, captured
+/// snippet output) pass `true`. Direct CLI use passes `false` so users retain
+/// normal host-key trust-on-first-use behaviour.
 fn base_ssh_command(
     alias: &str,
     config_path: &Path,
@@ -473,6 +479,7 @@ fn base_ssh_command(
     askpass: Option<&str>,
     bw_session: Option<&str>,
     has_active_tunnel: bool,
+    non_interactive: bool,
 ) -> Command {
     let mut cmd = Command::new("ssh");
     cmd.arg("-F")
@@ -483,6 +490,10 @@ fn base_ssh_command(
         .arg("ControlMaster=no")
         .arg("-o")
         .arg("ControlPath=none");
+
+    if non_interactive {
+        cmd.arg("-o").arg("StrictHostKeyChecking=yes");
+    }
 
     if has_active_tunnel {
         cmd.arg("-o").arg("ClearAllForwardings=yes");
@@ -517,6 +528,7 @@ fn build_snippet_command(
         askpass,
         bw_session,
         has_active_tunnel,
+        true,
     );
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -790,13 +802,17 @@ pub fn run_snippet(
         askpass,
         bw_session,
         has_active_tunnel,
+        capture,
     );
-    cmd.stdin(Stdio::inherit());
 
     if capture {
-        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
     } else {
-        cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+        cmd.stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
     }
 
     if capture {

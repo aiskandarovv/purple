@@ -218,7 +218,21 @@ impl std::fmt::Display for ContainerError {
 /// Translate SSH stderr into a user-friendly error message.
 fn friendly_container_error(stderr: &str, code: Option<i32>) -> String {
     let lower = stderr.to_lowercase();
-    if lower.contains("command not found") {
+    if lower.contains("remote host identification has changed")
+        || (lower.contains("host key for") && lower.contains("has changed"))
+    {
+        log::debug!("[external] Host key CHANGED detected; returning HOST_KEY_CHANGED toast");
+        crate::messages::HOST_KEY_CHANGED.to_string()
+    } else if lower.contains("host key verification failed")
+        || lower.contains("no matching host key")
+        || lower.contains("no ed25519 host key is known")
+        || lower.contains("no rsa host key is known")
+        || lower.contains("no ecdsa host key is known")
+        || lower.contains("host key is not known")
+    {
+        log::debug!("[external] Host key UNKNOWN detected; returning HOST_KEY_UNKNOWN toast");
+        crate::messages::HOST_KEY_UNKNOWN.to_string()
+    } else if lower.contains("command not found") {
         "Docker or Podman not found on remote host.".to_string()
     } else if lower.contains("permission denied") || lower.contains("got permission denied") {
         "Permission denied. Is your user in the docker group?".to_string()

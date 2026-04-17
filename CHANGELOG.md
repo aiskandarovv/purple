@@ -1,3 +1,10 @@
+## 2.42.1 - 2026-04-17
+
+- fix: SSH prompts no longer bleed into the TUI
+- fix: Opening the container overlay on an untrusted host now shows a clear "host key unknown" message instead of raw SSH prompt text leaking across the screen
+- fix: Background SSH fetches (containers, file browser listings) refuse untrusted hosts cleanly. Connect once with Enter to trust a host, then the overlays work as expected
+- change: Captured SSH calls no longer inherit stdin, so nothing can escape into the terminal while purple is drawing
+
 ## 2.42.0 - 2026-04-17
 
 - feat: What's New catches up even if you skipped releases
