@@ -1196,7 +1196,7 @@ purple is an open-source terminal SSH manager and SSH config editor written in R
 - Remote file explorer: dual-pane local/remote file browsing with scp transfer. Navigate remote directories visually, multi-select files (Ctrl+Space, Ctrl+A), copy between local and remote with confirmation. Works through ProxyJump, password sources and active tunnels. Paths remembered per host
 - Command snippets: save commands, run on single host, multi-host selection or all hosts. Sequential or parallel execution. TUI and CLI
 - Password management: OS Keychain, 1Password (op://), Bitwarden (bw:), pass (pass:), HashiCorp Vault KV secrets engine (vault:), custom command. Automatic SSH_ASKPASS integration
-- Short-lived SSH certificates via the HashiCorp Vault SSH secrets engine. Per-host or per-provider role configuration (# purple:vault-ssh). Bulk sign with V key. Cert cache under ~/.purple/certs/ with TTL tracking and renewal. Vault SSH address resolved from CLI flag > per-host `# purple:vault-addr` > provider `vault_addr` > parent shell `VAULT_ADDR` env, so users no longer need to export `VAULT_ADDR` before launching purple. Distinct from the Vault KV password source above
+- Short-lived SSH certificates via the HashiCorp Vault SSH secrets engine. Per-host or per-provider role configuration (# purple:vault-ssh). Bulk sign with V key. Cert cache under ~/.purple/certs/ with TTL tracking and renewal. Vault SSH address resolved from CLI flag > per-host \`# purple:vault-addr\` > provider \`vault_addr\` > parent shell \`VAULT_ADDR\` env, so users no longer need to export \`VAULT_ADDR\` before launching purple. Distinct from the Vault KV password source above
 - Container management via SSH (Docker and Podman). View, start, stop and restart containers. Auto-detected runtime. No agent. No web UI. No extra ports. Works with both Docker and Podman
 - SSH tunnel management: LocalForward, RemoteForward, DynamicForward. Start/stop from TUI or CLI
 - Host tagging via SSH config comments. User tags in # purple:tags, provider tags in # purple:provider_tags (exact mirror of remote). Tag picker, fuzzy and exact tag filtering. Bulk tag editor: select hosts with Space, press t to add or remove tags across all selected hosts at once with tri-state checkboxes. Undoable with u
@@ -1296,8 +1296,8 @@ Provider-specific details:
 - Proxmox VE: self-signed TLS certificates supported. Per-VM detail API calls. Guest agent OS detection (shows real OS like "Debian 13" instead of generic kernel version) and LXC interface detection
 - Scaleway: multi-zone sync across Paris, Amsterdam, Warsaw and Milan
 - i3D.net: syncs dedicated/game servers and FlexMetal on-demand bare metal via the i3D.net REST API v3. Static API key via PRIVATE-TOKEN header. Cursor-based pagination for dedicated hosts, offset-based for FlexMetal. FlexMetal tags synced as provider tags
-- Tailscale: dual mode. Without a token it uses the local `tailscale status --json` CLI (no API key needed). With a token it uses the Tailscale HTTP API. Tags are synced (tag: prefix stripped). IPv4 (100.x) preferred over IPv6
-- TransIP: syncs VPS instances via the TransIP REST API v6. JWT token authentication (login + private key). Page pagination. `transip` alias prefix
+- Tailscale: dual mode. Without a token it uses the local \`tailscale status --json\` CLI (no API key needed). With a token it uses the Tailscale HTTP API. Tags are synced (tag: prefix stripped). IPv4 (100.x) preferred over IPv6
+- TransIP: syncs VPS instances via the TransIP REST API v6. JWT token authentication (login + private key). Page pagination. \`transip\` alias prefix
 
 Per-provider auto_sync toggle controls startup sync. Default is true for all providers except Proxmox (default false). Manual sync via the TUI (s key) or CLI always works. Preview changes with --dry-run. Remove deleted hosts with --remove.
 
@@ -1327,7 +1327,7 @@ Supported password sources:
 purple supports HashiCorp's Vault SSH secrets engine for short-lived SSH certificates. This is the SSH signing workflow and is distinct from the Vault KV password source above.
 
 - Configure a role per host (Vault SSH Role field in the host form, stored as # purple:vault-ssh on the host block) or per provider (shared default in the provider config under vault_role, inherited by every host of that provider). Host overrides take precedence over the provider default. Format: mount/sign/role, e.g. ssh-client-signer/sign/engineer. Configure the Vault SSH server address the same way: per-host via the Vault SSH Address field (stored as # purple:vault-addr <url>) or per-provider via vault_addr in the provider config. Both fields are progressively disclosed in the host and provider forms only when a Vault SSH Role is set
-- Signed certs cached under ~/.purple/certs/<alias>-cert.pub, with TTL tracking and automatic renewal when the remaining lifetime drops below threshold. The TUI detail panel reflects external `purple vault sign` runs within one render frame via mtime-based cache invalidation (no 5-minute TTL wait)
+- Signed certs cached under ~/.purple/certs/<alias>-cert.pub, with TTL tracking and automatic renewal when the remaining lifetime drops below threshold. The TUI detail panel reflects external \`purple vault sign\` runs within one render frame via mtime-based cache invalidation (no 5-minute TTL wait)
 - On the first successful signing, purple writes a CertificateFile directive into the host block automatically when the host has none, so OpenSSH actually picks up the signed cert. A user-set CertificateFile is never overwritten. The detail panel's VAULT SSH section shows the role name with a (from <provider>) suffix when inherited. The full address is visible in the edit form (e)
 - Press V in the host list to bulk-sign every host with a role. Progress and errors are reported inline. Press V again to cancel an in-progress run
 - CLI: purple vault sign <alias> signs one host; purple vault sign --all signs every host with a role. Both accept --vault-addr <url> to override the resolved address for that run
@@ -1442,7 +1442,7 @@ Q: How does provider sync handle name conflicts?
 A: Synced hosts get an alias prefix (e.g. do-web-1 for DigitalOcean). If a name collides, purple appends a numeric suffix (do-web-1-2).
 
 Q: How do I install purple?
-A: Three options: `curl -fsSL getpurple.sh | sh` (macOS and Linux, recommended), `brew install erickochen/purple/purple` (Homebrew on macOS) or `cargo install purple-ssh` (any platform with Rust).
+A: Three options: \`curl -fsSL getpurple.sh | sh\` (macOS and Linux, recommended), \`brew install erickochen/purple/purple\` (Homebrew on macOS) or \`cargo install purple-ssh\` (any platform with Rust).
 
 Q: Can I transfer files with purple?
 A: Yes. Press F on any host to open the remote file explorer. It shows your local files on the left and the remote server on the right. Navigate directories with j/k and Enter, select files with Ctrl+Space and press Enter to copy via scp. Works through ProxyJump, password sources and active tunnels. Paths are remembered per host.
@@ -1508,7 +1508,7 @@ A: Press m in the host list to open the theme picker with live preview. 11 built
 
 ## Logging and troubleshooting
 
-purple writes structured logs to ~/.purple/purple.log. By default only warnings and errors are logged. Pass --verbose or set the PURPLE_LOG environment variable (trace, debug, info, warn, error, off) for more detail. Run `purple logs --tail` to follow the log in real time or `purple logs --clear` to delete it. The log file is rotated automatically at 5 MB. Each log entry carries a fault domain prefix: [external] for problems in remote hosts or third-party tools, [config] for local configuration issues and [purple] for internal errors. The startup banner records the purple version, SSH version, terminal capabilities, configured providers and askpass sources so support questions can be diagnosed from the log alone.
+purple writes structured logs to ~/.purple/purple.log. By default only warnings and errors are logged. Pass --verbose or set the PURPLE_LOG environment variable (trace, debug, info, warn, error, off) for more detail. Run \`purple logs --tail\` to follow the log in real time or \`purple logs --clear\` to delete it. The log file is rotated automatically at 5 MB. Each log entry carries a fault domain prefix: [external] for problems in remote hosts or third-party tools, [config] for local configuration issues and [purple] for internal errors. The startup banner records the purple version, SSH version, terminal capabilities, configured providers and askpass sources so support questions can be diagnosed from the log alone.
 
 ## Data storage
 
