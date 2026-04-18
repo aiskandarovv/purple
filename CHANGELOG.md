@@ -1,3 +1,11 @@
+## 2.42.3 - 2026-04-18
+
+- change: Codebase tune-up: sharper debug trail, snappier renders.
+- change: Debug logs now show every screen navigation, so support bundles explain exactly how you got into a state
+- change: Cloud sync thread-spawn failures log the underlying OS error instead of a generic "failed to start" toast
+- change: Preference-save errors (view mode, sort order) now surface in the debug log instead of being silently dropped
+- fix: Remove a theoretical crash path in toast-timeout calculation when a new message class is added
+
 ## 2.42.2 - 2026-04-18
 
 - change: Snappier host list. Safer, tighter releases.

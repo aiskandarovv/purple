@@ -1,0 +1,348 @@
+//! clap derive structs for the `purple` CLI.
+//!
+//! Everything related to argument parsing lives here so `main.rs` stays
+//! focused on orchestration. `Cli` is the top-level `Parser`; each
+//! `Commands` variant holds the subcommand-specific args.
+
+use clap::{Parser, Subcommand};
+use clap_complete::Shell;
+
+#[derive(Parser)]
+#[command(
+    name = "purple",
+    about = "Your SSH config is a mess. Purple fixes that.",
+    long_about = "Purple is a terminal SSH client for managing your hosts.\n\
+                  Add, edit, delete and connect without opening a text editor.\n\n\
+                  Life's too short for nano ~/.ssh/config.",
+    version
+)]
+pub struct Cli {
+    /// Connect to a host by alias, or filter the TUI
+    #[arg(value_name = "ALIAS")]
+    pub alias: Option<String>,
+
+    /// Connect directly to a host by alias (skip the TUI)
+    #[arg(short, long)]
+    pub connect: Option<String>,
+
+    /// List all configured hosts
+    #[arg(short, long)]
+    pub list: bool,
+
+    /// Path to SSH config file
+    #[arg(long, default_value = "~/.ssh/config")]
+    pub config: String,
+
+    /// Launch with demo data (no real config needed)
+    #[arg(long)]
+    pub demo: bool,
+
+    /// Generate shell completions
+    #[arg(long, value_name = "SHELL")]
+    pub completions: Option<Shell>,
+
+    /// Override theme for this session
+    #[arg(long)]
+    pub theme: Option<String>,
+
+    /// Enable verbose logging (debug level)
+    #[arg(long)]
+    pub verbose: bool,
+
+    #[command(subcommand)]
+    pub command: Option<Commands>,
+}
+
+#[derive(Subcommand)]
+pub enum Commands {
+    /// Quick-add a host: purple add user@host:port --alias myserver
+    Add {
+        /// Target in user@hostname:port format
+        target: String,
+
+        /// Alias for the host (default: derived from hostname)
+        #[arg(short, long)]
+        alias: Option<String>,
+
+        /// Path to identity file (SSH key)
+        #[arg(short, long)]
+        key: Option<String>,
+    },
+    /// Import hosts from a file or known_hosts
+    Import {
+        /// File with one host per line (user@host:port format)
+        file: Option<String>,
+
+        /// Import from ~/.ssh/known_hosts instead
+        #[arg(long)]
+        known_hosts: bool,
+
+        /// Group label for imported hosts
+        #[arg(short, long)]
+        group: Option<String>,
+    },
+    /// Sync hosts from cloud providers (DigitalOcean, Vultr, Linode, Hetzner, UpCloud, Proxmox VE, AWS EC2, Scaleway, GCP, Azure, Tailscale, Oracle Cloud, OVHcloud, Leaseweb, i3D.net, TransIP)
+    Sync {
+        /// Sync a specific provider (default: all configured)
+        provider: Option<String>,
+
+        /// Preview changes without modifying config
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Remove hosts that no longer exist on the provider
+        #[arg(long)]
+        remove: bool,
+    },
+    /// Manage cloud provider configurations
+    Provider {
+        #[command(subcommand)]
+        command: ProviderCommands,
+    },
+    /// Manage SSH tunnels
+    Tunnel {
+        #[command(subcommand)]
+        command: TunnelCommands,
+    },
+    /// Manage passwords in the OS keychain for SSH hosts
+    Password {
+        #[command(subcommand)]
+        command: PasswordCommands,
+    },
+    /// Manage command snippets for quick execution on hosts
+    Snippet {
+        #[command(subcommand)]
+        command: SnippetCommands,
+    },
+    /// Update purple to the latest version
+    Update,
+    /// Start MCP server (Model Context Protocol) for AI agent integration
+    Mcp,
+    /// Manage color themes
+    Theme {
+        #[command(subcommand)]
+        command: ThemeCommands,
+    },
+    /// HashiCorp Vault SSH secrets engine operations (signed SSH certificates)
+    Vault {
+        #[command(subcommand)]
+        command: VaultCommands,
+    },
+    /// View or manage log file
+    Logs {
+        /// Follow log output in real time
+        #[arg(long)]
+        tail: bool,
+
+        /// Delete the log file
+        #[arg(long)]
+        clear: bool,
+    },
+    /// Print release notes since a prior version
+    WhatsNew {
+        /// Only include entries newer than this version (e.g. 2.40.0)
+        #[arg(long)]
+        since: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum VaultCommands {
+    /// Sign an SSH certificate for a host (or --all) via the Vault SSH secrets engine
+    #[command(
+        long_about = "Sign one or more SSH certificates via the HashiCorp Vault SSH secrets engine.\n\n\
+        Prerequisites:\n\
+        - The `vault` CLI is installed and authenticated (run `vault login` or set VAULT_TOKEN)\n\
+        - VAULT_ADDR points at your Vault server\n\
+        - A role is configured on the host (Vault SSH role field in the host form) or\n  \
+          on its provider (provider-level vault_role default)\n\
+        - The SSH secrets engine is enabled on Vault and your token has `update` capability\n  \
+          on the role path\n\n\
+        Signed certificates are cached under ~/.purple/certs/<alias>-cert.pub and\n\
+        `CertificateFile` is wired into the SSH config automatically.\n\n\
+        Distinct from the Vault KV secrets engine used as a password source (`vault:`\n\
+        askpass prefix); see `purple password` for that."
+    )]
+    Sign {
+        /// Host alias to sign (omit for --all)
+        alias: Option<String>,
+        /// Sign all hosts with a Vault SSH role configured
+        #[arg(long)]
+        all: bool,
+        /// Override VAULT_ADDR for this invocation only.
+        /// Highest precedence: flag > per-host comment > provider default > shell env.
+        #[arg(long, value_name = "URL")]
+        vault_addr: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ThemeCommands {
+    /// List available themes
+    List,
+    /// Set the active theme
+    Set {
+        /// Theme name
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
+pub enum ProviderCommands {
+    /// Add or update a provider configuration
+    Add {
+        /// Provider name (digitalocean, vultr, linode, hetzner, upcloud, proxmox, aws, scaleway, gcp, azure, tailscale, oracle, ovh, leaseweb, i3d, transip)
+        provider: String,
+
+        /// API token (or set PURPLE_TOKEN env var, or use --token-stdin)
+        #[arg(long)]
+        token: Option<String>,
+
+        /// Read token from stdin (e.g. from a password manager)
+        #[arg(long)]
+        token_stdin: bool,
+
+        /// Alias prefix (default: provider short label)
+        #[arg(long)]
+        prefix: Option<String>,
+
+        /// Default SSH user (default: root)
+        #[arg(long)]
+        user: Option<String>,
+
+        /// Default identity file
+        #[arg(long)]
+        key: Option<String>,
+
+        /// Base URL for self-hosted providers (required for Proxmox)
+        #[arg(long)]
+        url: Option<String>,
+
+        /// AWS credential profile from ~/.aws/credentials
+        #[arg(long)]
+        profile: Option<String>,
+
+        /// Comma-separated regions, zones or subscription IDs (e.g. us-east-1,eu-west-1 for AWS, fr-par-1,nl-ams-1 for Scaleway, us-central1-a for GCP zones or subscription UUIDs for Azure)
+        #[arg(long)]
+        regions: Option<String>,
+
+        /// GCP project ID
+        #[arg(long)]
+        project: Option<String>,
+
+        /// OCI compartment OCID (Oracle)
+        #[arg(long)]
+        compartment: Option<String>,
+
+        /// Skip TLS certificate verification (for self-signed certs)
+        #[arg(long, conflicts_with = "verify_tls")]
+        no_verify_tls: bool,
+
+        /// Explicitly enable TLS certificate verification (overrides stored setting)
+        #[arg(long, conflicts_with = "no_verify_tls")]
+        verify_tls: bool,
+
+        /// Enable automatic sync on startup
+        #[arg(long, conflicts_with = "no_auto_sync")]
+        auto_sync: bool,
+
+        /// Disable automatic sync on startup
+        #[arg(long, conflicts_with = "auto_sync")]
+        no_auto_sync: bool,
+    },
+    /// List configured providers
+    List,
+    /// Remove a provider configuration
+    Remove {
+        /// Provider name to remove
+        provider: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum TunnelCommands {
+    /// List configured tunnels
+    List {
+        /// Show tunnels for a specific host
+        alias: Option<String>,
+    },
+    /// Add a tunnel to a host
+    Add {
+        /// Host alias
+        alias: String,
+
+        /// Forward spec: L:port:host:port (local), R:port:host:port (remote) or D:port (SOCKS)
+        forward: String,
+    },
+    /// Remove a tunnel from a host
+    Remove {
+        /// Host alias
+        alias: String,
+
+        /// Forward spec: L:port:host:port (local), R:port:host:port (remote) or D:port (SOCKS)
+        forward: String,
+    },
+    /// Start a tunnel (foreground, Ctrl+C to stop)
+    Start {
+        /// Host alias
+        alias: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum PasswordCommands {
+    /// Store a password in the OS keychain for a host
+    Set {
+        /// Host alias
+        alias: String,
+    },
+    /// Remove a password from the OS keychain
+    Remove {
+        /// Host alias
+        alias: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum SnippetCommands {
+    /// List all saved snippets
+    List,
+    /// Add a new snippet
+    Add {
+        /// Snippet name
+        name: String,
+
+        /// Command to run on the remote host
+        command: String,
+
+        /// Short description
+        #[arg(long)]
+        description: Option<String>,
+    },
+    /// Remove a snippet
+    Remove {
+        /// Snippet name
+        name: String,
+    },
+    /// Run a snippet on one or more hosts
+    Run {
+        /// Snippet name
+        name: String,
+
+        /// Host alias (run on a single host)
+        alias: Option<String>,
+
+        /// Run on all hosts matching this tag
+        #[arg(long)]
+        tag: Option<String>,
+
+        /// Run on all hosts
+        #[arg(long)]
+        all: bool,
+
+        /// Run on hosts concurrently
+        #[arg(long)]
+        parallel: bool,
+    },
+}

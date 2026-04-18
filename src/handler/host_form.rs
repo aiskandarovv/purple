@@ -35,7 +35,7 @@ pub(super) fn handle_form(app: &mut App, key: KeyEvent) {
                 app.pending_discard_confirm = false;
                 app.clear_form_mtime();
                 app.form_baseline = None;
-                app.screen = Screen::HostList;
+                app.set_screen(Screen::HostList);
                 app.flush_pending_vault_write();
             }
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
@@ -53,7 +53,7 @@ pub(super) fn handle_form(app: &mut App, key: KeyEvent) {
             } else {
                 app.clear_form_mtime();
                 app.form_baseline = None;
-                app.screen = Screen::HostList;
+                app.set_screen(Screen::HostList);
                 app.flush_pending_vault_write();
             }
         }
@@ -358,7 +358,7 @@ pub(super) fn submit_form(app: &mut App) {
     }
     app.clear_form_mtime();
     app.form_baseline = None;
-    app.screen = Screen::HostList;
+    app.set_screen(Screen::HostList);
     app.select_host_by_alias(&target_alias);
     app.flush_pending_vault_write();
 }

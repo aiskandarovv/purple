@@ -10,10 +10,10 @@ use crate::snippet;
 use crate::ssh_config::model::{HostEntry, SshConfigFile};
 use crate::vault_ssh;
 
-use super::{
-    PasswordCommands, ProviderCommands, SnippetCommands, ThemeCommands, TunnelCommands, askpass,
-    import, logging, preferences, quick_add, should_write_certificate_file, ui,
+use super::cli_args::{
+    PasswordCommands, ProviderCommands, SnippetCommands, ThemeCommands, TunnelCommands,
 };
+use super::{askpass, import, logging, preferences, quick_add, should_write_certificate_file, ui};
 
 pub(super) fn handle_quick_add(
     mut config: SshConfigFile,

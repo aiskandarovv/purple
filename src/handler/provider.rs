@@ -57,7 +57,7 @@ pub(super) fn handle_provider_list(
             for cancel_flag in app.syncing_providers.values() {
                 cancel_flag.store(true, Ordering::Relaxed);
             }
-            app.screen = Screen::HostList;
+            app.set_screen(Screen::HostList);
         }
         KeyCode::Char('j') | KeyCode::Down => {
             crate::app::cycle_selection(&mut app.ui.provider_list_state, provider_count, true);
@@ -129,9 +129,9 @@ pub(super) fn handle_provider_list(
                             expanded: false,
                         }
                     };
-                    app.screen = Screen::ProviderForm {
+                    app.set_screen(Screen::ProviderForm {
                         provider: name.clone(),
-                    };
+                    });
                     app.capture_provider_form_mtime();
                     app.capture_provider_form_baseline();
                 }
@@ -176,9 +176,9 @@ pub(super) fn handle_provider_list(
         }
         KeyCode::Char('?') => {
             let old = std::mem::replace(&mut app.screen, Screen::HostList);
-            app.screen = Screen::Help {
+            app.set_screen(Screen::Help {
                 return_screen: Box::new(old),
-            };
+            });
         }
         KeyCode::Char('X') => {
             if let Some(index) = app.ui.provider_list_state.selected() {
@@ -199,10 +199,10 @@ pub(super) fn handle_provider_list(
                     } else {
                         let aliases: Vec<String> =
                             provider_stale.into_iter().map(|(a, _)| a.clone()).collect();
-                        app.screen = Screen::ConfirmPurgeStale {
+                        app.set_screen(Screen::ConfirmPurgeStale {
                             aliases,
                             provider: Some(name.clone()),
-                        };
+                        });
                     }
                 }
             }
@@ -271,7 +271,7 @@ pub(super) fn handle_provider_form(
                 app.pending_discard_confirm = false;
                 app.clear_form_mtime();
                 app.provider_form_baseline = None;
-                app.screen = Screen::Providers;
+                app.set_screen(Screen::Providers);
                 app.flush_pending_vault_write();
             }
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
@@ -289,7 +289,7 @@ pub(super) fn handle_provider_form(
             } else {
                 app.clear_form_mtime();
                 app.provider_form_baseline = None;
-                app.screen = Screen::Providers;
+                app.set_screen(Screen::Providers);
                 app.flush_pending_vault_write();
             }
         }
@@ -440,7 +440,7 @@ pub(super) fn handle_provider_form(
 fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
     if app.demo_mode {
         app.notify(crate::messages::DEMO_PROVIDER_CHANGES_DISABLED);
-        app.screen = Screen::Providers;
+        app.set_screen(Screen::Providers);
         return;
     }
     let provider_name = match &app.screen {
@@ -618,6 +618,6 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
     }
     app.clear_form_mtime();
     app.provider_form_baseline = None;
-    app.screen = Screen::Providers;
+    app.set_screen(Screen::Providers);
     app.flush_pending_vault_write();
 }

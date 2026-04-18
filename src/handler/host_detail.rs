@@ -79,13 +79,13 @@ pub(super) fn handle_host_detail(app: &mut App, key: KeyEvent) {
     };
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('i') => {
-            app.screen = Screen::HostList;
+            app.set_screen(Screen::HostList);
         }
         KeyCode::Char('?') => {
             let old = std::mem::replace(&mut app.screen, Screen::HostList);
-            app.screen = Screen::Help {
+            app.set_screen(Screen::Help {
                 return_screen: Box::new(old),
-            };
+            });
         }
         KeyCode::Char('e') => {
             if let Some(host) = app.hosts.get(index).cloned() {
@@ -108,7 +108,7 @@ pub(super) fn handle_host_detail(app: &mut App, key: KeyEvent) {
                 if !app.tunnel_list.is_empty() {
                     app.ui.tunnel_list_state.select(Some(0));
                 }
-                app.screen = Screen::TunnelList { alias };
+                app.set_screen(Screen::TunnelList { alias });
             }
         }
         KeyCode::Char('r') => {
@@ -122,9 +122,9 @@ pub(super) fn handle_host_detail(app: &mut App, key: KeyEvent) {
                 if let Some(hint) = stale_hint {
                     app.notify_warning(crate::messages::stale_host(&hint));
                 }
-                app.screen = Screen::SnippetPicker {
+                app.set_screen(Screen::SnippetPicker {
                     target_aliases: vec![alias],
-                };
+                });
                 app.ui.snippet_picker_state = ratatui::widgets::ListState::default();
                 let indices = app.filtered_snippet_indices();
                 if !indices.is_empty() {

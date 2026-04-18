@@ -5,13 +5,13 @@ use crate::app::{App, Screen};
 pub(super) fn handle_tag_picker_screen(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('#') => {
-            app.screen = Screen::HostList;
+            app.set_screen(Screen::HostList);
         }
         KeyCode::Char('?') => {
             let old = std::mem::replace(&mut app.screen, Screen::HostList);
-            app.screen = Screen::Help {
+            app.set_screen(Screen::Help {
                 return_screen: Box::new(old),
-            };
+            });
         }
         KeyCode::Char('j') | KeyCode::Down => {
             app.select_next_tag();
@@ -29,7 +29,7 @@ pub(super) fn handle_tag_picker_screen(app: &mut App, key: KeyEvent) {
             if let Some(index) = app.ui.tag_picker_state.selected() {
                 if let Some(tag) = app.tags.list.get(index) {
                     let tag: String = tag.clone();
-                    app.screen = Screen::HostList;
+                    app.set_screen(Screen::HostList);
                     app.start_search();
                     app.search.query = Some(format!("tag={}", tag));
                     app.apply_filter();

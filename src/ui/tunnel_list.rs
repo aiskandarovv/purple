@@ -41,7 +41,7 @@ pub fn render(frame: &mut Frame, app: &mut App, alias: &str) {
             .map(|rule| {
                 let type_label = format!(" {:<10}", rule.tunnel_type.label());
                 let port_str = if rule.bind_address.is_empty() {
-                    format!("{}", rule.bind_port)
+                    rule.bind_port.to_string()
                 } else if rule.bind_address.contains(':') {
                     format!("[{}]:{}", rule.bind_address, rule.bind_port)
                 } else {

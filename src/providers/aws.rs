@@ -155,7 +155,11 @@ fn sha256_hash(data: &[u8]) -> Vec<u8> {
 }
 
 fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
-    let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC accepts any key size");
+    // INVARIANT: `Hmac::<Sha256>::new_from_slice` only fails when the MAC
+    // implementation rejects the key length. HMAC-SHA256 accepts keys of any
+    // length (RFC 2104 §2), so this branch is unreachable for Hmac<Sha256>.
+    let mut mac = Hmac::<Sha256>::new_from_slice(key)
+        .expect("Hmac::<Sha256>::new_from_slice accepts any key length (RFC 2104)");
     mac.update(data);
     mac.finalize().into_bytes().to_vec()
 }

@@ -62,10 +62,10 @@ pub(super) fn handle_confirm_delete(app: &mut App, key: KeyEvent) {
                     app.notify_warning(crate::messages::host_not_found(&alias));
                 }
             }
-            app.screen = Screen::HostList;
+            app.set_screen(Screen::HostList);
         }
         super::ConfirmAction::No => {
-            app.screen = Screen::HostList;
+            app.set_screen(Screen::HostList);
         }
         super::ConfirmAction::Ignored => {}
     }
@@ -91,11 +91,11 @@ pub(super) fn handle_confirm_vault_sign(
             } else {
                 return;
             };
-            app.screen = Screen::HostList;
+            app.set_screen(Screen::HostList);
             start_vault_bulk_sign(app, signable, events_tx);
         }
         super::ConfirmAction::No => {
-            app.screen = Screen::HostList;
+            app.set_screen(Screen::HostList);
         }
         super::ConfirmAction::Ignored => {}
     }
@@ -322,10 +322,10 @@ pub(super) fn handle_confirm_host_key_reset(app: &mut App, key: KeyEvent) {
                     }
                 }
             }
-            app.screen = Screen::HostList;
+            app.set_screen(Screen::HostList);
         }
         super::ConfirmAction::No => {
-            app.screen = Screen::HostList;
+            app.set_screen(Screen::HostList);
         }
         super::ConfirmAction::Ignored => {}
     }

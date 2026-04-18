@@ -136,7 +136,7 @@ pub(super) fn handle_file_browser(
                 app.file_browser_paths.insert(alias, (local, remote));
             }
             app.file_browser = None;
-            app.screen = Screen::HostList;
+            app.set_screen(Screen::HostList);
         }
         KeyCode::Tab => {
             fb.active_pane = match fb.active_pane {
@@ -576,9 +576,9 @@ pub(super) fn handle_file_browser(
         }
         KeyCode::Char('?') => {
             let old = std::mem::replace(&mut app.screen, Screen::HostList);
-            app.screen = Screen::Help {
+            app.set_screen(Screen::Help {
                 return_screen: Box::new(old),
-            };
+            });
         }
         _ => {}
     }

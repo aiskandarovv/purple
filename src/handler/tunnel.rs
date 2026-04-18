@@ -52,7 +52,7 @@ pub(super) fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
 
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') => {
-            app.screen = Screen::HostList;
+            app.set_screen(Screen::HostList);
         }
         KeyCode::Char('j') | KeyCode::Down => {
             app.select_next_tunnel();
@@ -75,10 +75,10 @@ pub(super) fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
                 }
             }
             app.tunnel_form = crate::app::TunnelForm::new();
-            app.screen = Screen::TunnelForm {
+            app.set_screen(Screen::TunnelForm {
                 alias: alias.clone(),
                 editing: None,
-            };
+            });
             app.capture_form_mtime();
             app.capture_tunnel_form_baseline();
         }
@@ -93,10 +93,10 @@ pub(super) fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
             if let Some(sel) = app.ui.tunnel_list_state.selected() {
                 if let Some(rule) = app.tunnel_list.get(sel) {
                     app.tunnel_form = crate::app::TunnelForm::from_rule(rule);
-                    app.screen = Screen::TunnelForm {
+                    app.set_screen(Screen::TunnelForm {
                         alias: alias.clone(),
                         editing: Some(sel),
-                    };
+                    });
                     app.capture_form_mtime();
                     app.capture_tunnel_form_baseline();
                 }
@@ -166,9 +166,9 @@ pub(super) fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Char('?') => {
             let old = std::mem::replace(&mut app.screen, Screen::HostList);
-            app.screen = Screen::Help {
+            app.set_screen(Screen::Help {
                 return_screen: Box::new(old),
-            };
+            });
         }
         _ => {}
     }
@@ -187,7 +187,7 @@ pub(super) fn handle_tunnel_form(app: &mut App, key: KeyEvent) {
                 app.pending_discard_confirm = false;
                 app.clear_form_mtime();
                 app.tunnel_form_baseline = None;
-                app.screen = Screen::TunnelList { alias };
+                app.set_screen(Screen::TunnelList { alias });
             }
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
                 app.pending_discard_confirm = false;
@@ -204,7 +204,7 @@ pub(super) fn handle_tunnel_form(app: &mut App, key: KeyEvent) {
             } else {
                 app.clear_form_mtime();
                 app.tunnel_form_baseline = None;
-                app.screen = Screen::TunnelList { alias };
+                app.set_screen(Screen::TunnelList { alias });
             }
         }
         KeyCode::Tab | KeyCode::Down => {
@@ -328,7 +328,7 @@ fn submit_tunnel_form(app: &mut App, alias: &str, editing: Option<usize>) {
     app.clear_form_mtime();
     app.tunnel_form_baseline = None;
     app.notify(crate::messages::TUNNEL_SAVED);
-    app.screen = Screen::TunnelList {
+    app.set_screen(Screen::TunnelList {
         alias: alias.to_string(),
-    };
+    });
 }

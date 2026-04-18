@@ -126,13 +126,13 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
         }
         KeyCode::Char('a') => {
             app.form = HostForm::new();
-            app.screen = Screen::AddHost;
+            app.set_screen(Screen::AddHost);
             app.capture_form_mtime();
             app.capture_form_baseline();
         }
         KeyCode::Char('A') => {
             app.form = HostForm::new_pattern();
-            app.screen = Screen::AddHost;
+            app.set_screen(Screen::AddHost);
             app.capture_form_mtime();
             app.capture_form_baseline();
         }
@@ -143,9 +143,9 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
                     return;
                 }
                 app.form = HostForm::from_pattern_entry(&pattern);
-                app.screen = Screen::EditHost {
+                app.set_screen(Screen::EditHost {
                     alias: pattern.pattern,
-                };
+                });
                 app.capture_form_mtime();
                 app.capture_form_baseline();
             } else if let Some(host) = app.selected_host().cloned() {
@@ -159,7 +159,7 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
                     return;
                 }
                 let alias = pattern.pattern.clone();
-                app.screen = Screen::ConfirmDelete { alias };
+                app.set_screen(Screen::ConfirmDelete { alias });
             } else if let Some(host) = app.selected_host() {
                 if let Some(ref source) = host.source_file {
                     let alias = host.alias.clone();
@@ -176,7 +176,7 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
                 if let Some(hint) = stale_hint {
                     app.notify_warning(crate::messages::stale_host(&hint));
                 }
-                app.screen = Screen::ConfirmDelete { alias };
+                app.set_screen(Screen::ConfirmDelete { alias });
             }
         }
         KeyCode::Char('c') => actions::clone_selected(app),
@@ -296,7 +296,7 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
         }
         KeyCode::Char('K') => {
             app.scan_keys();
-            app.screen = Screen::KeyList;
+            app.set_screen(Screen::KeyList);
         }
         KeyCode::Char('t') => {
             // Context-sensitive: with a multi-host selection active, open
@@ -405,7 +405,7 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
                 return;
             }
             if let Some(index) = app.selected_host_index() {
-                app.screen = Screen::HostDetail { index };
+                app.set_screen(Screen::HostDetail { index });
             }
         }
         KeyCode::Char('v') => {
@@ -416,7 +416,9 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
             };
             app.detail_toggle_pending = true;
             app.ui.detail_scroll = 0;
-            let _ = preferences::save_view_mode(app.view_mode);
+            if let Err(e) = preferences::save_view_mode(app.view_mode) {
+                log::warn!("[config] Failed to persist view mode: {e}");
+            }
         }
         KeyCode::Char(']') if app.view_mode == ViewMode::Detailed => {
             app.ui.detail_scroll = app.ui.detail_scroll.saturating_add(1);
@@ -494,7 +496,7 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
             app.ui.theme_picker_saved_name =
                 crate::preferences::load_theme().unwrap_or_else(|| "Purple".to_string());
             app.ui.theme_picker_original = Some(crate::ui::theme::current_theme());
-            app.screen = Screen::ThemePicker;
+            app.set_screen(Screen::ThemePicker);
         }
         KeyCode::Char('T') => {
             if app.is_pattern_selected() {
@@ -515,7 +517,7 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
                 if !app.tunnel_list.is_empty() {
                     app.ui.tunnel_list_state.select(Some(0));
                 }
-                app.screen = Screen::TunnelList { alias };
+                app.set_screen(Screen::TunnelList { alias });
             }
         }
         KeyCode::Char('S') => {
@@ -524,12 +526,12 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
             }
             app.ui.provider_list_state = ratatui::widgets::ListState::default();
             app.ui.provider_list_state.select(Some(0));
-            app.screen = Screen::Providers;
+            app.set_screen(Screen::Providers);
         }
         KeyCode::Char('I') => {
             let count = crate::import::count_known_hosts_candidates();
             if count > 0 {
-                app.screen = Screen::ConfirmImport { count };
+                app.set_screen(Screen::ConfirmImport { count });
             } else {
                 app.notify_warning(crate::messages::NO_IMPORTABLE_HOSTS);
             }
@@ -540,10 +542,10 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
                 app.notify_warning(crate::messages::NO_STALE_HOSTS);
             } else {
                 let aliases: Vec<String> = stale.into_iter().map(|(a, _)| a).collect();
-                app.screen = Screen::ConfirmPurgeStale {
+                app.set_screen(Screen::ConfirmPurgeStale {
                     aliases,
                     provider: None,
-                };
+                });
             }
         }
         KeyCode::Char('V') => actions::initiate_bulk_vault_sign(app),
@@ -645,13 +647,13 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
         KeyCode::Char('n') if app.search.query.is_none() => {
             log::debug!("[purple] opening whats-new overlay via n");
             super::whats_new::dismiss_whats_new_toast(app);
-            app.screen = Screen::WhatsNew(crate::app::WhatsNewState::default());
+            app.set_screen(Screen::WhatsNew(crate::app::WhatsNewState::default()));
         }
         KeyCode::Char('?') => {
             let old = std::mem::replace(&mut app.screen, Screen::HostList);
-            app.screen = Screen::Help {
+            app.set_screen(Screen::Help {
                 return_screen: Box::new(old),
-            };
+            });
         }
         _ => {}
     }

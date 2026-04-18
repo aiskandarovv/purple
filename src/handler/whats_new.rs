@@ -47,7 +47,7 @@ fn close_and_mark_seen(app: &mut App) {
     }
     dismiss_whats_new_toast(app);
     debug!("[purple] whats-new closed, marked seen={}", version);
-    app.screen = Screen::HostList;
+    app.set_screen(Screen::HostList);
 }
 
 pub(super) fn dismiss_whats_new_toast(app: &mut App) {

@@ -16,15 +16,17 @@ pub fn spawn_provider_sync(
     let section_clone = section.clone();
     let tx_fallback = tx.clone();
     let name_fallback = name.clone();
-    if std::thread::Builder::new()
+    log::debug!("Spawning provider sync thread: {name}");
+    if let Err(e) = std::thread::Builder::new()
         .name(format!("sync-{}", name))
         .spawn(move || {
             let provider = match crate::providers::get_provider_with_config(&name, &section_clone) {
                 Some(p) => p,
                 None => {
+                    warn!("[config] Unknown provider requested for sync: {name}");
                     let _ = tx.send(AppEvent::SyncError {
                         provider: name,
-                        message: "Unknown provider.".to_string(),
+                        message: crate::messages::SYNC_UNKNOWN_PROVIDER.to_string(),
                     });
                     return;
                 }
@@ -72,11 +74,14 @@ pub fn spawn_provider_sync(
                 }
             }
         })
-        .is_err()
     {
+        error!(
+            "[purple] Failed to spawn sync thread for {}: {}",
+            name_fallback, e
+        );
         let _ = tx_fallback.send(AppEvent::SyncError {
             provider: name_fallback,
-            message: "Failed to start sync thread.".to_string(),
+            message: crate::messages::SYNC_THREAD_SPAWN_FAILED.to_string(),
         });
     }
 }

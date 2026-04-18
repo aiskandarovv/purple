@@ -813,7 +813,7 @@ fn render_header(
     )];
     // ADDRESS column (hidden in detail_mode)
     if !cols.detail_mode && cols.host > 0 {
-        spans.push(Span::raw(gap.clone()));
+        spans.push(Span::raw(gap.as_str()));
         spans.push(Span::styled(
             format!(
                 "{:<width$}",
@@ -829,14 +829,14 @@ fn render_header(
     }
     // Flex gap between left and right cluster
     if cols.flex_gap > 0 {
-        spans.push(Span::raw(flex));
+        spans.push(Span::raw(flex.as_str()));
     }
     if cols.tags > 0 {
         spans.push(Span::styled(
             format!("{:<width$}", "TAGS", width = cols.tags),
             style,
         ));
-        spans.push(Span::raw(gap.clone()));
+        spans.push(Span::raw(gap.as_str()));
     }
     if cols.history > 0 {
         spans.push(Span::styled(
@@ -886,152 +886,33 @@ fn build_host_item<'a>(
     let q = ctx.query.unwrap_or("");
     let gap = " ".repeat(ctx.cols.gap);
 
-    // Determine which field matches for search highlighting
     let alias_matches = !q.is_empty() && app::contains_ci(&host.alias, q);
     let host_matches = !alias_matches
         && !q.is_empty()
         && (app::contains_ci(&host.hostname, q) || app::contains_ci(&host.user, q));
 
-    let mut spans: Vec<Span> = Vec::new();
-
-    // === NAME column (fixed width) ===
-    let is_stale = host.stale.is_some();
+    let has_jump = !host.proxy_jump.is_empty();
+    let has_tunnels = ctx.tunnel_active || host.tunnel_count > 0;
     let alias_style = if alias_matches {
         theme::highlight_bold()
-    } else if is_stale {
+    } else if host.stale.is_some() {
         theme::muted()
     } else {
         theme::bold()
     };
-    let marker: String = if ctx.multi_selected {
-        format!(" {}", design::ICON_SUCCESS)
-    } else {
-        "  ".to_string()
-    };
-    spans.push(Span::styled(marker, alias_style));
 
-    // Status indicator (2 chars wide): dual-encoded glyph (color + shape)
-    let ping = ctx.ping_status.get(&host.alias);
-    let glyph = app::status_glyph(ping, ctx.spinner_tick);
-    let style = match ping {
-        Some(PingStatus::Reachable { .. }) => theme::online_dot(),
-        Some(PingStatus::Slow { .. }) => theme::warning(),
-        Some(PingStatus::Unreachable) => theme::error(),
-        // Skipped: style unused (glyph is empty → Span::raw), kept for exhaustive match
-        Some(PingStatus::Checking) | Some(PingStatus::Skipped) | None => theme::muted(),
-    };
-    let status_span = if glyph.is_empty() {
-        Span::raw("  ")
-    } else {
-        Span::styled(format!("{} ", glyph), style)
-    };
-    spans.push(status_span);
+    let mut spans: Vec<Span> = Vec::with_capacity(16);
+    push_name_column(&mut spans, host, ctx, alias_style, has_jump, has_tunnels);
 
-    let has_jump = !host.proxy_jump.is_empty();
-    let has_tunnels = ctx.tunnel_active || host.tunnel_count > 0;
-
-    // In detail mode the ADDRESS column is hidden, so append indicators
-    // directly after the alias to keep them visible.
-    if ctx.cols.detail_mode {
-        let indicator_w = (if has_jump { 2 } else { 0 }) + (if has_tunnels { 2 } else { 0 });
-        let alias_budget = ctx.cols.alias.saturating_sub(indicator_w);
-        let alias_truncated = super::truncate(&host.alias, alias_budget);
-        let alias_w = alias_truncated.width();
-        spans.push(Span::styled(alias_truncated, alias_style));
-        if has_jump {
-            let jump_style = if crate::ssh_config::model::proxy_jump_contains_self(
-                &host.proxy_jump,
-                &host.alias,
-            ) {
-                theme::error()
-            } else {
-                theme::muted()
-            };
-            spans.push(Span::styled(" \u{2197}", jump_style)); // ↗
-        }
-        if has_tunnels {
-            let tunnel_style = if ctx.tunnel_active {
-                theme::version()
-            } else {
-                theme::muted()
-            };
-            spans.push(Span::styled(" \u{21C4}", tunnel_style)); // ⇄
-        }
-        let pad = ctx.cols.alias.saturating_sub(alias_w + indicator_w);
-        if pad > 0 {
-            spans.push(Span::raw(" ".repeat(pad)));
-        }
-    } else {
-        let alias_truncated = super::truncate(&host.alias, ctx.cols.alias);
-        spans.push(Span::styled(
-            format!("{:<width$}", alias_truncated, width = ctx.cols.alias),
-            alias_style,
-        ));
-    }
-    // === ADDRESS column (flex width): hostname:port with indicators ===
-    // Hidden in detail_mode (cols.host == 0).
     if ctx.cols.host > 0 {
         spans.push(Span::raw(gap.clone()));
-        let has_port = host.port != 22;
-        let port_suffix = if has_port {
-            format!(":{}", host.port)
-        } else {
-            String::new()
-        };
-        let port_suffix_w = port_suffix.width();
-        let jump_w = if has_jump { 2 } else { 0 }; // " ↗"
-        let tunnel_w = if has_tunnels { 2 } else { 0 }; // " ⇄"
-        let suffix_w = port_suffix_w + jump_w + tunnel_w;
-        let hostname_budget = ctx.cols.host.saturating_sub(suffix_w);
-
-        let mut host_used = 0usize;
-        if host_matches {
-            let trunc = super::truncate(&host.hostname, hostname_budget);
-            host_used += trunc.width();
-            spans.push(Span::styled(trunc, theme::highlight_bold()));
-        } else {
-            let trunc = super::truncate(&host.hostname, hostname_budget);
-            host_used += trunc.width();
-            spans.push(Span::styled(trunc, theme::muted()));
-        }
-        if has_port {
-            spans.push(Span::styled(port_suffix, theme::muted()));
-            host_used += port_suffix_w;
-        }
-        if has_jump {
-            let jump_style = if crate::ssh_config::model::proxy_jump_contains_self(
-                &host.proxy_jump,
-                &host.alias,
-            ) {
-                theme::error() // self-referencing loop
-            } else {
-                theme::muted()
-            };
-            spans.push(Span::styled(" \u{2197}", jump_style)); // ↗
-            host_used += 2;
-        }
-        if has_tunnels {
-            let tunnel_style = if ctx.tunnel_active {
-                theme::version() // purple accent when active
-            } else {
-                theme::muted() // dim when configured but not running
-            };
-            spans.push(Span::styled(" \u{21C4}", tunnel_style)); // ⇄
-            host_used += 2;
-        }
-        // padding
-        let host_pad = ctx.cols.host.saturating_sub(host_used);
-        if host_pad > 0 {
-            spans.push(Span::raw(" ".repeat(host_pad)));
-        }
+        push_address_column(&mut spans, host, ctx, has_jump, has_tunnels, host_matches);
     }
 
-    // === Flex gap between left cluster (NAME+ADDRESS) and right cluster ===
     if ctx.cols.flex_gap > 0 {
         spans.push(Span::raw(" ".repeat(ctx.cols.flex_gap)));
     }
 
-    // === TAGS column (fixed width, +N overflow) ===
     if ctx.cols.tags > 0 {
         let tag_matches = !q.is_empty() && !alias_matches && !host_matches;
         build_tag_column(
@@ -1044,34 +925,167 @@ fn build_host_item<'a>(
             ctx.cols.tags,
         );
         if ctx.cols.history > 0 {
-            spans.push(Span::raw(gap.clone()));
+            // Final use of `gap` — consume rather than clone.
+            spans.push(Span::raw(gap));
         }
     }
 
-    // === LAST column (right-aligned, always muted) ===
     if ctx.cols.history > 0 {
-        if let Some(entry) = ctx.history.entries.get(&host.alias) {
-            let ago = crate::history::ConnectionHistory::format_time_ago(entry.last_connected);
-            if !ago.is_empty() {
-                spans.push(Span::styled(
-                    format!("{:>width$}", ago, width = ctx.cols.history),
-                    theme::muted(),
-                ));
-            } else {
-                spans.push(Span::styled(
-                    format!("{:>width$}", "-", width = ctx.cols.history),
-                    theme::muted(),
-                ));
-            }
-        } else {
-            spans.push(Span::styled(
-                format!("{:>width$}", "-", width = ctx.cols.history),
-                theme::muted(),
-            ));
-        }
+        push_history_column(&mut spans, host, ctx);
     }
 
     ListItem::new(Line::from(spans))
+}
+
+/// Render the NAME column: selection marker, ping status glyph and alias.
+/// In detail mode (where the ADDRESS column is hidden) the proxy-jump and
+/// tunnel indicators are appended here so they stay visible.
+fn push_name_column<'a>(
+    spans: &mut Vec<Span<'a>>,
+    host: &'a crate::ssh_config::model::HostEntry,
+    ctx: &HostItemContext<'_>,
+    alias_style: Style,
+    has_jump: bool,
+    has_tunnels: bool,
+) {
+    let marker: String = if ctx.multi_selected {
+        format!(" {}", design::ICON_SUCCESS)
+    } else {
+        "  ".to_string()
+    };
+    spans.push(Span::styled(marker, alias_style));
+
+    // Status indicator (2 chars wide): dual-encoded glyph (color + shape).
+    let ping = ctx.ping_status.get(&host.alias);
+    let glyph = app::status_glyph(ping, ctx.spinner_tick);
+    let style = match ping {
+        Some(PingStatus::Reachable { .. }) => theme::online_dot(),
+        Some(PingStatus::Slow { .. }) => theme::warning(),
+        Some(PingStatus::Unreachable) => theme::error(),
+        // Skipped: style unused (glyph is empty → Span::raw), kept for exhaustive match
+        Some(PingStatus::Checking) | Some(PingStatus::Skipped) | None => theme::muted(),
+    };
+    spans.push(if glyph.is_empty() {
+        Span::raw("  ")
+    } else {
+        Span::styled(format!("{} ", glyph), style)
+    });
+
+    if ctx.cols.detail_mode {
+        let indicator_w = (if has_jump { 2 } else { 0 }) + (if has_tunnels { 2 } else { 0 });
+        let alias_budget = ctx.cols.alias.saturating_sub(indicator_w);
+        let alias_truncated = super::truncate(&host.alias, alias_budget);
+        let alias_w = alias_truncated.width();
+        spans.push(Span::styled(alias_truncated, alias_style));
+        push_proxy_tunnel_indicators(spans, host, ctx.tunnel_active, has_jump, has_tunnels);
+        let pad = ctx.cols.alias.saturating_sub(alias_w + indicator_w);
+        if pad > 0 {
+            spans.push(Span::raw(" ".repeat(pad)));
+        }
+    } else {
+        let alias_truncated = super::truncate(&host.alias, ctx.cols.alias);
+        spans.push(Span::styled(
+            format!("{:<width$}", alias_truncated, width = ctx.cols.alias),
+            alias_style,
+        ));
+    }
+}
+
+/// Render the ADDRESS column: hostname, optional port suffix and proxy-jump
+/// and tunnel indicators. Budgets hostname width so suffix + indicators fit.
+fn push_address_column<'a>(
+    spans: &mut Vec<Span<'a>>,
+    host: &'a crate::ssh_config::model::HostEntry,
+    ctx: &HostItemContext<'_>,
+    has_jump: bool,
+    has_tunnels: bool,
+    host_matches: bool,
+) {
+    let has_port = host.port != 22;
+    let port_suffix = if has_port {
+        format!(":{}", host.port)
+    } else {
+        String::new()
+    };
+    let port_suffix_w = port_suffix.width();
+    let jump_w = if has_jump { 2 } else { 0 };
+    let tunnel_w = if has_tunnels { 2 } else { 0 };
+    let suffix_w = port_suffix_w + jump_w + tunnel_w;
+    let hostname_budget = ctx.cols.host.saturating_sub(suffix_w);
+
+    let trunc = super::truncate(&host.hostname, hostname_budget);
+    let mut host_used = trunc.width();
+    let hostname_style = if host_matches {
+        theme::highlight_bold()
+    } else {
+        theme::muted()
+    };
+    spans.push(Span::styled(trunc, hostname_style));
+
+    if has_port {
+        spans.push(Span::styled(port_suffix, theme::muted()));
+        host_used += port_suffix_w;
+    }
+    push_proxy_tunnel_indicators(spans, host, ctx.tunnel_active, has_jump, has_tunnels);
+    if has_jump {
+        host_used += 2;
+    }
+    if has_tunnels {
+        host_used += 2;
+    }
+
+    let host_pad = ctx.cols.host.saturating_sub(host_used);
+    if host_pad > 0 {
+        spans.push(Span::raw(" ".repeat(host_pad)));
+    }
+}
+
+/// Append the proxy-jump (↗) and tunnel (⇄) indicator spans. Error colour
+/// on self-referencing ProxyJump; accent colour when a tunnel is active.
+fn push_proxy_tunnel_indicators<'a>(
+    spans: &mut Vec<Span<'a>>,
+    host: &crate::ssh_config::model::HostEntry,
+    tunnel_active: bool,
+    has_jump: bool,
+    has_tunnels: bool,
+) {
+    if has_jump {
+        let jump_style =
+            if crate::ssh_config::model::proxy_jump_contains_self(&host.proxy_jump, &host.alias) {
+                theme::error() // self-referencing loop
+            } else {
+                theme::muted()
+            };
+        spans.push(Span::styled(" \u{2197}", jump_style)); // ↗
+    }
+    if has_tunnels {
+        let tunnel_style = if tunnel_active {
+            theme::version() // purple accent when active
+        } else {
+            theme::muted() // dim when configured but not running
+        };
+        spans.push(Span::styled(" \u{21C4}", tunnel_style)); // ⇄
+    }
+}
+
+/// Render the right-aligned LAST (history) column. Shows `-` when the host
+/// has never been connected to.
+fn push_history_column<'a>(
+    spans: &mut Vec<Span<'a>>,
+    host: &crate::ssh_config::model::HostEntry,
+    ctx: &HostItemContext<'_>,
+) {
+    let ago = ctx
+        .history
+        .entries
+        .get(&host.alias)
+        .map(|e| crate::history::ConnectionHistory::format_time_ago(e.last_connected))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "-".to_string());
+    spans.push(Span::styled(
+        format!("{:>width$}", ago, width = ctx.cols.history),
+        theme::muted(),
+    ));
 }
 
 fn build_pattern_item<'a>(
@@ -1079,7 +1093,7 @@ fn build_pattern_item<'a>(
     cols: &Columns,
 ) -> ListItem<'a> {
     let gap = " ".repeat(cols.gap);
-    let mut spans: Vec<Span> = Vec::new();
+    let mut spans: Vec<Span> = Vec::with_capacity(12);
 
     // NAME column: marker(2) + status area used as "* "(2) + alias at full width.
     // This matches host item layout: marker(2) + status(2) + alias(cols.alias).
@@ -1157,8 +1171,8 @@ fn render_tag_spans(spans: &mut Vec<Span<'_>>, all_tags: &[(String, Style)], wid
             } else {
                 format!("+{}", count)
             };
-            spans.push(Span::styled(overflow.clone(), theme::muted()));
             used += overflow.width();
+            spans.push(Span::styled(overflow, theme::muted()));
             break;
         }
     }

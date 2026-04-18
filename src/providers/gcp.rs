@@ -527,7 +527,7 @@ impl Provider for Gcp {
                             total: page as usize + 1,
                         });
                     }
-                    return Err(ProviderError::Parse(format!("{}", e)));
+                    return Err(ProviderError::Parse(e.to_string()));
                 }
             };
 

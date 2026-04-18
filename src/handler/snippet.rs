@@ -15,9 +15,9 @@ pub(super) fn open_snippet_picker(app: &mut App, aliases: Vec<String>) {
     if !app.snippet_store.snippets.is_empty() {
         app.ui.snippet_picker_state.select(Some(0));
     }
-    app.screen = Screen::SnippetPicker {
+    app.set_screen(Screen::SnippetPicker {
         target_aliases: aliases,
-    };
+    });
 }
 
 pub(super) fn handle_snippet_picker(
@@ -33,9 +33,9 @@ pub(super) fn handle_snippet_picker(
     // Allow ? to open help even during search
     if key.code == KeyCode::Char('?') {
         let old = std::mem::replace(&mut app.screen, Screen::HostList);
-        app.screen = Screen::Help {
+        app.set_screen(Screen::Help {
             return_screen: Box::new(old),
-        };
+        });
         return;
     }
 
@@ -81,7 +81,7 @@ pub(super) fn handle_snippet_picker(
         KeyCode::Esc | KeyCode::Char('q') => {
             app.ui.snippet_search = None;
             app.pending_snippet_delete = None;
-            app.screen = Screen::HostList;
+            app.set_screen(Screen::HostList);
         }
         KeyCode::Char('/') => {
             app.ui.snippet_search = Some(String::new());
@@ -108,20 +108,20 @@ pub(super) fn handle_snippet_picker(
         }
         KeyCode::Char('a') => {
             app.snippet_form = crate::app::SnippetForm::new();
-            app.screen = Screen::SnippetForm {
+            app.set_screen(Screen::SnippetForm {
                 target_aliases: target_aliases.clone(),
                 editing: None,
-            };
+            });
             app.capture_snippet_form_baseline();
         }
         KeyCode::Char('e') => {
             if let Some(sel) = app.ui.snippet_picker_state.selected() {
                 if let Some(snippet) = app.snippet_store.snippets.get(sel) {
                     app.snippet_form = crate::app::SnippetForm::from_snippet(snippet);
-                    app.screen = Screen::SnippetForm {
+                    app.set_screen(Screen::SnippetForm {
                         target_aliases: target_aliases.clone(),
                         editing: Some(sel),
-                    };
+                    });
                     app.capture_snippet_form_baseline();
                 }
             }
@@ -167,14 +167,14 @@ fn run_or_prompt_params(
     if !params.is_empty() {
         app.snippet_param_form = Some(crate::app::SnippetParamFormState::new(&params));
         app.pending_snippet_terminal = terminal_mode;
-        app.screen = Screen::SnippetParamForm {
+        app.set_screen(Screen::SnippetParamForm {
             snippet,
             target_aliases,
-        };
+        });
     } else if terminal_mode {
         app.pending_snippet = Some((snippet, target_aliases));
         app.multi_select.clear();
-        app.screen = Screen::HostList;
+        app.set_screen(Screen::HostList);
     } else {
         app.multi_select.clear();
         start_snippet_output(app, &snippet, &target_aliases, events_tx);
@@ -221,10 +221,10 @@ fn start_snippet_output(
         cancel: cancel.clone(),
     });
 
-    app.screen = Screen::SnippetOutput {
+    app.set_screen(Screen::SnippetOutput {
         snippet_name: snippet.name.clone(),
         target_aliases: target_aliases.to_vec(),
-    };
+    });
 
     crate::snippet::spawn_snippet_execution(
         run_id,
@@ -275,7 +275,7 @@ pub(super) fn handle_snippet_output(app: &mut App, key: KeyEvent) {
                 }
             }
             app.snippet_output = None;
-            app.screen = Screen::HostList;
+            app.set_screen(Screen::HostList);
         }
         KeyCode::Char('j') | KeyCode::Down => {
             if let Some(ref mut state) = app.snippet_output {
@@ -365,9 +365,9 @@ pub(super) fn handle_snippet_output(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Char('?') => {
             let old = std::mem::replace(&mut app.screen, Screen::HostList);
-            app.screen = Screen::Help {
+            app.set_screen(Screen::Help {
                 return_screen: Box::new(old),
-            };
+            });
         }
         _ => {}
     }
@@ -480,7 +480,7 @@ pub(super) fn handle_snippet_param_form(
                 app.pending_discard_confirm = false;
                 app.snippet_param_form = None;
                 app.pending_snippet_terminal = false;
-                app.screen = Screen::SnippetPicker { target_aliases };
+                app.set_screen(Screen::SnippetPicker { target_aliases });
             }
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
                 app.pending_discard_confirm = false;
@@ -497,7 +497,7 @@ pub(super) fn handle_snippet_param_form(
             } else {
                 app.snippet_param_form = None;
                 app.pending_snippet_terminal = false;
-                app.screen = Screen::SnippetPicker { target_aliases };
+                app.set_screen(Screen::SnippetPicker { target_aliases });
             }
         }
         KeyCode::Tab | KeyCode::Down if form.focused_index + 1 < form.params.len() => {
@@ -536,7 +536,7 @@ pub(super) fn handle_snippet_param_form(
             if terminal_mode {
                 app.pending_snippet = Some((resolved, target_aliases));
                 app.multi_select.clear();
-                app.screen = Screen::HostList;
+                app.set_screen(Screen::HostList);
             } else {
                 app.multi_select.clear();
                 start_snippet_output(app, &resolved, &target_aliases, events_tx);
@@ -570,9 +570,9 @@ pub(super) fn handle_snippet_form(app: &mut App, key: KeyEvent) {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
                 app.pending_discard_confirm = false;
                 app.snippet_form_baseline = None;
-                app.screen = Screen::SnippetPicker {
+                app.set_screen(Screen::SnippetPicker {
                     target_aliases: target_aliases.clone(),
-                };
+                });
             }
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
                 app.pending_discard_confirm = false;
@@ -588,9 +588,9 @@ pub(super) fn handle_snippet_form(app: &mut App, key: KeyEvent) {
                 app.pending_discard_confirm = true;
             } else {
                 app.snippet_form_baseline = None;
-                app.screen = Screen::SnippetPicker {
+                app.set_screen(Screen::SnippetPicker {
                     target_aliases: target_aliases.clone(),
-                };
+                });
             }
         }
         KeyCode::Tab | KeyCode::Down => {
@@ -692,7 +692,7 @@ fn submit_snippet_form(app: &mut App, target_aliases: &[String], editing: Option
     } else {
         app.notify(crate::messages::snippet_updated(&name));
     }
-    app.screen = Screen::SnippetPicker {
+    app.set_screen(Screen::SnippetPicker {
         target_aliases: target_aliases.to_vec(),
-    };
+    });
 }

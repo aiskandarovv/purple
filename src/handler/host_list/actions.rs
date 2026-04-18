@@ -21,7 +21,7 @@ pub(super) fn clone_selected(app: &mut App) {
         form.alias.clear();
         form.cursor_pos = 0;
         app.form = form;
-        app.screen = Screen::AddHost;
+        app.set_screen(Screen::AddHost);
         app.capture_form_mtime();
         app.capture_form_baseline();
         return;
@@ -53,7 +53,7 @@ pub(super) fn clone_selected(app: &mut App) {
             app.notify(crate::messages::CLONED_VAULT_CLEARED);
         }
         app.form = form;
-        app.screen = Screen::AddHost;
+        app.set_screen(Screen::AddHost);
         app.capture_form_mtime();
         app.capture_form_baseline();
     }
@@ -160,9 +160,9 @@ pub(super) fn initiate_bulk_vault_sign(app: &mut App) {
         return;
     }
 
-    app.screen = Screen::ConfirmVaultSign {
+    app.set_screen(Screen::ConfirmVaultSign {
         signable: needs_signing,
-    };
+    });
 }
 
 /// `F` — open the file browser overlay for the selected host. Spawns a
@@ -232,9 +232,9 @@ pub(super) fn open_file_browser(app: &mut App, events_tx: &mpsc::Sender<AppEvent
         connection_recorded: false,
     };
     app.file_browser = Some(fb);
-    app.screen = Screen::FileBrowser {
+    app.set_screen(Screen::FileBrowser {
         alias: alias.clone(),
-    };
+    });
     // Fetch remote home dir in background
     let tx = events_tx.clone();
     let remote = remote_path;
@@ -316,9 +316,9 @@ pub(super) fn open_container_overlay(app: &mut App, events_tx: &mpsc::Sender<App
         action_in_progress: None,
         confirm_action: None,
     });
-    app.screen = Screen::Containers {
+    app.set_screen(Screen::Containers {
         alias: alias.clone(),
-    };
+    });
     if !app.demo_mode {
         let has_tunnel = app.active_tunnels.contains_key(&alias);
         let ctx = crate::ssh_context::OwnedSshContext {

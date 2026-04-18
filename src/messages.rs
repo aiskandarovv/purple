@@ -497,6 +497,10 @@ pub fn synced_done(names: &str) -> String {
     format!("Synced: {}", names)
 }
 
+pub const SYNC_THREAD_SPAWN_FAILED: &str = "Failed to start sync thread.";
+
+pub const SYNC_UNKNOWN_PROVIDER: &str = "Unknown provider.";
+
 // ── Vault signing cancelled summary ─────────────────────────────────
 
 pub fn vault_signing_cancelled_summary(

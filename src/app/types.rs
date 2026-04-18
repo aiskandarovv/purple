@@ -196,6 +196,43 @@ pub enum Screen {
     WhatsNew(WhatsNewState),
 }
 
+impl Screen {
+    /// Stable short variant name used in state-transition logs.
+    /// Omits inner fields so log lines never leak host aliases, paths or
+    /// tokens.
+    pub fn variant_name(&self) -> &'static str {
+        match self {
+            Screen::HostList => "HostList",
+            Screen::AddHost => "AddHost",
+            Screen::EditHost { .. } => "EditHost",
+            Screen::ConfirmDelete { .. } => "ConfirmDelete",
+            Screen::Help { .. } => "Help",
+            Screen::KeyList => "KeyList",
+            Screen::KeyDetail { .. } => "KeyDetail",
+            Screen::HostDetail { .. } => "HostDetail",
+            Screen::TagPicker => "TagPicker",
+            Screen::ThemePicker => "ThemePicker",
+            Screen::Providers => "Providers",
+            Screen::ProviderForm { .. } => "ProviderForm",
+            Screen::TunnelList { .. } => "TunnelList",
+            Screen::TunnelForm { .. } => "TunnelForm",
+            Screen::SnippetPicker { .. } => "SnippetPicker",
+            Screen::SnippetForm { .. } => "SnippetForm",
+            Screen::SnippetOutput { .. } => "SnippetOutput",
+            Screen::SnippetParamForm { .. } => "SnippetParamForm",
+            Screen::ConfirmHostKeyReset { .. } => "ConfirmHostKeyReset",
+            Screen::FileBrowser { .. } => "FileBrowser",
+            Screen::Containers { .. } => "Containers",
+            Screen::ConfirmImport { .. } => "ConfirmImport",
+            Screen::ConfirmPurgeStale { .. } => "ConfirmPurgeStale",
+            Screen::ConfirmVaultSign { .. } => "ConfirmVaultSign",
+            Screen::Welcome { .. } => "Welcome",
+            Screen::BulkTagEditor => "BulkTagEditor",
+            Screen::WhatsNew(_) => "WhatsNew",
+        }
+    }
+}
+
 /// Classification of status messages for routing to toast overlay vs footer.
 ///
 /// Five levels: Success / Info / Warning / Error / Progress. Severity rises
@@ -260,9 +297,6 @@ impl StatusMessage {
     /// rate. Both `tick_toast` (expiry) and `render_toast` (drain bar)
     /// compare `created_at.elapsed()` against this value.
     pub fn timeout_ms(&self) -> u64 {
-        if matches!(self.class, MessageClass::Error | MessageClass::Progress) {
-            return u64::MAX;
-        }
         let words = self
             .text
             .split_whitespace()
@@ -272,9 +306,7 @@ impl StatusMessage {
         let min_ms = match self.class {
             MessageClass::Success | MessageClass::Info => crate::ui::design::TIMEOUT_MIN_MS,
             MessageClass::Warning => crate::ui::design::TIMEOUT_MIN_WARNING_MS,
-            MessageClass::Error | MessageClass::Progress => {
-                unreachable!("Error and Progress return early above")
-            }
+            MessageClass::Error | MessageClass::Progress => return u64::MAX,
         };
         min_ms.max(proportional)
     }

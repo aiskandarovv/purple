@@ -178,7 +178,7 @@ impl TunnelRule {
     /// Format for display in the TUI.
     pub fn display(&self) -> String {
         let bind = if self.bind_address.is_empty() {
-            format!("{}", self.bind_port)
+            self.bind_port.to_string()
         } else {
             Self::format_addr_port(&self.bind_address, self.bind_port)
         };

@@ -14,7 +14,7 @@ pub(super) fn handle_theme_picker(app: &mut App, key: KeyEvent) {
     let total = builtins.len() + if has_custom { 1 + custom.len() } else { 0 };
 
     if total == 0 {
-        app.screen = Screen::HostList;
+        app.set_screen(Screen::HostList);
         return;
     }
 
@@ -27,13 +27,13 @@ pub(super) fn handle_theme_picker(app: &mut App, key: KeyEvent) {
             app.ui.theme_picker_builtins = Vec::new();
             app.ui.theme_picker_custom = Vec::new();
             app.ui.theme_picker_saved_name = String::new();
-            app.screen = Screen::HostList;
+            app.set_screen(Screen::HostList);
         }
         KeyCode::Char('?') => {
             let old = std::mem::replace(&mut app.screen, Screen::HostList);
-            app.screen = Screen::Help {
+            app.set_screen(Screen::Help {
                 return_screen: Box::new(old),
-            };
+            });
         }
         KeyCode::Char('j') | KeyCode::Down => {
             let current = app.ui.theme_picker_state.selected().unwrap_or(0);
@@ -75,7 +75,7 @@ pub(super) fn handle_theme_picker(app: &mut App, key: KeyEvent) {
             app.ui.theme_picker_custom = Vec::new();
             app.ui.theme_picker_saved_name = String::new();
             app.ui.theme_picker_original = None;
-            app.screen = Screen::HostList;
+            app.set_screen(Screen::HostList);
         }
         _ => {}
     }

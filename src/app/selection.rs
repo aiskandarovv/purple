@@ -14,6 +14,20 @@ use crate::ssh_config::model::{HostEntry, PatternEntry};
 use crate::ssh_keys;
 
 impl App {
+    /// Transition to a new screen. Logs the transition at debug level for
+    /// support-bundle traceability. Callers should prefer this over direct
+    /// `app.screen = ...` assignment.
+    pub fn set_screen(&mut self, screen: Screen) {
+        if self.screen != screen {
+            log::debug!(
+                "screen: {} → {}",
+                self.screen.variant_name(),
+                screen.variant_name()
+            );
+        }
+        self.screen = screen;
+    }
+
     /// Get the host index from the currently selected display list item.
     pub fn selected_host_index(&self) -> Option<usize> {
         if self.search.query.is_some() {

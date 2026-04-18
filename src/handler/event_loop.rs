@@ -740,7 +740,7 @@ pub(crate) fn handle_cert_check_result(
     status: vault_ssh::CertStatus,
 ) {
     app.vault.cert_checks_in_flight.remove(&alias);
-    let mtime = crate::current_cert_mtime(&alias, app);
+    let mtime = crate::tui_loop::current_cert_mtime(&alias, app);
     app.vault
         .cert_cache
         .insert(alias, (Instant::now(), status, mtime));

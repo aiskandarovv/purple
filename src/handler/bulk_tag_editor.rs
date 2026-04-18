@@ -21,7 +21,7 @@ pub(super) fn handle_bulk_tag_editor_screen(app: &mut App, key: KeyEvent) {
         match super::route_confirm_key(key) {
             super::ConfirmAction::Yes => {
                 app.pending_discard_confirm = false;
-                app.screen = Screen::HostList;
+                app.set_screen(Screen::HostList);
                 app.bulk_tag_editor = BulkTagEditorState::default();
             }
             super::ConfirmAction::No => {
@@ -40,15 +40,15 @@ pub(super) fn handle_bulk_tag_editor_screen(app: &mut App, key: KeyEvent) {
             if app.bulk_tag_editor.is_dirty() {
                 app.pending_discard_confirm = true;
             } else {
-                app.screen = Screen::HostList;
+                app.set_screen(Screen::HostList);
                 app.bulk_tag_editor = BulkTagEditorState::default();
             }
         }
         KeyCode::Char('?') => {
             let old = std::mem::replace(&mut app.screen, Screen::HostList);
-            app.screen = Screen::Help {
+            app.set_screen(Screen::Help {
                 return_screen: Box::new(old),
-            };
+            });
         }
         KeyCode::Char('j') | KeyCode::Down => {
             app.bulk_tag_editor_next();
@@ -65,7 +65,7 @@ pub(super) fn handle_bulk_tag_editor_screen(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Enter => match app.bulk_tag_apply() {
             Ok(result) => {
-                app.screen = Screen::HostList;
+                app.set_screen(Screen::HostList);
                 app.bulk_tag_editor = BulkTagEditorState::default();
                 let msg = format_apply_status(&result);
                 if !msg.is_empty() {

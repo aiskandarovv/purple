@@ -31,13 +31,13 @@ pub(super) fn handle_help(app: &mut App, key: KeyEvent) {
 pub(super) fn handle_key_list(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Char('q') | KeyCode::Esc | KeyCode::Char('K') => {
-            app.screen = Screen::HostList;
+            app.set_screen(Screen::HostList);
         }
         KeyCode::Char('?') => {
             let old = std::mem::replace(&mut app.screen, Screen::HostList);
-            app.screen = Screen::Help {
+            app.set_screen(Screen::Help {
                 return_screen: Box::new(old),
-            };
+            });
         }
         KeyCode::Char('j') | KeyCode::Down => {
             app.select_next_key();
@@ -54,7 +54,7 @@ pub(super) fn handle_key_list(app: &mut App, key: KeyEvent) {
         KeyCode::Enter => {
             if let Some(index) = app.ui.key_list_state.selected() {
                 if index < app.keys.len() {
-                    app.screen = Screen::KeyDetail { index };
+                    app.set_screen(Screen::KeyDetail { index });
                 }
             }
         }
@@ -65,13 +65,13 @@ pub(super) fn handle_key_list(app: &mut App, key: KeyEvent) {
 pub(super) fn handle_key_detail(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') => {
-            app.screen = Screen::KeyList;
+            app.set_screen(Screen::KeyList);
         }
         KeyCode::Char('?') => {
             let old = std::mem::replace(&mut app.screen, Screen::HostList);
-            app.screen = Screen::Help {
+            app.set_screen(Screen::Help {
                 return_screen: Box::new(old),
-            };
+            });
         }
         _ => {}
     }

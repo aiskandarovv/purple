@@ -49,7 +49,7 @@ pub(super) fn handle_containers(
             // No confirm pending (the early-return above handles that case):
             // close the overlay.
             app.container_state = None;
-            app.screen = Screen::HostList;
+            app.set_screen(Screen::HostList);
         }
         KeyCode::Up | KeyCode::Char('k') => {
             if let Some(ref mut state) = app.container_state {
@@ -169,9 +169,9 @@ pub(super) fn handle_containers(
         }
         KeyCode::Char('?') => {
             let old = std::mem::replace(&mut app.screen, Screen::HostList);
-            app.screen = Screen::Help {
+            app.set_screen(Screen::Help {
                 return_screen: Box::new(old),
-            };
+            });
         }
         _ => {}
     }
