@@ -39,9 +39,11 @@ pub fn evaluate() -> PostInitOutcome {
     let sections = crate::changelog::cached();
     let shown = crate::changelog::versions_to_show(sections, last.as_ref(), &current, 5);
     if shown.is_empty() {
-        if let Err(e) = crate::preferences::save_last_seen_version(&current.to_string()) {
-            log::warn!("[purple] failed to seed last_seen_version: {}", e);
-        }
+        // Do not silently advance last_seen_version here. Bumping it on every
+        // launch lets dev builds with a higher Cargo.toml version race ahead of
+        // the installed release, which then suppresses the upgrade toast on the
+        // next real install. last_seen_version only advances via explicit user
+        // actions (Welcome close, What's New close).
         return PostInitOutcome {
             upgrade_toast: None,
         };
@@ -86,6 +88,14 @@ mod tests {
             preferences::save_last_seen_version(&current()).unwrap();
             let outcome = evaluate();
             assert!(outcome.upgrade_toast.is_none());
+            // evaluate() must never rewrite last_seen_version: any write
+            // would race ahead of the installed release and suppress a
+            // legitimate upgrade toast after a brew/curl install.
+            assert_eq!(
+                preferences::load_last_seen_version().unwrap().as_deref(),
+                Some(current().as_str()),
+                "evaluate() must not touch last_seen_version when up-to-date"
+            );
         });
     }
 
@@ -112,6 +122,48 @@ mod tests {
                 "expected upgrade toast with invite fragment"
             );
         });
+    }
+
+    #[test]
+    fn evaluate_never_writes_last_seen_version() {
+        // Regression: the old `shown.is_empty()` arm silently wrote
+        // last_seen_version = current, which let dev builds (Cargo.toml
+        // version ahead of any CHANGELOG entry) race ahead of the next
+        // installed release and suppress its upgrade toast. The fix is a
+        // pure delete of that write — evaluate() now never mutates the
+        // pref on ANY code path. The `shown.is_empty()` arm itself is
+        // hard to reach without stubbing `changelog::cached()` because a
+        // shipped CHANGELOG.md always has entries in the current-version
+        // range, so this property-style test sweeps every reachable arm
+        // (first-launch, up-to-date, downgrade, upgrade-with-sections,
+        // unparseable) and asserts the pref comes out exactly as it went
+        // in. If someone re-introduces a pref-write in any arm, at least
+        // one of these scenarios will catch it.
+        let scenarios: &[(&str, Option<&str>)] = &[
+            ("first_launch", None),
+            ("same_version", Some(env!("CARGO_PKG_VERSION"))),
+            ("downgrade", Some("999.0.0")),
+            ("older_version", Some("0.0.1")),
+            ("unparseable", Some("not-a-semver")),
+        ];
+        for (label, input) in scenarios {
+            preferences::tests_helpers::with_temp_prefs(
+                &format!("onboarding_no_writes_{label}"),
+                |_| {
+                    if let Some(v) = input {
+                        preferences::save_last_seen_version(v).unwrap();
+                    }
+                    let _ = evaluate();
+                    let after = preferences::load_last_seen_version().unwrap();
+                    assert_eq!(
+                        after.as_deref(),
+                        *input,
+                        "[{}] evaluate() must not touch last_seen_version",
+                        label
+                    );
+                },
+            );
+        }
     }
 
     #[test]

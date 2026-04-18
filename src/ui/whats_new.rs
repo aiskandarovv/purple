@@ -53,9 +53,10 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(""));
-    for logo_line in design::LOGO {
+    for i in 0..design::LOGO.len() {
         lines.push(
-            Line::from(Span::styled(logo_line, theme::accent_bold())).alignment(Alignment::Center),
+            design::logo_line(i, theme::accent_bold(), theme::logo_dot())
+                .alignment(Alignment::Center),
         );
     }
     lines.push(Line::from(""));

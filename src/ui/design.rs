@@ -25,16 +25,69 @@ pub const FOOTER_GAP: &str = "  ";
 /// Gap between columns in list rows.
 pub const COL_GAP: u16 = 2;
 
-/// Canonical lowercase "purple" wordmark (6 lines, figlet Standard font).
-/// Single source of truth for every overlay that shows the brand.
-pub const LOGO: [&str; 6] = [
-    "                        _      ",
-    " _ __  _   _ _ __ _ __ | | ___ ",
-    "| '_ \\| | | | '__| '_ \\| |/ _ \\",
-    "| |_) | |_| | |  | |_) | |  __/",
-    "| .__/ \\__,_|_|  | .__/|_|\\___|",
-    "|_|              |_|           ",
+/// Canonical lowercase "purple." wordmark rendered with the FIGlet `thin`
+/// font — ASCII line-art using just `,` `.` `-` `|` `\`` `'` strokes. At
+/// 5 rows × 31 cols it stays minimalist and reads as thin hand-drawn
+/// strokes, which is the closest a cell-grid can get to Berkeley Mono's
+/// Light-weight aesthetic without the pixel-quantisation artefacts that
+/// plague braille/quadrant rasterisations at this scale.
+///
+/// The trailing `o` on row 3 is FIGlet `thin`'s native `.` glyph — a
+/// small circle that visually matches the word's stroke weight. It sits
+/// at `[LOGO_DOT_COL_START..LOGO_DOT_COL_END]` and is coloured with
+/// `theme::logo_dot` (cyan) so the dot echoes the landing-page hero
+/// where `.` is cyan over purple text.
+pub const LOGO: [&str; 5] = [
+    "                     |          ",
+    ",---..   .,---.,---. |    ,---. ",
+    "|   ||   ||    |   | |    |---' ",
+    "|---'`---'`    |---' `---'`---'o",
+    "|              |                ",
 ];
+
+/// Quadrant-cell column range covering the trailing `.` of the logo.
+/// Renderers split each `LOGO` line into three slices — `[..start]` and
+/// `[end..]` in the brand accent, `[start..end]` in the `logo_dot` cyan —
+/// so the dot visually matches the landing page hero. The end is one past
+/// the last coloured cell; the trailing cell is a space and renders as an
+/// invisible colour-only gap that keeps column alignment stable.
+pub const LOGO_DOT_COL_START: usize = 31;
+pub const LOGO_DOT_COL_END: usize = 32;
+
+/// Build a single coloured `Line` of the logotype at row `i`. The word body
+/// renders in `word_style`, the trailing dot renders in `dot_style`.
+///
+/// Returns three spans (pre-dot word / dot / post-dot padding) so the
+/// overlay's existing alignment + padding logic can still treat the line
+/// as a single horizontal strip.
+pub fn logo_line(
+    i: usize,
+    word_style: ratatui::style::Style,
+    dot_style: ratatui::style::Style,
+) -> ratatui::text::Line<'static> {
+    use ratatui::text::Span;
+    let chars: Vec<char> = LOGO[i].chars().collect();
+    let before: String = chars
+        .get(..LOGO_DOT_COL_START)
+        .unwrap_or(&[])
+        .iter()
+        .collect();
+    let dot: String = chars
+        .get(LOGO_DOT_COL_START..LOGO_DOT_COL_END.min(chars.len()))
+        .unwrap_or(&[])
+        .iter()
+        .collect();
+    let after: String = chars
+        .get(LOGO_DOT_COL_END..)
+        .unwrap_or(&[])
+        .iter()
+        .collect();
+    ratatui::text::Line::from(vec![
+        Span::styled(before, word_style),
+        Span::styled(dot, dot_style),
+        Span::styled(after, word_style),
+    ])
+}
 
 // ---------------------------------------------------------------------------
 // Overlay sizing tokens

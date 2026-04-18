@@ -87,7 +87,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let rows = if is_host_list {
         Layout::vertical([
             Constraint::Length(1), // top breathing
-            Constraint::Length(6), // logo
+            Constraint::Length(5), // logo
             Constraint::Length(1), // gap after logo
             Constraint::Min(0),    // content cols
             Constraint::Length(2), // breathing above info
@@ -122,10 +122,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // Row indices: host-list layout reserves extra rows for the logo.
     let content_row = if is_host_list { rows[3] } else { rows[1] };
     if is_host_list {
-        let logo_lines: Vec<Line> = design::LOGO
-            .iter()
-            .map(|l| {
-                Line::from(Span::styled(*l, theme::accent_bold()))
+        let logo_lines: Vec<Line> = (0..design::LOGO.len())
+            .map(|i| {
+                design::logo_line(i, theme::accent_bold(), theme::logo_dot())
                     .alignment(ratatui::layout::Alignment::Center)
             })
             .collect();

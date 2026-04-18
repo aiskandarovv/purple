@@ -389,3 +389,89 @@ fn no_color_mode_forces_no_color_theme() {
     COLOR_MODE.store(1, Ordering::Release);
     set_theme(ThemeDef::purple());
 }
+
+// --- online_dot_pulsing breathing cycle ---
+
+#[test]
+fn online_dot_pulsing_starts_at_regular_mid_brightness() {
+    // Visual regression goldens render at tick=0; verify tick=0 produces
+    // the Regular (mid) state — neither BOLD nor DIM — so the pulse cycle
+    // begins at the visually neutral point and goldens stay reproducible.
+    let _lock = TEST_MUTEX.lock().unwrap();
+    COLOR_MODE.store(1, Ordering::Release);
+    set_theme(ThemeDef::purple());
+
+    let mid = online_dot_pulsing(0);
+    assert!(!mid.add_modifier.contains(Modifier::BOLD));
+    assert!(!mid.add_modifier.contains(Modifier::DIM));
+}
+
+#[test]
+fn online_dot_pulsing_cycles_through_peak_mid_and_trough() {
+    // 30-tick period. tick=0 is verified by the dedicated mid-baseline
+    // test above; here we cover the three OTHER cardinal phases so
+    // together the suite pins all four quadrants of the sine curve
+    // without a duplicated tick=0 assertion.
+    //   tick=7  sin≈+0.99 → peak  (BOLD via success slot, which is BOLD by default)
+    //   tick=15 sin(pi)=0 → mid   (Regular: BOLD explicitly removed, no DIM)
+    //   tick=22 sin≈-0.99 → trough (DIM via success_dim slot)
+    let _lock = TEST_MUTEX.lock().unwrap();
+    COLOR_MODE.store(1, Ordering::Release);
+    set_theme(ThemeDef::purple());
+
+    assert!(online_dot_pulsing(7).add_modifier.contains(Modifier::BOLD));
+
+    let mid = online_dot_pulsing(15);
+    assert!(!mid.add_modifier.contains(Modifier::BOLD));
+    assert!(!mid.add_modifier.contains(Modifier::DIM));
+
+    assert!(online_dot_pulsing(22).add_modifier.contains(Modifier::DIM));
+}
+
+#[test]
+fn online_dot_pulsing_repeats_every_period() {
+    let _lock = TEST_MUTEX.lock().unwrap();
+    COLOR_MODE.store(1, Ordering::Release);
+    set_theme(ThemeDef::purple());
+
+    assert_eq!(online_dot_pulsing(0), online_dot_pulsing(30));
+    assert_eq!(online_dot_pulsing(7), online_dot_pulsing(37));
+}
+
+#[test]
+fn online_dot_pulsing_truecolor_lerps_brightness() {
+    // In truecolor mode the pulse path returns a smooth per-channel RGB
+    // lerp instead of BOLD/DIM modifier flips. Verify:
+    //   1. Output is a truecolor `Rgb(r,g,b)` foreground, not a palette colour.
+    //   2. No BOLD / DIM modifier is set — the signal is hue-brightness only.
+    //   3. The peak frame is brighter (higher channel sum) than the trough,
+    //      confirming the sin-driven alpha actually modulates the colour.
+    let _lock = TEST_MUTEX.lock().unwrap();
+    COLOR_MODE.store(2, Ordering::Release);
+    set_theme(ThemeDef::purple());
+
+    let peak = online_dot_pulsing(7); // sin≈+0.99 → peak brightness
+    let trough = online_dot_pulsing(22); // sin≈-0.99 → trough brightness
+
+    match peak.fg {
+        Some(Color::Rgb(..)) => {}
+        other => panic!("truecolor pulse must emit Rgb fg, got {:?}", other),
+    }
+    assert!(!peak.add_modifier.contains(Modifier::BOLD));
+    assert!(!peak.add_modifier.contains(Modifier::DIM));
+    assert!(!trough.add_modifier.contains(Modifier::BOLD));
+    assert!(!trough.add_modifier.contains(Modifier::DIM));
+
+    let sum = |fg: Option<Color>| match fg {
+        Some(Color::Rgb(r, g, b)) => r as u32 + g as u32 + b as u32,
+        _ => 0,
+    };
+    assert!(
+        sum(peak.fg) > sum(trough.fg),
+        "peak channel sum must exceed trough (peak={:?} trough={:?})",
+        peak.fg,
+        trough.fg
+    );
+
+    COLOR_MODE.store(1, Ordering::Release);
+}

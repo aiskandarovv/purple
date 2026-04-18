@@ -114,6 +114,7 @@ fn test_columns_collapse_priority_last_then_tags_then_address() {
     let cols = Columns::compute(
         10, // alias_w
         20, // host_w
+        0,  // host_min_w (no IPs)
         10, // tags_w
         6,  // history_w
         60, // narrow enough to hide LAST but keep TAGS
@@ -134,6 +135,7 @@ fn test_columns_compute_flex_gap() {
     let cols = Columns::compute(
         10,  // alias_w
         15,  // host_w
+        0,   // host_min_w (no IPs)
         8,   // tags_w
         5,   // history_w
         200, // wide content
@@ -180,6 +182,7 @@ fn test_columns_compute_host_shrinks() {
     let cols = Columns::compute(
         8,  // alias_w
         30, // host_w — should shrink
+        0,  // host_min_w (no IPs)
         0,  // no tags
         0,  // no history
         40, // narrow enough to shrink host, but not hide it
@@ -194,6 +197,62 @@ fn test_columns_compute_host_shrinks() {
     assert!(
         cols.host < 34,
         "Host should have shrunk from padded value (34), got {}",
+        cols.host
+    );
+}
+
+#[test]
+fn test_columns_host_floor_respects_ip_min_width() {
+    // Same scenario as the shrink test (host_w=30, content=40) but with an
+    // IPv6 host present (host_min_w=39). The shrink pass would normally cut
+    // host to 24, but host_floor = max(host_min_w, HOST_MIN) = 39, so the
+    // shrink branch must hide the column entirely instead of yielding a
+    // truncated IP that the user cannot copy.
+    let cols = Columns::compute(
+        8,  // alias_w
+        30, // host_w (desired)
+        39, // host_min_w — widest IP in the list (full IPv6)
+        0,  // no tags
+        0,  // no history
+        40, // narrow content
+        false,
+    );
+    assert_eq!(
+        cols.host, 0,
+        "host column must hide rather than truncate an IP below its full width"
+    );
+}
+
+#[test]
+fn test_columns_host_min_w_zero_falls_back_to_host_min() {
+    // No IPs in the list → host_min_w=0. Column must still shrink down
+    // to the legacy HOST_MIN=12 floor (not below), preserving the pre-
+    // feature behaviour for DNS-only host lists.
+    let cols = Columns::compute(
+        8,  // alias_w
+        30, // host_w
+        0,  // host_min_w — no IPs
+        0,  // tags
+        0,  // history
+        40, // narrow
+        false,
+    );
+    assert!(
+        cols.host >= HOST_MIN,
+        "host column must respect HOST_MIN floor when no IPs present, got {}",
+        cols.host
+    );
+}
+
+#[test]
+fn test_columns_host_keeps_ip_floor_at_intermediate_width() {
+    // Plenty of room for the full host_w (padded ~33) but if we pin host_min_w
+    // higher than the desired padded width, the column should grow to fit.
+    let cols = Columns::compute(8, 15, 20, 0, 0, 200, false);
+    assert!(
+        cols.host >= 20,
+        "host column must be >= host_min_w ({}), got {}",
+        20,
         cols.host
     );
 }
@@ -349,22 +408,22 @@ fn layout_with_search_has_group_bar() {
 #[test]
 fn columns_hide_full_priority_chain() {
     // Wide enough for everything
-    let cols_wide = Columns::compute(10, 15, 8, 5, 200, false);
+    let cols_wide = Columns::compute(10, 15, 0, 8, 5, 200, false);
     assert!(cols_wide.history > 0, "history visible at 200");
     assert!(cols_wide.tags > 0, "tags visible at 200");
     assert!(cols_wide.host > 0, "host visible at 200");
 
     // Progressively narrower: LAST (history) hides first
-    let cols_no_history = Columns::compute(10, 15, 8, 5, 50, false);
+    let cols_no_history = Columns::compute(10, 15, 0, 8, 5, 50, false);
     assert_eq!(cols_no_history.history, 0, "history should hide first");
 
     // Narrower still: TAGS hides next
-    let cols_no_tags = Columns::compute(10, 15, 8, 5, 40, false);
+    let cols_no_tags = Columns::compute(10, 15, 0, 8, 5, 40, false);
     assert_eq!(cols_no_tags.history, 0, "history still hidden");
     assert_eq!(cols_no_tags.tags, 0, "tags should hide second");
 
     // Extremely narrow: ADDRESS hides last
-    let cols_no_host = Columns::compute(10, 15, 8, 5, 20, false);
+    let cols_no_host = Columns::compute(10, 15, 0, 8, 5, 20, false);
     assert_eq!(cols_no_host.history, 0);
     assert_eq!(cols_no_host.tags, 0);
     assert_eq!(cols_no_host.host, 0, "host should hide last");
@@ -372,7 +431,7 @@ fn columns_hide_full_priority_chain() {
 
 #[test]
 fn columns_detail_mode_no_host() {
-    let cols = Columns::compute(10, 15, 8, 5, 200, true);
+    let cols = Columns::compute(10, 15, 0, 8, 5, 200, true);
     assert_eq!(cols.host, 0, "host should be 0 in detail_mode");
     assert!(cols.detail_mode, "detail_mode flag should be set");
     assert!(cols.tags > 0, "tags visible in detail_mode");
@@ -515,6 +574,84 @@ fn composite_host_width_port_max() {
     assert_eq!(super::composite_host_width(&host), 7);
 }
 
+// composite_host_width_if_ip tests
+
+#[test]
+fn composite_host_width_if_ip_bare_ipv4() {
+    let host = crate::ssh_config::model::HostEntry {
+        hostname: "192.168.0.100".to_string(),
+        port: 22,
+        ..Default::default()
+    };
+    assert_eq!(super::composite_host_width_if_ip(&host), 13);
+}
+
+#[test]
+fn composite_host_width_if_ip_bare_ipv6() {
+    let host = crate::ssh_config::model::HostEntry {
+        hostname: "2001:db8::1".to_string(),
+        port: 22,
+        ..Default::default()
+    };
+    assert_eq!(super::composite_host_width_if_ip(&host), 11);
+}
+
+#[test]
+fn composite_host_width_if_ip_bracketed_ipv6() {
+    // OpenSSH requires brackets around an IPv6 literal in HostName when
+    // a non-default port is present. IpAddr::parse rejects brackets, so
+    // the helper must strip them before parsing — otherwise the host
+    // column will truncate a full IPv6 literal that the user cannot copy.
+    let host = crate::ssh_config::model::HostEntry {
+        hostname: "[2001:db8::1]".to_string(),
+        port: 22,
+        ..Default::default()
+    };
+    assert_eq!(
+        super::composite_host_width_if_ip(&host),
+        "[2001:db8::1]".len(),
+        "bracketed IPv6 must be recognised as an IP"
+    );
+}
+
+#[test]
+fn composite_host_width_if_ip_bracketed_ipv6_loopback() {
+    let host = crate::ssh_config::model::HostEntry {
+        hostname: "[::1]".to_string(),
+        port: 22,
+        ..Default::default()
+    };
+    assert_eq!(
+        super::composite_host_width_if_ip(&host),
+        5,
+        "[::1] must be recognised as an IP"
+    );
+}
+
+#[test]
+fn composite_host_width_if_ip_dns_returns_zero() {
+    // DNS hostnames must remain shrinkable — helper returns 0 so they do
+    // not inflate the column floor.
+    let host = crate::ssh_config::model::HostEntry {
+        hostname: "web-01.prod.example.com".to_string(),
+        port: 22,
+        ..Default::default()
+    };
+    assert_eq!(super::composite_host_width_if_ip(&host), 0);
+}
+
+#[test]
+fn composite_host_width_if_ip_garbage_brackets_return_zero() {
+    // Only well-formed bracketed IPv6 counts. Brackets around garbage
+    // must not accidentally pass for an IP.
+    let host = crate::ssh_config::model::HostEntry {
+        hostname: "[not-an-ip]".to_string(),
+        port: 22,
+        ..Default::default()
+    };
+    assert_eq!(super::composite_host_width_if_ip(&host), 0);
+}
+
 // =========================================================================
 // Columns detail_mode collapse priority tests
 // =========================================================================
@@ -523,13 +660,13 @@ fn composite_host_width_port_max() {
 fn columns_detail_mode_collapse_priority() {
     // detail_mode=true, progressively narrower
     // LAST hides first, then TAGS (ADDRESS already 0)
-    let cols_wide = Columns::compute(10, 15, 8, 5, 100, true);
+    let cols_wide = Columns::compute(10, 15, 0, 8, 5, 100, true);
     assert_eq!(cols_wide.host, 0, "detail_mode: no host");
     assert!(cols_wide.tags > 0, "tags visible at 100");
     assert!(cols_wide.history > 0, "history visible at 100");
 
     // Narrow: LAST hides first
-    let cols_narrow = Columns::compute(10, 15, 8, 5, 25, true);
+    let cols_narrow = Columns::compute(10, 15, 0, 8, 5, 25, true);
     assert_eq!(cols_narrow.host, 0);
     assert_eq!(
         cols_narrow.history, 0,
@@ -537,7 +674,7 @@ fn columns_detail_mode_collapse_priority() {
     );
 
     // Very narrow: TAGS hides next
-    let cols_very_narrow = Columns::compute(10, 15, 8, 5, 18, true);
+    let cols_very_narrow = Columns::compute(10, 15, 0, 8, 5, 18, true);
     assert_eq!(cols_very_narrow.host, 0);
     assert_eq!(cols_very_narrow.history, 0);
     assert_eq!(cols_very_narrow.tags, 0, "tags should hide after history");

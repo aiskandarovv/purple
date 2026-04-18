@@ -107,6 +107,11 @@ pub struct ThemeDef {
     pub badge: ColorSlot,
     pub selected_fg: ColorSlot,
     pub footer_key_fg: ColorSlot,
+    /// Accent for the trailing `.` of the `purple.` logotype in overlay
+    /// headers (Welcome, Help, What's-New). Intentionally different from
+    /// `accent` so the dot reads as a separate accent glyph — mirrors
+    /// the landing-page hero where the dot is cyan over purple text.
+    pub logo_dot: ColorSlot,
 }
 
 impl ThemeDef {
@@ -201,6 +206,12 @@ impl ThemeDef {
                 truecolor: Some(Color::White),
                 ansi16: Some(Color::White),
                 add_modifier: None,
+                remove_modifier: None,
+            },
+            logo_dot: ColorSlot {
+                truecolor: Some(Color::Rgb(0, 240, 255)),
+                ansi16: Some(Color::Cyan),
+                add_modifier: Some(Modifier::BOLD),
                 remove_modifier: None,
             },
         }
@@ -299,6 +310,12 @@ impl ThemeDef {
                 add_modifier: None,
                 remove_modifier: None,
             },
+            logo_dot: ColorSlot {
+                truecolor: Some(Color::Rgb(0, 240, 255)),
+                ansi16: Some(Color::Cyan),
+                add_modifier: Some(Modifier::BOLD),
+                remove_modifier: None,
+            },
         }
     }
 
@@ -393,6 +410,12 @@ impl ThemeDef {
                 truecolor: Some(Color::White),
                 ansi16: Some(Color::White),
                 add_modifier: None,
+                remove_modifier: None,
+            },
+            logo_dot: ColorSlot {
+                truecolor: Some(Color::Rgb(0, 240, 255)),
+                ansi16: Some(Color::Cyan),
+                add_modifier: Some(Modifier::BOLD),
                 remove_modifier: None,
             },
         }
@@ -491,6 +514,12 @@ impl ThemeDef {
                 add_modifier: None,
                 remove_modifier: None,
             },
+            logo_dot: ColorSlot {
+                truecolor: Some(Color::Rgb(0, 240, 255)),
+                ansi16: Some(Color::Cyan),
+                add_modifier: Some(Modifier::BOLD),
+                remove_modifier: None,
+            },
         }
     }
 
@@ -585,6 +614,12 @@ impl ThemeDef {
                 truecolor: Some(Color::White),
                 ansi16: Some(Color::White),
                 add_modifier: None,
+                remove_modifier: None,
+            },
+            logo_dot: ColorSlot {
+                truecolor: Some(Color::Rgb(0, 240, 255)),
+                ansi16: Some(Color::Cyan),
+                add_modifier: Some(Modifier::BOLD),
                 remove_modifier: None,
             },
         }
@@ -683,6 +718,12 @@ impl ThemeDef {
                 add_modifier: None,
                 remove_modifier: None,
             },
+            logo_dot: ColorSlot {
+                truecolor: Some(Color::Rgb(0, 240, 255)),
+                ansi16: Some(Color::Cyan),
+                add_modifier: Some(Modifier::BOLD),
+                remove_modifier: None,
+            },
         }
     }
 
@@ -777,6 +818,12 @@ impl ThemeDef {
                 truecolor: Some(Color::White),
                 ansi16: Some(Color::White),
                 add_modifier: None,
+                remove_modifier: None,
+            },
+            logo_dot: ColorSlot {
+                truecolor: Some(Color::Rgb(0, 240, 255)),
+                ansi16: Some(Color::Cyan),
+                add_modifier: Some(Modifier::BOLD),
                 remove_modifier: None,
             },
         }
@@ -875,6 +922,12 @@ impl ThemeDef {
                 add_modifier: None,
                 remove_modifier: None,
             },
+            logo_dot: ColorSlot {
+                truecolor: Some(Color::Rgb(0, 240, 255)),
+                ansi16: Some(Color::Cyan),
+                add_modifier: Some(Modifier::BOLD),
+                remove_modifier: None,
+            },
         }
     }
 
@@ -969,6 +1022,12 @@ impl ThemeDef {
                 truecolor: Some(Color::Rgb(76, 79, 105)), // Latte Text
                 ansi16: Some(Color::Black),
                 add_modifier: None,
+                remove_modifier: None,
+            },
+            logo_dot: ColorSlot {
+                truecolor: Some(Color::Rgb(0, 240, 255)),
+                ansi16: Some(Color::Cyan),
+                add_modifier: Some(Modifier::BOLD),
                 remove_modifier: None,
             },
         }
@@ -1067,6 +1126,12 @@ impl ThemeDef {
                 add_modifier: None,
                 remove_modifier: None,
             },
+            logo_dot: ColorSlot {
+                truecolor: Some(Color::Rgb(0, 240, 255)),
+                ansi16: Some(Color::Cyan),
+                add_modifier: Some(Modifier::BOLD),
+                remove_modifier: None,
+            },
         }
     }
 
@@ -1103,6 +1168,7 @@ impl ThemeDef {
             },
             selected_fg: ColorSlot::new_with_modifier(Modifier::BOLD),
             footer_key_fg: ColorSlot::new_with_modifier(Modifier::REVERSED),
+            logo_dot: ColorSlot::new_with_modifier(Modifier::BOLD),
         }
     }
 
@@ -1181,6 +1247,7 @@ impl ThemeDef {
             badge: resolve_slot("badge_bg", &fallback.badge),
             selected_fg: resolve_slot("selected_fg", &fallback.selected_fg),
             footer_key_fg: resolve_slot("footer_key_fg", &fallback.footer_key_fg),
+            logo_dot: resolve_slot("logo_dot", &fallback.logo_dot),
         })
     }
 
@@ -1481,6 +1548,69 @@ pub fn online_dot() -> Style {
     active_theme().success_dim.to_style(mode())
 }
 
+/// Breathing variant of `online_dot()` for per-host indicators on the host
+/// list. Cycles through three states over ~2.4s (30 ticks at 80ms) to give
+/// reachable hosts a subtle "alive" pulse without the constant attention
+/// pull of a blinking glyph or moving shape:
+///
+/// - trough: `success_dim` (current static look)
+/// - mid:    `success` (regular green)
+/// - peak:   `success` + BOLD
+///
+/// Sine-driven so transitions are gradual rather than discrete blinks. At
+/// `tick = 0` the cycle starts at mid (Regular green), so a freshly-rendered
+/// frame in tests/visual regressions is reproducible. Down/error/checking
+/// hosts deliberately stay static — the contrast is the signal.
+pub fn online_dot_pulsing(tick: u64) -> Style {
+    use ratatui::style::Modifier;
+    const PERIOD: u64 = 30;
+    let phase = (tick % PERIOD) as f32 * std::f32::consts::TAU / PERIOD as f32;
+    // Map sin(-1..1) to alpha 0..1, then to brightness 0.40..1.00 so even
+    // the trough remains clearly visible (60-100% alpha range from the
+    // design brief). Using a smooth sine — never thresholded — eliminates
+    // the discrete "blink" you get when stepping between BOLD/Regular/DIM
+    // modifiers in ANSI 16.
+    let alpha = 0.40 + 0.60 * (phase.sin() * 0.5 + 0.5);
+    let m = mode();
+    if m == 2 {
+        // Truecolor: lerp the success_dim RGB toward white by `alpha`.
+        // success and success_dim share the same base hue per theme so we
+        // can read either; we read `success` because it is the canonical
+        // "fully alive" colour at alpha=1.0.
+        let base = active_theme().success.truecolor;
+        if let Some(ratatui::style::Color::Rgb(r, g, b)) = base {
+            let lerp = |c: u8| -> u8 {
+                let f = c as f32 / 255.0;
+                // Lerp between a dimmed version (0.55 of base) and the
+                // base itself, controlled by alpha. Keeps the hue, only
+                // varies brightness.
+                let dim_f = f * 0.55;
+                ((dim_f + (f - dim_f) * alpha).clamp(0.0, 1.0) * 255.0).round() as u8
+            };
+            return ratatui::style::Style::default().fg(ratatui::style::Color::Rgb(
+                lerp(r),
+                lerp(g),
+                lerp(b),
+            ));
+        }
+        // Fallthrough if theme has no truecolor value (NoColor theme).
+    }
+    // ANSI 16 / NO_COLOR fallback: discrete 3-state cycle on modifiers.
+    // Less smooth than truecolor lerp but the only option when we cannot
+    // address sub-palette brightness. Most users on modern terminals run
+    // in truecolor mode and get the smooth path above.
+    if alpha > 0.85 {
+        active_theme().success.to_style(m)
+    } else if alpha < 0.55 {
+        active_theme().success_dim.to_style(m)
+    } else {
+        active_theme()
+            .success
+            .to_style(m)
+            .remove_modifier(Modifier::BOLD)
+    }
+}
+
 /// Warning message. Yellow/amber when color is available.
 pub fn warning() -> Style {
     active_theme().warning.to_style(mode())
@@ -1539,6 +1669,13 @@ pub fn version() -> Style {
 /// Search-mode border. Purple to signal active filter state.
 pub fn border_search() -> Style {
     active_theme().border_active.to_style(mode())
+}
+
+/// Accent colour for the trailing `.` of the `purple.` logotype in overlay
+/// headers. Intentionally distinct from `accent_bold` so the dot echoes
+/// the cyan accent from the landing-page hero.
+pub fn logo_dot() -> Style {
+    active_theme().logo_dot.to_style(mode())
 }
 
 /// Selected item in a list. Purple highlight for brand consistency.

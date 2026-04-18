@@ -157,7 +157,9 @@ fn test_sync_summary_still_syncing() {
     app.providers.sync_done.push("DigitalOcean".to_string());
     set_sync_summary(&mut app);
     let status = app.status_center.status.as_ref().unwrap();
-    assert_eq!(status.text, "Synced: DigitalOcean...");
+    // Active provider name (AWS) leads; DigitalOcean is already done so it is
+    // not in the active list, only in the counter.
+    assert_eq!(status.text, "\u{280B} Syncing AWS EC2 \u{00B7} 1/2");
     assert!(!status.is_error());
     // sync_done should NOT be cleared while still syncing
     assert_eq!(app.providers.sync_done.len(), 1);
@@ -228,7 +230,7 @@ fn test_sync_summary_all_done() {
     app.providers.sync_done.push("Hetzner".to_string());
     set_sync_summary(&mut app);
     let status = app.status_center.status.as_ref().unwrap();
-    assert_eq!(status.text, "Synced: AWS, Hetzner");
+    assert_eq!(status.text, "Synced 2/2 \u{00B7} AWS, Hetzner");
     assert!(!status.is_error());
     // sync_done should be cleared when all done
     assert!(app.providers.sync_done.is_empty());
@@ -242,10 +244,68 @@ fn test_sync_summary_with_errors() {
     app.providers.sync_had_errors = true;
     set_sync_summary(&mut app);
     let toast = app.status_center.toast.as_ref().unwrap();
-    assert_eq!(toast.text, "Synced: AWS");
+    assert_eq!(toast.text, "Synced 1/1 \u{00B7} AWS");
     assert!(toast.is_error());
     // Error flag should be reset when batch completes
     assert!(!app.providers.sync_had_errors);
+}
+
+#[test]
+fn test_sync_summary_includes_diff_aggregate() {
+    let mut app = empty_app();
+    app.providers.sync_done.push("AWS".to_string());
+    app.providers.sync_done.push("DO".to_string());
+    app.providers.batch_added = 12;
+    app.providers.batch_updated = 3;
+    app.providers.batch_stale = 1;
+    set_sync_summary(&mut app);
+    let status = app.status_center.status.as_ref().unwrap();
+    assert_eq!(status.text, "Synced 2/2 \u{00B7} AWS, DO (+12 ~3 -1)");
+    // Aggregate must reset on batch completion so the next sync starts clean.
+    assert_eq!(app.providers.batch_added, 0);
+    assert_eq!(app.providers.batch_updated, 0);
+    assert_eq!(app.providers.batch_stale, 0);
+}
+
+#[test]
+fn test_sync_summary_progress_includes_diff_and_spinner() {
+    let mut app = empty_app();
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    app.providers.syncing.insert("vultr".to_string(), cancel);
+    app.providers.sync_done.push("AWS".to_string());
+    app.providers.batch_added = 5;
+    set_sync_summary(&mut app);
+    let status = app.status_center.status.as_ref().unwrap();
+    // Active name (Vultr) leads, counter follows, then diff. AWS is done so
+    // it does not appear in the active list.
+    assert_eq!(status.text, "\u{280B} Syncing Vultr \u{00B7} 1/2 (+5)");
+    // The spinner prefix MUST be replaceable via `replace_spinner_frame`
+    // and the replacement must actually swap the leading glyph — this is
+    // the contract `handle_tick` relies on to animate the footer.
+    let replaced = replace_spinner_frame(&status.text, "\u{2819}")
+        .expect("status must start with a known spinner frame");
+    assert!(
+        replaced.starts_with("\u{2819} "),
+        "replacement must swap the leading frame, got: {}",
+        replaced
+    );
+    assert!(replaced.contains("Syncing Vultr"));
+}
+
+#[test]
+fn test_sync_summary_progress_lists_multiple_active_providers_sorted() {
+    // Two providers in flight, none done yet. HashMap iteration order is
+    // unspecified, so the implementation must sort for stable rendering
+    // across ticks (otherwise the footer text would jitter between frames).
+    let mut app = empty_app();
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    app.providers
+        .syncing
+        .insert("vultr".to_string(), cancel.clone());
+    app.providers.syncing.insert("aws".to_string(), cancel);
+    set_sync_summary(&mut app);
+    let status = app.status_center.status.as_ref().unwrap();
+    assert_eq!(status.text, "\u{280B} Syncing AWS EC2, Vultr \u{00B7} 0/2");
 }
 
 #[test]
@@ -260,6 +320,78 @@ fn test_sync_summary_errors_persist_while_syncing() {
     assert!(toast.is_error());
     // Error flag should persist while still syncing
     assert!(app.providers.sync_had_errors);
+}
+
+#[test]
+fn test_sync_summary_error_while_syncing_goes_to_toast_with_active_names() {
+    // Cover the error-routing branch inside the still_syncing arm: when
+    // any provider in the current batch has failed BUT others are still
+    // in flight, set_sync_summary must route via notify_background_error
+    // (which pushes to the toast) rather than the footer path — so the
+    // user sees the red indicator the moment an error appears, not only
+    // on batch completion. Also verify the active-name is present in the
+    // text so the toast identifies which provider is still running.
+    let mut app = empty_app();
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    app.providers.syncing.insert("vultr".to_string(), cancel);
+    app.providers.sync_done.push("AWS".to_string());
+    app.providers.sync_had_errors = true;
+    set_sync_summary(&mut app);
+    let toast = app.status_center.toast.as_ref().unwrap();
+    assert!(toast.is_error(), "error route must send to toast");
+    assert!(
+        toast.text.contains("Vultr"),
+        "toast must name the still-active provider, got: {}",
+        toast.text
+    );
+    assert!(
+        toast.text.contains("1/2"),
+        "toast must carry the done/total counter, got: {}",
+        toast.text
+    );
+}
+
+#[test]
+fn test_sync_summary_batch_total_clamps_upward_mid_batch() {
+    // `set_sync_summary` derives total via batch_total.max(done + syncing.len()).
+    // When the user triggers additional syncs mid-batch (a second batch
+    // overlapping the first), batch_total must not regress even if the
+    // in-flight `syncing` HashMap count drops between ticks. Simulate a
+    // batch where batch_total=5 was captured at peak, syncing has since
+    // wound down to 1, and 3 are done — total must stay at 5, not fall
+    // to max(5, 3+1)=5 (this also verifies the arithmetic).
+    let mut app = empty_app();
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    app.providers.syncing.insert("vultr".to_string(), cancel);
+    app.providers.sync_done.push("AWS".to_string());
+    app.providers.sync_done.push("DigitalOcean".to_string());
+    app.providers.sync_done.push("Hetzner".to_string());
+    app.providers.batch_total = 5;
+    set_sync_summary(&mut app);
+    let status = app.status_center.status.as_ref().unwrap();
+    assert!(
+        status.text.contains("3/5"),
+        "batch_total must stay at captured peak (5), got: {}",
+        status.text
+    );
+}
+
+#[test]
+fn test_sync_summary_diff_suffix_omitted_when_all_zero() {
+    // Explicit coverage for the zero-diff path: when no provider reported
+    // any add/update/stale, the `(+N ~N -N)` suffix must be absent so we
+    // don't show an empty `()`. `test_sync_summary_all_done` currently
+    // exercises this accidentally — this test pins the intent.
+    let mut app = empty_app();
+    app.providers.sync_done.push("AWS".to_string());
+    // batch_* all zero by default via empty_app.
+    set_sync_summary(&mut app);
+    let status = app.status_center.status.as_ref().unwrap();
+    assert!(
+        !status.text.contains('('),
+        "diff suffix must be absent when all counters are zero, got: {}",
+        status.text
+    );
 }
 
 // =========================================================================

@@ -2,7 +2,7 @@
 │     NAME               ADDRESS                             TAGS                            LAST▾ │
 │──────────────────────────────────────────────────────────────────────────────────────────────────│
 │▌  ● bastion-ams        140.82.121.3 ⇄                      production vpn                   <1m  │
-│   ● db-primary         10.30.…:5433 ↗ ⇄                    production database               1h  │
+│   ● db-primary         10.30.1.5:5433 ↗ ⇄                  production database               1h  │
 │   ● monitorin╭ Providers ─────────────────────────────────────────────────────────╮          2h  │
 │   ● gateway-v│ AWS EC2         ✓  Synced 6 hosts (2 regions), 1 stale, <1m ago    │          3h  │
 │   ● aws-api-p│ DigitalOcean    ✓  Synced 4 hosts, <1m ago                         │          4h  │
@@ -170,8 +170,8 @@
 (38,1) fg=DarkGray bg=Reset mod=BOLD|DIM
 (39,1) fg=DarkGray bg=Reset mod=BOLD|DIM
 (40,1) fg=DarkGray bg=Reset mod=BOLD|DIM
-(41,1) fg=DarkGray bg=Reset mod=DIM
-(42,1) fg=DarkGray bg=Reset mod=DIM
+(41,1) fg=DarkGray bg=Reset mod=BOLD|DIM
+(42,1) fg=DarkGray bg=Reset mod=BOLD|DIM
 (43,1) fg=DarkGray bg=Reset mod=DIM
 (44,1) fg=DarkGray bg=Reset mod=DIM
 (45,1) fg=DarkGray bg=Reset mod=DIM

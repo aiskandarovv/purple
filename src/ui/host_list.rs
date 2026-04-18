@@ -79,6 +79,7 @@ impl Columns {
     fn compute(
         alias_w: usize,
         host_w: usize,
+        host_min_w: usize,
         tags_w: usize,
         history_w: usize,
         content: usize,
@@ -87,10 +88,16 @@ impl Columns {
         // All columns get ~110% of their content width for breathing room.
         // Columns are capped — they never grow beyond content needs.
         let alias = Self::padded(alias_w).clamp(8, 32);
+        // `host_min_w` is the irreducible width of the widest IP address in
+        // the visible list. Truncating an IP yields garbage you cannot copy
+        // or verify, so we treat IPs as must-fit data and shrink DNS-only
+        // budget around them. When no IPs are present `host_min_w` is 0 and
+        // behaviour collapses to the legacy `HOST_MIN` floor.
+        let host_floor = host_min_w.max(HOST_MIN);
         let mut host = if detail_mode {
             0
         } else {
-            Self::padded(host_w).max(HOST_MIN)
+            Self::padded(host_w).max(host_floor)
         };
         let mut tags = if tags_w > 0 {
             Self::padded(tags_w).max(4)
@@ -141,16 +148,18 @@ impl Columns {
             tags = 0;
             rw = right_cluster(tags, history);
         }
-        // Shrink or hide ADDRESS (only when not in detail_mode, where it's already 0)
+        // Shrink or hide ADDRESS (only when not in detail_mode, where it's already 0).
+        // The shrink floor is `host_floor = max(host_min_w, HOST_MIN)` so any
+        // visible IP renders without truncation; if even that does not fit we
+        // hide the address column entirely (the IP/hostname is still in the
+        // detail panel).
         if !detail_mode && host > 0 {
             let needed = MARKER_WIDTH + 1 + 2 + alias + gap + host + gap + rw;
             if needed > content {
                 let excess = needed - content;
-                if host.saturating_sub(excess) >= HOST_MIN {
-                    // Shrink host but keep it above minimum
+                if host.saturating_sub(excess) >= host_floor {
                     host = host.saturating_sub(excess);
                 } else {
-                    // Can't fit even HOST_MIN: hide address entirely
                     host = 0;
                 }
             }
@@ -192,6 +201,36 @@ fn composite_host_width(host: &crate::ssh_config::model::HostEntry) -> usize {
     } else {
         // ":NNNNN" — colon (1) + digit count
         w + 1 + digit_count(host.port)
+    }
+}
+
+/// Composite width but only for hosts whose hostname is a literal IP
+/// address. Returns 0 for DNS hostnames so they remain shrinkable in the
+/// column-fit pass. IPs returned at full width — including the trailing
+/// `↗` (ProxyJump) and `⇄` (tunnel) indicator glyphs the row renderer
+/// appends after `hostname:port` — because the render budget in
+/// `push_address_column` subtracts those indicator widths from the
+/// hostname budget, and truncating an IP yields unusable data
+/// (`192.168.…` cannot be copied or verified).
+///
+/// Recognises both bare (`2001:db8::1`) and bracketed (`[2001:db8::1]`)
+/// IPv6 forms because OpenSSH requires brackets on IPv6 addresses that
+/// share a line with a non-default port. `std::net::IpAddr::parse`
+/// rejects brackets on its own, so we strip one matching pair before
+/// attempting the parse.
+fn composite_host_width_if_ip(host: &crate::ssh_config::model::HostEntry) -> usize {
+    let raw = host.hostname.as_str();
+    let unbracketed = raw
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(raw);
+    if unbracketed.parse::<std::net::IpAddr>().is_ok() {
+        let has_jump = !host.proxy_jump.is_empty();
+        let has_tunnels = host.tunnel_count > 0;
+        let indicators = (if has_jump { 2 } else { 0 }) + (if has_tunnels { 2 } else { 0 });
+        composite_host_width(host) + indicators
+    } else {
+        0
     }
 }
 
@@ -503,6 +542,13 @@ fn render_display_list(
         .map(composite_host_width)
         .max()
         .unwrap_or(12);
+    let host_min_w = app
+        .hosts_state
+        .list
+        .iter()
+        .map(composite_host_width_if_ip)
+        .max()
+        .unwrap_or(0);
     let tags_w = app
         .hosts_state
         .list
@@ -532,6 +578,7 @@ fn render_display_list(
     let cols = Columns::compute(
         alias_w,
         host_w,
+        host_min_w,
         tags_w,
         history_w,
         content_width,
@@ -743,6 +790,10 @@ fn render_search_list(
         .map(composite_host_width)
         .max()
         .unwrap_or(12);
+    let host_min_w = filtered_hosts()
+        .map(composite_host_width_if_ip)
+        .max()
+        .unwrap_or(0);
     let tags_w = filtered_hosts()
         .map(|h| host_tags_width(h, &app.hosts_state.group_by, false))
         .max()
@@ -754,7 +805,15 @@ fn render_search_list(
         .map(|s| s.width())
         .max()
         .unwrap_or(0);
-    let cols = Columns::compute(alias_w, host_w, tags_w, history_w, content_width, false);
+    let cols = Columns::compute(
+        alias_w,
+        host_w,
+        host_min_w,
+        tags_w,
+        history_w,
+        content_width,
+        false,
+    );
 
     let [header_area, underline_area, list_area] = Layout::vertical([
         Constraint::Length(1),
@@ -980,7 +1039,7 @@ fn push_name_column<'a>(
     let ping = ctx.ping_status.get(&host.alias);
     let glyph = app::status_glyph(ping, ctx.spinner_tick);
     let style = match ping {
-        Some(PingStatus::Reachable { .. }) => theme::online_dot(),
+        Some(PingStatus::Reachable { .. }) => theme::online_dot_pulsing(ctx.spinner_tick),
         Some(PingStatus::Slow { .. }) => theme::warning(),
         Some(PingStatus::Unreachable) => theme::error(),
         // Skipped: style unused (glyph is empty → Span::raw), kept for exhaustive match

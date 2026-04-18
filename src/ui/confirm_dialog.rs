@@ -352,8 +352,8 @@ pub fn render_welcome(
         .max()
         .unwrap_or(0);
 
-    // border(2) + blank(3) + logo(6) + blank(3) + subtitle(1) + hint(1) + blank(1) + footer(1) + blank(3) = 23 base
-    let content_height = 23 + extra;
+    // border(2) + blank(3) + logo(5) + blank(3) + subtitle(1) + hint(1) + blank(1) + footer(1) + blank(3) = 22 base
+    let content_height = 22 + extra;
     // Minimum width: fits longest text line ("Your original config has been backed up")
     // with comfortable padding. Logo width + padding, or 56 chars minimum.
     let dialog_width = ((logo_max_w as u16) + 24).max(56);
@@ -371,14 +371,15 @@ pub fn render_welcome(
     text.push(Line::from(""));
     text.push(Line::from(""));
 
-    // Logo (phased line-by-line reveal, padded to uniform width)
-    for (i, logo_line) in design::LOGO.iter().enumerate() {
+    // Logo (phased line-by-line reveal). Each line is a split-coloured
+    // `Line` (word body in brand accent, trailing dot in cyan-equivalent)
+    // composed by `design::logo_line`. Center-alignment does the horizontal
+    // padding for us — no manual right-pad needed because every LOGO row
+    // has the same cell width.
+    for i in 0..design::LOGO.len() {
         if i < logo_lines_visible {
-            let w = UnicodeWidthStr::width(*logo_line);
-            let pad = logo_max_w.saturating_sub(w);
-            let padded = format!("{}{}", logo_line, " ".repeat(pad));
             text.push(
-                Line::from(Span::styled(padded, theme::border_search()))
+                design::logo_line(i, theme::border_search(), theme::logo_dot())
                     .alignment(Alignment::Center),
             );
         } else {
@@ -495,7 +496,7 @@ fn welcome_height_and_lines(
     if has_backup {
         extra += 3;
     }
-    let height = 23 + extra;
+    let height = 22 + extra;
 
     // Text lines = height - border(2)
     let lines = height - 2;

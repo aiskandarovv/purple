@@ -20,7 +20,16 @@ pub(crate) fn handle_tick(
 ) {
     app.tick_status();
     app.tick_toast();
-    if anim.has_checking_hosts(app) || vault_signing {
+    let provider_syncing = !app.providers.syncing.is_empty();
+    // Tick the spinner whenever something needs animation. Reachable hosts
+    // drive the breathing online-dot pulse via `online_dot_pulsing(tick)`,
+    // so they share the same monotonically-incrementing tick counter as
+    // the spinner — saves a parallel tick driver.
+    if anim.has_checking_hosts(app)
+        || vault_signing
+        || provider_syncing
+        || anim.has_reachable_hosts(app)
+    {
         anim.tick_spinner();
     }
     // Update the spinner character in the signing status text
@@ -33,6 +42,24 @@ pub(crate) fn handle_tick(
                 if let Some(updated) = crate::replace_spinner_frame(&status.text, frame) {
                     status.text = updated;
                 }
+            }
+        }
+    }
+    // Animate the provider-sync footer: rotate the leading spinner frame on
+    // each tick while a sync is in flight. The status is non-sticky (Info),
+    // so we match by spinner-prefix instead of the sticky flag like
+    // vault_signing does.
+    if provider_syncing {
+        if let Some(ref mut status) = app.status_center.status {
+            let frame = crate::animation::SPINNER_FRAMES
+                [anim.spinner_tick as usize % crate::animation::SPINNER_FRAMES.len()];
+            if let Some(updated) = crate::replace_spinner_frame(&status.text, frame) {
+                status.text = updated;
+                // Refresh created_at so the Info-class footer message does not
+                // expire by length-proportional timeout in the gap between
+                // sync_complete events. The message stays alive as long as at
+                // least one provider is still syncing.
+                status.created_at = std::time::Instant::now();
             }
         }
     }
@@ -107,7 +134,10 @@ pub(crate) fn handle_sync_progress(app: &mut App, provider: String, message: Str
     // Late progress events (arriving after SyncComplete) are discarded.
     if app.providers.syncing.contains_key(&provider) && app.providers.sync_done.is_empty() {
         let name = providers::provider_display_name(&provider);
-        app.notify_background(crate::messages::provider_event(name, &message));
+        // Prefix with SPINNER_FRAMES[0] so handle_tick keeps the spinner
+        // animating while the granular progress message is on screen.
+        let spinner = crate::animation::SPINNER_FRAMES[0];
+        app.notify_background(crate::messages::provider_progress(spinner, name, &message));
     }
 }
 
@@ -151,6 +181,9 @@ pub(crate) fn handle_sync_complete(
                 is_error: false,
             },
         );
+        app.providers.batch_added += added;
+        app.providers.batch_updated += updated;
+        app.providers.batch_stale += stale;
     }
     app.providers.syncing.remove(&provider);
     app.providers.sync_done.push(display_name.to_string());
@@ -202,6 +235,11 @@ pub(crate) fn handle_sync_partial(
                 is_error: true,
             },
         );
+        // Partial successes still contributed real changes to the SSH config;
+        // surface them in the batch aggregate so the footer reflects reality.
+        app.providers.batch_added += added;
+        app.providers.batch_updated += updated;
+        app.providers.batch_stale += stale;
     }
     app.providers.sync_had_errors = true;
     app.providers.syncing.remove(&provider);

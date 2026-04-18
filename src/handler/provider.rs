@@ -147,12 +147,24 @@ pub(super) fn handle_provider_list(
                 if let Some(name) = sorted.get(index) {
                     if let Some(section) = app.providers.config.section(name.as_str()).cloned() {
                         if !app.providers.syncing.contains_key(name.as_str()) {
+                            app.providers.reset_batch_if_idle();
                             let cancel = Arc::new(AtomicBool::new(false));
                             app.providers.syncing.insert(name.clone(), cancel.clone());
-                            let display_name =
-                                crate::providers::provider_display_name(name.as_str());
-                            app.notify_info(crate::messages::syncing_provider(display_name));
+                            // Grow batch_total so the footer counter reflects new
+                            // providers added mid-batch (e.g. user triggers a second
+                            // sync while the first is still running).
+                            app.providers.batch_total = app
+                                .providers
+                                .batch_total
+                                .max(app.providers.sync_done.len() + app.providers.syncing.len());
                             super::sync::spawn_provider_sync(&section, events_tx.clone(), cancel);
+                            // Surface the live spinner + active names immediately
+                            // instead of waiting for the first sync_complete event.
+                            // For slow providers (1-3s API roundtrip) the user
+                            // would otherwise see a static line until the result
+                            // lands. set_sync_summary uses syncing.keys() so the
+                            // just-spawned provider shows up on this very tick.
+                            crate::set_sync_summary(app);
                         }
                     } else {
                         let display_name = crate::providers::provider_display_name(name.as_str());
@@ -609,12 +621,18 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
     if !app.providers.syncing.contains_key(&provider_name) {
         let sync_section = app.providers.config.section(&provider_name).cloned();
         if let Some(sync_section) = sync_section {
+            app.providers.reset_batch_if_idle();
             let cancel = Arc::new(AtomicBool::new(false));
             app.providers
                 .syncing
                 .insert(provider_name.clone(), cancel.clone());
+            app.providers.batch_total = app
+                .providers
+                .batch_total
+                .max(app.providers.sync_done.len() + app.providers.syncing.len());
             app.notify(crate::messages::provider_saved_syncing(display_name));
             super::sync::spawn_provider_sync(&sync_section, events_tx.clone(), cancel);
+            crate::set_sync_summary(app);
         }
     } else {
         app.notify(crate::messages::provider_saved(display_name));

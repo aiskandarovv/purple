@@ -106,9 +106,40 @@ pub struct ProviderState {
     pub sync_done: Vec<String>,
     /// Whether any provider in the current batch had errors.
     pub sync_had_errors: bool,
+    /// Aggregate diff counts across the current sync batch. Reset when the
+    /// batch finishes (no providers left in `syncing`). Used by the footer
+    /// background status to render `(+3 ~1 -2)` next to the provider list.
+    pub batch_added: usize,
+    pub batch_updated: usize,
+    pub batch_stale: usize,
+    /// Total provider count for the current batch (done + still syncing).
+    /// Captured when sync starts so the `n/total` counter does not jump
+    /// when providers complete and leave `syncing`.
+    pub batch_total: usize,
     pub pending_delete: Option<String>,
     pub sync_history: HashMap<String, SyncRecord>,
     pub form_baseline: Option<ProviderFormBaseline>,
+}
+
+impl ProviderState {
+    /// Reset batch counters when a completely new sync run begins.
+    ///
+    /// Call before inserting into `syncing` on every spawn path. When both
+    /// `syncing` and `sync_done` are empty a fresh batch is starting, so
+    /// stale `batch_total` / `batch_added` / `batch_updated` / `batch_stale`
+    /// values from a previous (non-completed) run are cleared. Without this
+    /// guard a rare edge case could leak state from an interrupted batch
+    /// into a smaller follow-up batch and show "Syncing 1/5" while only
+    /// one provider is actually in flight.
+    pub fn reset_batch_if_idle(&mut self) {
+        if self.syncing.is_empty() && self.sync_done.is_empty() {
+            self.batch_total = 0;
+            self.batch_added = 0;
+            self.batch_updated = 0;
+            self.batch_stale = 0;
+            self.sync_had_errors = false;
+        }
+    }
 }
 
 impl Default for ProviderState {
@@ -122,6 +153,10 @@ impl Default for ProviderState {
             syncing: HashMap::new(),
             sync_done: Vec::new(),
             sync_had_errors: false,
+            batch_added: 0,
+            batch_updated: 0,
+            batch_stale: 0,
+            batch_total: 0,
             pending_delete: None,
             sync_history: HashMap::new(),
             form_baseline: None,

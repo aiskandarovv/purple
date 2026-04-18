@@ -240,10 +240,6 @@ pub fn provider_saved(display_name: &str) -> String {
     format!("Saved {} configuration.", display_name)
 }
 
-pub fn syncing_provider(display_name: &str) -> String {
-    format!("Syncing {}...", display_name)
-}
-
 pub fn no_stale_hosts_for(display_name: &str) -> String {
     format!("No stale hosts for {}.", display_name)
 }
@@ -446,8 +442,14 @@ pub const TRANSFER_COMPLETE: &str = "Transfer complete.";
 
 pub const PING_EXPIRED: &str = "Ping expired. Press P to refresh.";
 
-pub fn provider_event(name: &str, message: &str) -> String {
-    format!("{}: {}", name, message)
+/// Per-provider sync progress line with a leading spinner frame so
+/// `event_loop::handle_tick` animates the prefix while the message is
+/// on screen. Format: `⠋ Proxmox VE: Resolving IPs (1/5)...`. Mirrors
+/// the spinner contract used by `synced_progress` so the footer keeps
+/// animating even when granular per-provider progress overrides the
+/// batch summary mid-sync.
+pub fn provider_progress(spinner: &str, name: &str, message: &str) -> String {
+    format!("{} {}: {}", spinner, name, message)
 }
 
 // ── Vault SSH bulk signing summaries (event_loop.rs) ────────────────
@@ -519,12 +521,66 @@ pub fn config_reloaded(count: usize) -> String {
 
 // ── Sync background ─────────────────────────────────────────────────
 
-pub fn synced_progress(names: &str) -> String {
-    format!("Synced: {}...", names)
+/// In-progress sync line for the footer. Format:
+/// `⠋ Syncing AWS, Hetzner · 1/3 (+12 ~3 -1)`.
+/// Active provider names lead so the user immediately sees which provider
+/// is currently in flight (especially relevant when one provider is slow).
+/// `done/total` follows as a counter. The leading character is a braille
+/// spinner frame rotated on every tick. The `(+a ~u -s)` suffix is omitted
+/// when all counts are zero.
+///
+/// Callers MUST only invoke this when `active_names` is non-empty (i.e.
+/// at least one provider is still in flight). The only call site is
+/// `main::set_sync_summary`, which enters this branch via `still_syncing`,
+/// itself gated on `!providers.syncing.is_empty()` — so `active_names`
+/// (built from `syncing.keys()`) is guaranteed non-empty.
+pub fn synced_progress(
+    spinner: &str,
+    active_names: &str,
+    done: usize,
+    total: usize,
+    added: usize,
+    updated: usize,
+    stale: usize,
+) -> String {
+    debug_assert!(
+        !active_names.is_empty(),
+        "synced_progress must only be called while a provider is still in flight"
+    );
+    let diff = sync_diff_suffix(added, updated, stale);
+    format!(
+        "{} Syncing {} \u{00B7} {}/{}{}",
+        spinner, active_names, done, total, diff
+    )
 }
 
-pub fn synced_done(names: &str) -> String {
-    format!("Synced: {}", names)
+/// Final sync summary for the footer once all providers in the batch have
+/// completed. Format: `Synced 5/5 · AWS, DO, Vultr, Hetzner, Linode (+12 ~3 -1)`.
+/// No spinner prefix, no auto-tick: the message expires by length-proportional
+/// timeout once the batch is done.
+pub fn synced_done(
+    done: usize,
+    total: usize,
+    names: &str,
+    added: usize,
+    updated: usize,
+    stale: usize,
+) -> String {
+    let diff = sync_diff_suffix(added, updated, stale);
+    format!("Synced {}/{} \u{00B7} {}{}", done, total, names, diff)
+}
+
+fn sync_diff_suffix(added: usize, updated: usize, stale: usize) -> String {
+    let parts: Vec<String> = [(added, '+'), (updated, '~'), (stale, '-')]
+        .iter()
+        .filter(|(n, _)| *n > 0)
+        .map(|(n, sign)| format!("{}{}", sign, n))
+        .collect();
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", parts.join(" "))
+    }
 }
 
 pub const SYNC_THREAD_SPAWN_FAILED: &str = "Failed to start sync thread.";

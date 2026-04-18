@@ -41,7 +41,7 @@
   "url": "https://getpurple.sh",
   "downloadUrl": "https://getpurple.sh",
   "installUrl": "https://github.com/erickochen/purple/releases",
-  "softwareVersion": "2.43.2",
+  "softwareVersion": "2.44.0",
   "datePublished": "2024-10-01",
   "dateModified": "2026-04-18",
   "softwareRequirements": "macOS or Linux",
@@ -450,6 +450,29 @@ h1 {
   text-shadow: 0 0 80px rgba(180, 74, 255, 0.4), 0 0 160px rgba(180, 74, 255, 0.15);
 }
 h1 .dot { color: var(--cyan); text-shadow: 0 0 20px var(--cyan); }
+
+/* ── Hero SVG logotype (Berkeley Mono Bold outlines, glyph-identical everywhere) ── */
+.h1-logo {
+  /* viewBox spans from cap-top to descender-bottom (943 design units) so the
+     SVG block matches what line-height:1 rendered text used to occupy. No
+     extra margin correction needed — the subtitle sits naturally underneath. */
+  height: 1em;
+  width: auto;
+  display: block;
+  margin: 0 auto;
+  overflow: visible; /* let drop-shadow spill past the viewBox */
+}
+.h1-logo .logo-word { fill: currentColor; }
+.h1-logo .logo-dot {
+  fill: var(--cyan);
+  filter: drop-shadow(0 0 20px var(--cyan));
+}
+.h1-logo .logo-cursor {
+  fill: var(--accent);
+  filter: drop-shadow(0 0 12px var(--accent));
+  animation: blink 1s step-end infinite;
+  transform-box: fill-box;
+}
 .h1-sub {
   display: block;
   font-size: clamp(0.9rem, 2vw, 1.1rem);
@@ -760,7 +783,29 @@ footer .sep { margin: 0 0.3em; }
 
 <div class="hero">
   <div class="hero-inner">
-    <h1>purple<span class="dot">.</span><span class="cursor h1-cursor"></span> <span class="h1-sub">One terminal. All your servers.</span></h1>
+    <h1>
+      <!--
+        Hero logotype. Rendered once from Berkeley Mono Bold via fontTools so
+        every visitor sees the exact same glyphs regardless of installed fonts.
+        viewBox: unitsPerEm-space from the font (0..4200 horizontal, -245..956
+        vertical). Outer scale(1,-1) flips the font y-axis into SVG space.
+        To regenerate after a typeface change, re-run the fontTools export
+        script from the session notes; do not hand-edit path data.
+      -->
+      <svg class="h1-logo" viewBox="0 -728 4360 943" role="img" aria-label="purple.">
+        <g transform="scale(1,-1)">
+          <path class="logo-word" d="M80 -215H198V53H203C224 1 247 -10 332 -10C498 -10 534 39 534 261C534 488 496 538 325 538C240 538 217 527 198 475H193V528H80ZM304 97C212 97 192 127 192 264C192 401 212 431 304 431C397 431 418 401 418 264C418 127 397 97 304 97Z"/>
+          <path class="logo-word" d="M516 0V528H398V255C398 126 378 98 286 98C215 98 199 115 199 194V528H81V194C81 27 112 -10 254 -10C352 -10 380 6 408 80H413V0Z" transform="translate(600,0)"/>
+          <path class="logo-word" d="M156 0H273V219C273 382 303 418 442 418C472 418 494 416 538 409V524C472 530 447 531 399 530C308 529 300 524 245 421H240L256 528H156Z" transform="translate(1200,0)"/>
+          <path class="logo-word" d="M80 -215H198V53H203C224 1 247 -10 332 -10C498 -10 534 39 534 261C534 488 496 538 325 538C240 538 217 527 198 475H193V528H80ZM304 97C212 97 192 127 192 264C192 401 212 431 304 431C397 431 418 401 418 264C418 127 397 97 304 97Z" transform="translate(1800,0)"/>
+          <path class="logo-word" d="M85 0H528V101H368V728H95V627H257V101H85Z" transform="translate(2400,0)"/>
+          <path class="logo-word" d="M408 143C394 102 377 93 313 93C217 93 194 115 188 215H526C532 480 491 538 298 538C116 538 76 489 76 265C76 40 119 -10 315 -10C463 -10 500 18 519 143ZM189 305C193 415 214 439 303 439C390 439 411 415 416 305Z" transform="translate(3000,0)"/>
+          <path class="logo-dot" d="M224 0H376V152H224Z" transform="translate(3600,0)"/>
+          <rect class="logo-cursor" x="4240" y="0" width="80" height="680"/>
+        </g>
+      </svg>
+      <span class="h1-sub">One terminal. All your servers.</span>
+    </h1>
     <h2 class="tagline">Open-source terminal SSH manager and SSH config editor for macOS and Linux. Search, connect, transfer files and manage containers. All from one TUI.</h2>
     <div class="terminal">
       <div class="terminal-bar">
@@ -778,7 +823,7 @@ footer .sep { margin: 0 0.3em; }
           <button class="copy-btn copy-inline" id="copy-btn" onclick="copy(this)" style="display:none">copy</button>
         </div>
         <div class="install-output" id="install-output" style="display:none">
-          <div>Downloading purple v2.43.2 for darwin-arm64...</div>
+          <div>Downloading purple v2.44.0 for darwin-arm64...</div>
           <div>Installing to /usr/local/bin/purple... <span class="success">done.</span></div>
         </div>
         <div class="alt-installs" id="alt-installs" style="display:none">
@@ -900,7 +945,7 @@ footer .sep { margin: 0 0.3em; }
         <summary>How do I troubleshoot connection problems?</summary>
         <div class="answer">Run with <code>--verbose</code> to enable debug logging, then <code>purple logs --tail</code> in another terminal. Logs are written to <code>~/.purple/purple.log</code> with fault domain prefixes: <code>[external]</code> for remote/tool errors, <code>[config]</code> for local config issues. Set <code>PURPLE_LOG=trace</code> for maximum detail.</div>
       </details>
-      <div class="man-foot"><span>purple v2.43.2</span><span>2026-04-18</span><span>PURPLE(1)</span></div>
+      <div class="man-foot"><span>purple v2.44.0</span><span>2026-04-18</span><span>PURPLE(1)</span></div>
     </div>
   </div>
 

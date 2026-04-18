@@ -1,4 +1,4 @@
-# purple
+<img src="site/purple-logo.svg" alt="purple" width="213" height="48">
 
 **An open-source terminal SSH manager and SSH config editor for macOS and Linux.** A fast Rust TUI that searches hundreds of hosts, syncs from 16 clouds including AWS, GCP, Azure, Hetzner, Proxmox and OCI, transfers files, manages Docker and Podman over SSH, signs short-lived HashiCorp Vault SSH certificates and exposes an MCP server for AI agents. Keyboard-driven. Single binary. MIT licensed.
 

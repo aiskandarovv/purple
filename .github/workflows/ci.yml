@@ -147,7 +147,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Verify embedded copies match sources
-        run: cd site && sh check-sync.sh
+        run: sh scripts/site/check-sync.sh
 
   design-checks:
     name: Design / messages / keybindings

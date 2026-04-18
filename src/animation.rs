@@ -85,6 +85,18 @@ impl AnimationState {
             .any(|s| matches!(s, PingStatus::Checking))
     }
 
+    /// Whether any host is currently Reachable. Drives the "breathing"
+    /// pulse on online indicators: when at least one host is alive the
+    /// main loop runs at 80ms tick rate so `online_dot_pulsing` can
+    /// advance smoothly. Slow/Unreachable/Checking deliberately do NOT
+    /// pulse — only confirmed-online gets the subtle live signal.
+    pub fn has_reachable_hosts(&self, app: &App) -> bool {
+        app.ping
+            .status
+            .values()
+            .any(|s| matches!(s, PingStatus::Reachable { .. }))
+    }
+
     /// Advance spinner tick. Called from main loop at ~80ms intervals.
     pub fn tick_spinner(&mut self) {
         self.spinner_tick = self.spinner_tick.wrapping_add(1);

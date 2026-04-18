@@ -443,6 +443,21 @@ fn apply_saved_sort(app: &mut App) {
 /// "1 failed" count.
 /// Replace the spinner frame prefix in a status text. Returns None if the
 /// text does not start with a known spinner frame.
+///
+/// Animated statuses MUST start with a character from
+/// [`crate::animation::SPINNER_FRAMES`] followed by a space, otherwise
+/// `event_loop::handle_tick` cannot rotate the frame and the animation
+/// silently stops. This is an implicit contract upheld by:
+///
+/// - `messages::synced_progress` (footer batch summary)
+/// - `messages::provider_progress` (per-provider progress)
+/// - vault signing progress text in `handler::event_loop::handle_tick`
+///
+/// Any new code path that posts a status meant to animate must seed the
+/// text with `SPINNER_FRAMES[0]` followed by a single space, and pass
+/// through the `replace_spinner_frame` + `created_at` refresh dance in
+/// `handle_tick`. Returning `None` is the intentional no-op for
+/// non-animated statuses.
 pub(crate) fn replace_spinner_frame(text: &str, new_frame: &str) -> Option<String> {
     let starts_with_spinner = crate::animation::SPINNER_FRAMES
         .iter()
@@ -510,25 +525,68 @@ pub(crate) fn format_sync_diff(added: usize, updated: usize, stale: usize) -> St
     }
 }
 
-/// Shows "Synced: AWS, DO, Vultr" that grows as each provider finishes.
-/// Clears the batch state once all providers are done so the status can expire normally.
+/// Footer status that surfaces in-flight providers as the batch progresses.
+/// While a sync is running the line is
+/// `⠋ Syncing AWS, Hetzner · 1/3 (+12 ~3 -1)`, where the leading char is a
+/// braille spinner frame rotated by `event_loop::handle_tick` and the names
+/// are the providers that have not yet reported back. Once every provider in
+/// the batch has resolved the line becomes
+/// `Synced 5/5 · AWS, DO, Vultr, Hetzner, Linode (+12 ~3 -1)` and the batch
+/// state resets. Persists `sync_history.tsv` on completion.
 pub(crate) fn set_sync_summary(app: &mut App) {
     let still_syncing = !app.providers.syncing.is_empty();
-    let names = app.providers.sync_done.join(", ");
+    let done = app.providers.sync_done.len();
+    let total = app
+        .providers
+        .batch_total
+        .max(done + app.providers.syncing.len());
+    let added = app.providers.batch_added;
+    let updated = app.providers.batch_updated;
+    let stale = app.providers.batch_stale;
     if still_syncing {
+        // Active providers (still in flight) are what the user wants to see —
+        // especially when one is slow. Sort for stable rendering across ticks
+        // (HashMap iteration order would otherwise jitter the footer).
+        let mut active: Vec<String> = app
+            .providers
+            .syncing
+            .keys()
+            .map(|name| crate::providers::provider_display_name(name).to_string())
+            .collect();
+        active.sort();
+        let active_names = active.join(", ");
+        // Seed with frame 0; handle_tick rotates the prefix every ~100ms while
+        // sync is active. Using SPINNER_FRAMES[0] keeps replace_spinner_frame's
+        // contract (text must start with a known frame) intact from tick zero.
+        let spinner = crate::animation::SPINNER_FRAMES[0];
+        let text = crate::messages::synced_progress(
+            spinner,
+            &active_names,
+            done,
+            total,
+            added,
+            updated,
+            stale,
+        );
         if app.providers.sync_had_errors {
-            app.notify_background_error(crate::messages::synced_progress(&names));
+            app.notify_background_error(text);
         } else {
-            app.notify_background(crate::messages::synced_progress(&names));
+            app.notify_background(text);
         }
     } else {
+        let names = app.providers.sync_done.join(", ");
+        let text = crate::messages::synced_done(done, total, &names, added, updated, stale);
         if app.providers.sync_had_errors {
-            app.notify_background_error(crate::messages::synced_done(&names));
+            app.notify_background_error(text);
         } else {
-            app.notify_background(crate::messages::synced_done(&names));
+            app.notify_background(text);
         }
         app.providers.sync_done.clear();
         app.providers.sync_had_errors = false;
+        app.providers.batch_added = 0;
+        app.providers.batch_updated = 0;
+        app.providers.batch_stale = 0;
+        app.providers.batch_total = 0;
         app::SyncRecord::save_all(&app.providers.sync_history);
     }
 }

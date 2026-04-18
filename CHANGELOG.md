@@ -1,3 +1,12 @@
+## 2.44.0 - 2026-04-18
+
+- feat: Live progress, live hosts, untruncated IPs.
+- feat: The sync footer shows which provider is in flight, how many providers are done and a running `(+added ~updated -stale)` diff, so you can tell at a glance what is changing in your host list.
+- feat: Online indicators pulse gently so a quick scan of the host list tells you which hosts are alive right now.
+- feat: IP addresses in the address column always render in full, even next to a ProxyJump or tunnel indicator, so you can read and copy them without squinting.
+- change: Welcome, Help and What's New overlays share one clean logotype with the cyan-dot accent from the landing page, giving web and TUI one consistent look.
+- fix: Upgrade toasts fire reliably after a brew or curl install when the previous run was a dev build, so you actually see release notes for the version you just installed.
+
 ## 2.43.2 - 2026-04-18
 
 - feat: Cleaner internals, steadier releases.

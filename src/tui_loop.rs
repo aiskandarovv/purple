@@ -60,9 +60,14 @@ pub(crate) fn run_tui(mut app: App) -> Result<()> {
         // During ping checking, use 80ms timeout for spinner.
         // Otherwise, block until the next event arrives.
         let vault_signing = app.vault.signing_cancel.is_some();
+        let provider_syncing = !app.providers.syncing.is_empty();
         let event = if anim.is_animating(&app) {
             events.next_timeout(std::time::Duration::from_millis(16))?
-        } else if anim.has_checking_hosts(&app) || vault_signing {
+        } else if anim.has_checking_hosts(&app)
+            || vault_signing
+            || provider_syncing
+            || anim.has_reachable_hosts(&app)
+        {
             events.next_timeout(std::time::Duration::from_millis(80))?
         } else {
             Some(events.next()?)
@@ -99,11 +104,17 @@ fn spawn_startup_tasks(app: &mut App, events_tx: &std::sync::mpsc::Sender<AppEve
             continue;
         }
         if !app.providers.syncing.contains_key(&section.provider) {
+            app.providers.reset_batch_if_idle();
             let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
             app.providers
                 .syncing
                 .insert(section.provider.clone(), cancel.clone());
+            app.providers.batch_total = app
+                .providers
+                .batch_total
+                .max(app.providers.sync_done.len() + app.providers.syncing.len());
             handler::spawn_provider_sync(&section, events_tx.clone(), cancel);
+            crate::set_sync_summary(app);
         }
     }
 
