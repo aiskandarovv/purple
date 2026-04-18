@@ -76,6 +76,34 @@ declare -A SERVICE_KEYWORDS=(
     [transip]="vps|/v6/vps"
 )
 
+# --- per-provider exclusion keywords ----------------------------------------
+# Stage 3: drop lines that mention services/products purple does NOT call.
+# Only used when the line does NOT also contain a strong API-path token
+# (see STRONG_API_TOKENS below). Keep conservative: every entry must be a
+# service purple has no provider code for. Verify against docs/providers-api.md
+# before adding.
+
+declare -A EXCLUDE_KEYWORDS=(
+    # Azure: Batch, AKS/Kubernetes, Scale Sets, VMware Solution, Arc, Stack,
+    # HPC Cache, Machine Learning, Windows 365, Dev Box, Container Apps, Spring
+    # Apps, App Service, Functions, Synapse, HDInsight.
+    [azure]="batch|kubernetes|\\baks\\b|scale.?set|vmware|\\barc\\b|\\bstack\\b|\\bhpc\\b|machine.learning|windows.365|dev.?box|container.app|spring.app|app.?service|\\bfunctions\\b|synapse|hdinsight"
+    [aws]="lambda|fargate|eks|ecs|lightsail|outposts|batch|beanstalk|sagemaker|workspaces"
+    [gcp]="kubernetes|\\bgke\\b|cloud.?run|cloud.?functions|app.?engine|dataproc|dataflow"
+    [oracle]="kubernetes|\\boke\\b|functions|autonomous|exadata|\\bdb.system\\b"
+)
+
+# Strong API-path tokens that override exclusion. If a line mentions both an
+# excluded service AND a path token purple actually calls, keep the match
+# (defensive: rare but possible, e.g. "Batch now uses the
+# Microsoft.Compute/virtualMachines API differently").
+declare -A STRONG_API_TOKENS=(
+    [azure]="microsoft\\.compute/virtualmachines|microsoft\\.network/networkinterfaces|microsoft\\.network/publicipaddresses"
+    [aws]="describeinstances|describeimages|ec2\\.amazonaws"
+    [gcp]="compute/v1/projects|aggregatedlist"
+    [oracle]="core/20160918|/instances\\?|/vnicattachments"
+)
+
 # --- provider feeds ---------------------------------------------------------
 # Format: "provider|type|url"
 # type: rss    = RSS/Atom XML
@@ -298,6 +326,35 @@ scan_provider() {
         matches="$(echo "$keyword_matches" | grep -iE "$service_kw" || true)"
     else
         matches="$keyword_matches"
+    fi
+
+    if [[ -z "$matches" ]]; then
+        return
+    fi
+
+    # Stage 3: drop lines matching this provider's exclusion keywords, UNLESS
+    # the line also contains a strong API-path token (then keep it, defensive).
+    local exclude_kw="${EXCLUDE_KEYWORDS[$provider]:-}"
+    local strong_kw="${STRONG_API_TOKENS[$provider]:-}"
+    if [[ -n "$exclude_kw" ]]; then
+        local filtered=""
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            if echo "$line" | grep -iE "$exclude_kw" >/dev/null; then
+                # Line matches exclusion. Override if strong token present.
+                if [[ -n "$strong_kw" ]] && echo "$line" | grep -iE "$strong_kw" >/dev/null; then
+                    filtered+="$line"$'\n'
+                else
+                    # Log to stderr for calibration traceability
+                    local short
+                    short="$(echo "$line" | sed 's/^[[:space:]]*//' | cut -c1-120)"
+                    echo "  [excluded: $provider] $short" >&2
+                fi
+            else
+                filtered+="$line"$'\n'
+            fi
+        done <<< "$matches"
+        matches="$(echo -n "$filtered" | sed '/^$/d')"
     fi
 
     if [[ -z "$matches" ]]; then
