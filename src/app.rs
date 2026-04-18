@@ -63,10 +63,10 @@ pub use forms::{
 pub use ping::PingState;
 pub use types::{
     BulkTagAction, BulkTagApplyResult, BulkTagEditorState, BulkTagRow, ConflictState,
-    ContainerState, DeletedHost, FormBaseline, GroupBy, HostListItem, MessageClass, PingStatus,
-    ProviderFormBaseline, ProxyJumpCandidate, ReloadState, Screen, SearchState,
-    SnippetFormBaseline, SortMode, StatusMessage, SyncRecord, TagState, TunnelFormBaseline,
-    UiSelection, ViewMode, WhatsNewState, classify_ping, health_summary_spans,
+    ContainerState, DeletedHost, FormBaseline, GroupBy, HostListItem, HostListRenderCache,
+    MessageClass, PingStatus, ProviderFormBaseline, ProxyJumpCandidate, ReloadState, Screen,
+    SearchState, SnippetFormBaseline, SortMode, StatusMessage, SyncRecord, TagState,
+    TunnelFormBaseline, UiSelection, ViewMode, WhatsNewState, classify_ping, health_summary_spans,
     health_summary_spans_for, ping_sort_key, propagate_ping_to_dependents, select_display_tags,
     status_glyph,
 };
@@ -187,6 +187,11 @@ pub struct App {
 
     // Cached tunnel summaries (invalidated on config reload)
     pub tunnel_summaries_cache: HashMap<String, String>,
+
+    /// Lazily-built caches for the host-list renderer. Populated on first
+    /// render after invalidation; invalidated whenever `hosts`, `display_list`
+    /// or `history` change.
+    pub host_list_cache: HostListRenderCache,
 
     // Sync history
     pub sync_history: HashMap<String, SyncRecord>,
@@ -342,6 +347,7 @@ impl App {
             snippet_param_form: None,
             pending_snippet_terminal: false,
             tunnel_summaries_cache: HashMap::new(),
+            host_list_cache: HostListRenderCache::default(),
             update: UpdateState {
                 hint: crate::update::update_hint(),
                 ..UpdateState::default()
@@ -367,18 +373,24 @@ impl App {
 
     /// Reload hosts from config.
     pub fn reload_hosts(&mut self) {
+        let had_pending_vault_write = self.pending_vault_config_write;
         // Synchronously flush any deferred vault config write before reloading,
         // so on-disk state matches in-memory state (no TOCTOU with auto-reload).
         // Skip when a form is open (flush handler would bail anyway) and do not
         // call flush_pending_vault_write() itself to avoid recursion.
+        let mut flushed_vault_write = false;
         if self.pending_vault_config_write && !self.is_form_open() {
-            if let Err(e) = self.config.write() {
-                self.notify_error(crate::messages::vault_config_write_after_sign(&e));
+            match self.config.write() {
+                Ok(()) => flushed_vault_write = true,
+                Err(e) => self.notify_error(crate::messages::vault_config_write_after_sign(&e)),
             }
         }
         // Always clear the flag: either we flushed, or the form-submit path
         // has already written the full config.
         self.pending_vault_config_write = false;
+        log::debug!(
+            "[config] reload_hosts: pending_vault_write={had_pending_vault_write} flushed={flushed_vault_write}"
+        );
         let had_search = self.search.query.take();
         let selected_alias = self
             .selected_host()
@@ -386,6 +398,7 @@ impl App {
             .or_else(|| self.selected_pattern().map(|p| p.pattern.clone()));
 
         self.tunnel_summaries_cache.clear();
+        self.host_list_cache.invalidate();
         self.hosts = self.config.host_entries();
         self.patterns = self.config.pattern_entries();
         // Prune cert status cache and in-flight set: retain only entries whose
@@ -456,6 +469,13 @@ impl App {
         if let Some(alias) = selected_alias {
             self.select_host_by_alias(&alias);
         }
+
+        log::debug!(
+            "[config] reload_hosts: hosts={} patterns={} display_items={}",
+            self.hosts.len(),
+            self.patterns.len(),
+            self.display_list.len(),
+        );
     }
 
     /// Synchronously re-check a host's Vault SSH certificate and update

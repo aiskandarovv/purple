@@ -65,6 +65,9 @@ impl App {
 
     /// Apply the current search query to filter hosts.
     pub fn apply_filter(&mut self) {
+        // Filtered index lists drive the search-mode render path which also
+        // consumes the render cache; recompute fresh.
+        self.host_list_cache.invalidate();
         let query = match &self.search.query {
             Some(q) if !q.is_empty() => q.clone(),
             Some(_) => {

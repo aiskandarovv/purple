@@ -1,3 +1,12 @@
+## 2.42.2 - 2026-04-18
+
+- change: Snappier host list. Safer, tighter releases.
+- change: Large inventories render faster. Column widths and group health summaries are cached across frames instead of rebuilt on every render tick
+- change: Editing the installer or landing page no longer risks breaking getpurple.sh. One command regenerates the embedded copies from source
+- change: Full pre-commit suite now runs in CI. Format, clippy, build, test, deny, MSRV, doc, site sync, smoke test, design system, messages, keybindings and visual regression all gate every push
+- change: Adding a new cloud provider is one entry in one table instead of edits to four parallel lookups
+- fix: Update, tunnel and snippet CLI output routed through the centralized message module, keeping wording consistent
+
 ## 2.42.1 - 2026-04-17
 
 - fix: SSH prompts no longer bleed into the TUI

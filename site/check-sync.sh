@@ -48,7 +48,7 @@ check "../llms.txt  <-> LLMS_TXT"      "LLMS_TXT"       "../llms.txt"
 if [ "$fail" = "1" ]; then
   echo ""
   echo "FAILED: embedded content in worker.ts is out of sync."
-  echo "Update worker.ts to match the source files before committing."
+  echo "Run: sh site/sync.sh  (regenerates worker.ts from source files)"
   exit 1
 fi
 

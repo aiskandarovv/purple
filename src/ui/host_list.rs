@@ -492,15 +492,24 @@ fn render_display_list(
         .map(|h| host_tags_width(h, &app.group_by, detail_mode))
         .max()
         .unwrap_or(0);
-    let history_w = app
-        .hosts
-        .iter()
-        .filter_map(|h| app.history.entries.get(&h.alias))
-        .map(|e| crate::history::ConnectionHistory::format_time_ago(e.last_connected))
-        .filter(|s| !s.is_empty())
-        .map(|s| s.width())
-        .max()
-        .unwrap_or(0);
+    // history_w requires formatting a timestamp per host, which allocates a
+    // String each call. The result only changes when `history` does, so cache
+    // it and reuse across frames until invalidated.
+    let history_w = if let Some(w) = app.host_list_cache.history_width {
+        w
+    } else {
+        let w = app
+            .hosts
+            .iter()
+            .filter_map(|h| app.history.entries.get(&h.alias))
+            .map(|e| crate::history::ConnectionHistory::format_time_ago(e.last_connected))
+            .filter(|s| !s.is_empty())
+            .map(|s| s.width())
+            .max()
+            .unwrap_or(0);
+        app.host_list_cache.history_width = Some(w);
+        w
+    };
     let cols = Columns::compute(
         alias_w,
         host_w,
@@ -527,27 +536,40 @@ fn render_display_list(
         underline_area,
     );
 
-    // Pre-build group alias map for health summaries (avoids O(N²) scan)
-    let group_alias_map: std::collections::HashMap<&str, Vec<&str>> = {
-        let mut map: std::collections::HashMap<&str, Vec<&str>> = std::collections::HashMap::new();
-        let mut current_group: Option<&str> = None;
+    // Pre-build group alias map for health summaries (avoids O(N²) scan).
+    // Cached on App and reused across frames until the display list or hosts
+    // change — rebuild cost is only paid once per mutation instead of every
+    // render tick during animations.
+    if app.host_list_cache.group_alias_map.is_none() {
+        let mut map: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        let mut current_group: Option<String> = None;
         for item in &app.display_list {
             match item {
                 HostListItem::GroupHeader(text) => {
-                    current_group = Some(text.as_str());
+                    current_group = Some(text.clone());
                 }
                 HostListItem::Host { index } => {
-                    if let (Some(group), Some(host)) = (current_group, app.hosts.get(*index)) {
-                        map.entry(group).or_default().push(host.alias.as_str());
+                    if let (Some(group), Some(host)) =
+                        (current_group.as_ref(), app.hosts.get(*index))
+                    {
+                        map.entry(group.clone())
+                            .or_default()
+                            .push(host.alias.clone());
                     }
                 }
                 _ => {}
             }
         }
-        map
-    };
+        app.host_list_cache.group_alias_map = Some(map);
+    }
+    let group_alias_map = app
+        .host_list_cache
+        .group_alias_map
+        .as_ref()
+        .expect("group_alias_map populated above");
 
-    let mut items: Vec<ListItem> = Vec::new();
+    let mut items: Vec<ListItem> = Vec::with_capacity(app.display_list.len());
     for item in &app.display_list {
         match item {
             HostListItem::GroupHeader(text) => {
@@ -563,12 +585,14 @@ fn render_display_list(
                 let available = content_width.saturating_sub(1);
 
                 // Build health summary for this group's hosts (uses pre-built map)
-                let aliases = group_alias_map
+                let aliases: &[String] = group_alias_map
                     .get(text.as_str())
                     .map(|v| v.as_slice())
                     .unwrap_or(&[]);
-                let health_spans =
-                    app::health_summary_spans_for(&app.ping.status, aliases.iter().copied());
+                let health_spans = app::health_summary_spans_for(
+                    &app.ping.status,
+                    aliases.iter().map(String::as_str),
+                );
 
                 if health_spans.is_empty() {
                     // No pings: just name + count + fill dashes
@@ -728,7 +752,9 @@ fn render_search_list(
     );
 
     let query = app.search.query.as_deref();
-    let mut items: Vec<ListItem> = Vec::new();
+    let mut items: Vec<ListItem> = Vec::with_capacity(
+        app.search.filtered_indices.len() + app.search.filtered_pattern_indices.len(),
+    );
     for &idx in app.search.filtered_indices.iter() {
         if let Some(host) = app.hosts.get(idx) {
             let tunnel_active = app.active_tunnels.contains_key(&host.alias);

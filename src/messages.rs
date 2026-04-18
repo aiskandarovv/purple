@@ -538,6 +538,10 @@ pub mod cli;
 
 pub mod update {
     pub const WHATS_NEW_HINT: &str = "Press n inside purple to see what's new.";
+    pub const DONE: &str = "done.";
+    pub const CHECKSUM_OK: &str = "ok.";
+    pub const SUDO_WARNING: &str =
+        "Running via sudo. Consider fixing directory permissions instead.";
 
     pub fn already_on(current: &str) -> String {
         format!("already on v{} (latest).", current)
@@ -545,6 +549,22 @@ pub mod update {
 
     pub fn available(latest: &str, current: &str) -> String {
         format!("v{} available (current: v{}).", latest, current)
+    }
+
+    pub fn header(bold_name: &str) -> String {
+        format!("\n  {} updater\n", bold_name)
+    }
+
+    pub fn binary_path(path: &std::path::Path) -> String {
+        format!("  Binary: {}", path.display())
+    }
+
+    pub fn installed_at(bold_version: &str, path: &std::path::Path) -> String {
+        format!("\n  {} installed at {}.", bold_version, path.display())
+    }
+
+    pub fn whats_new_hint_indented() -> String {
+        format!("\n  {}", WHATS_NEW_HINT)
     }
 }
 

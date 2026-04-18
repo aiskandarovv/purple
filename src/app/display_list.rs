@@ -223,6 +223,8 @@ impl App {
 
         // Multi-select indices become visually misleading after reorder
         self.multi_select.clear();
+        // display_list is about to be rebuilt; group_alias_map depends on it
+        self.host_list_cache.invalidate();
 
         if self.sort_mode == SortMode::Original && matches!(self.group_by, GroupBy::None) {
             self.display_list =

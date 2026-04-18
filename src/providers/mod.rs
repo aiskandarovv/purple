@@ -106,7 +106,165 @@ pub trait Provider {
     }
 }
 
-/// All known provider names.
+/// Parse a comma-separated provider config field into a list of trimmed,
+/// non-empty entries. Used for regions/zones/subscriptions.
+fn parse_csv(s: &str) -> Vec<String> {
+    s.split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// Factory for a provider implementation from an optional config section.
+/// `None` yields a default-constructed instance; `Some(section)` wires the
+/// section's fields into the provider struct.
+type ProviderBuild = fn(Option<&config::ProviderSection>) -> Box<dyn Provider>;
+
+/// Static registry entry describing one provider. Adding a provider means
+/// adding exactly one `ProviderDescriptor` to `PROVIDERS` below.
+pub struct ProviderDescriptor {
+    /// Slug used in config files and aliases.
+    pub name: &'static str,
+    /// Human-readable name shown in the UI.
+    pub display: &'static str,
+    /// Builder. Must not allocate or fail.
+    pub build: ProviderBuild,
+}
+
+/// Single source of truth for the provider registry. Adding a new provider
+/// means one entry here plus the provider module itself.
+pub const PROVIDERS: &[ProviderDescriptor] = &[
+    ProviderDescriptor {
+        name: "digitalocean",
+        display: "DigitalOcean",
+        build: |_| Box::new(digitalocean::DigitalOcean),
+    },
+    ProviderDescriptor {
+        name: "vultr",
+        display: "Vultr",
+        build: |_| Box::new(vultr::Vultr),
+    },
+    ProviderDescriptor {
+        name: "linode",
+        display: "Linode",
+        build: |_| Box::new(linode::Linode),
+    },
+    ProviderDescriptor {
+        name: "hetzner",
+        display: "Hetzner",
+        build: |_| Box::new(hetzner::Hetzner),
+    },
+    ProviderDescriptor {
+        name: "upcloud",
+        display: "UpCloud",
+        build: |_| Box::new(upcloud::UpCloud),
+    },
+    ProviderDescriptor {
+        name: "proxmox",
+        display: "Proxmox VE",
+        build: |section| {
+            let s = section.cloned().unwrap_or_default();
+            Box::new(proxmox::Proxmox {
+                base_url: s.url,
+                verify_tls: s.verify_tls,
+            })
+        },
+    },
+    ProviderDescriptor {
+        name: "aws",
+        display: "AWS EC2",
+        build: |section| {
+            let s = section.cloned().unwrap_or_default();
+            Box::new(aws::Aws {
+                regions: parse_csv(&s.regions),
+                profile: s.profile,
+            })
+        },
+    },
+    ProviderDescriptor {
+        name: "scaleway",
+        display: "Scaleway",
+        build: |section| {
+            let s = section.cloned().unwrap_or_default();
+            Box::new(scaleway::Scaleway {
+                zones: parse_csv(&s.regions),
+            })
+        },
+    },
+    ProviderDescriptor {
+        name: "gcp",
+        display: "GCP",
+        build: |section| {
+            let s = section.cloned().unwrap_or_default();
+            Box::new(gcp::Gcp {
+                zones: parse_csv(&s.regions),
+                project: s.project,
+            })
+        },
+    },
+    ProviderDescriptor {
+        name: "azure",
+        display: "Azure",
+        build: |section| {
+            let s = section.cloned().unwrap_or_default();
+            Box::new(azure::Azure {
+                subscriptions: parse_csv(&s.regions),
+            })
+        },
+    },
+    ProviderDescriptor {
+        name: "tailscale",
+        display: "Tailscale",
+        build: |_| Box::new(tailscale::Tailscale),
+    },
+    ProviderDescriptor {
+        name: "oracle",
+        display: "Oracle Cloud",
+        build: |section| {
+            let s = section.cloned().unwrap_or_default();
+            Box::new(oracle::Oracle {
+                regions: parse_csv(&s.regions),
+                compartment: s.compartment,
+            })
+        },
+    },
+    ProviderDescriptor {
+        name: "ovh",
+        display: "OVHcloud",
+        // OVH overloads `regions` as the API endpoint (e.g. "ovh-eu").
+        // Known quirk flagged in the architecture review; kept as-is to
+        // avoid schema migration in this refactor.
+        build: |section| {
+            let s = section.cloned().unwrap_or_default();
+            Box::new(ovh::Ovh {
+                project: s.project,
+                endpoint: s.regions,
+            })
+        },
+    },
+    ProviderDescriptor {
+        name: "leaseweb",
+        display: "Leaseweb",
+        build: |_| Box::new(leaseweb::Leaseweb),
+    },
+    ProviderDescriptor {
+        name: "i3d",
+        display: "i3D.net",
+        build: |_| Box::new(i3d::I3d),
+    },
+    ProviderDescriptor {
+        name: "transip",
+        display: "TransIP",
+        build: |_| Box::new(transip::TransIp),
+    },
+];
+
+/// Look up a descriptor by name.
+fn descriptor(name: &str) -> Option<&'static ProviderDescriptor> {
+    PROVIDERS.iter().find(|p| p.name == name)
+}
+
+/// All known provider names, in registration order.
 pub const PROVIDER_NAMES: &[&str] = &[
     "digitalocean",
     "vultr",
@@ -126,130 +284,30 @@ pub const PROVIDER_NAMES: &[&str] = &[
     "transip",
 ];
 
-/// Get a provider implementation by name.
+// Compile-time guard: PROVIDER_NAMES and PROVIDERS must stay in lockstep.
+const _: () = {
+    assert!(
+        PROVIDER_NAMES.len() == PROVIDERS.len(),
+        "PROVIDER_NAMES and PROVIDERS length must match",
+    );
+};
+
+/// Get a provider implementation by name with default configuration.
 pub fn get_provider(name: &str) -> Option<Box<dyn Provider>> {
-    match name {
-        "digitalocean" => Some(Box::new(digitalocean::DigitalOcean)),
-        "vultr" => Some(Box::new(vultr::Vultr)),
-        "linode" => Some(Box::new(linode::Linode)),
-        "hetzner" => Some(Box::new(hetzner::Hetzner)),
-        "upcloud" => Some(Box::new(upcloud::UpCloud)),
-        "proxmox" => Some(Box::new(proxmox::Proxmox {
-            base_url: String::new(),
-            verify_tls: true,
-        })),
-        "aws" => Some(Box::new(aws::Aws {
-            regions: Vec::new(),
-            profile: String::new(),
-        })),
-        "scaleway" => Some(Box::new(scaleway::Scaleway { zones: Vec::new() })),
-        "gcp" => Some(Box::new(gcp::Gcp {
-            zones: Vec::new(),
-            project: String::new(),
-        })),
-        "azure" => Some(Box::new(azure::Azure {
-            subscriptions: Vec::new(),
-        })),
-        "tailscale" => Some(Box::new(tailscale::Tailscale)),
-        "oracle" => Some(Box::new(oracle::Oracle {
-            regions: Vec::new(),
-            compartment: String::new(),
-        })),
-        "ovh" => Some(Box::new(ovh::Ovh {
-            project: String::new(),
-            endpoint: String::new(),
-        })),
-        "leaseweb" => Some(Box::new(leaseweb::Leaseweb)),
-        "i3d" => Some(Box::new(i3d::I3d)),
-        "transip" => Some(Box::new(transip::TransIp)),
-        _ => None,
-    }
+    descriptor(name).map(|d| (d.build)(None))
 }
 
 /// Get a provider implementation configured from a provider section.
-/// For providers that need extra config (e.g. Proxmox base URL), this
-/// creates a properly configured instance.
 pub fn get_provider_with_config(
     name: &str,
     section: &config::ProviderSection,
 ) -> Option<Box<dyn Provider>> {
-    match name {
-        "proxmox" => Some(Box::new(proxmox::Proxmox {
-            base_url: section.url.clone(),
-            verify_tls: section.verify_tls,
-        })),
-        "aws" => Some(Box::new(aws::Aws {
-            regions: section
-                .regions
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect(),
-            profile: section.profile.clone(),
-        })),
-        "scaleway" => Some(Box::new(scaleway::Scaleway {
-            zones: section
-                .regions
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect(),
-        })),
-        "gcp" => Some(Box::new(gcp::Gcp {
-            zones: section
-                .regions
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect(),
-            project: section.project.clone(),
-        })),
-        "azure" => Some(Box::new(azure::Azure {
-            subscriptions: section
-                .regions
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect(),
-        })),
-        "oracle" => Some(Box::new(oracle::Oracle {
-            regions: section
-                .regions
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect(),
-            compartment: section.compartment.clone(),
-        })),
-        "ovh" => Some(Box::new(ovh::Ovh {
-            project: section.project.clone(),
-            endpoint: section.regions.clone(),
-        })),
-        _ => get_provider(name),
-    }
+    descriptor(name).map(|d| (d.build)(Some(section)))
 }
 
 /// Display name for a provider (e.g. "digitalocean" -> "DigitalOcean").
 pub fn provider_display_name(name: &str) -> &str {
-    match name {
-        "digitalocean" => "DigitalOcean",
-        "vultr" => "Vultr",
-        "linode" => "Linode",
-        "hetzner" => "Hetzner",
-        "upcloud" => "UpCloud",
-        "proxmox" => "Proxmox VE",
-        "aws" => "AWS EC2",
-        "scaleway" => "Scaleway",
-        "gcp" => "GCP",
-        "azure" => "Azure",
-        "tailscale" => "Tailscale",
-        "oracle" => "Oracle Cloud",
-        "ovh" => "OVHcloud",
-        "leaseweb" => "Leaseweb",
-        "i3d" => "i3D.net",
-        "transip" => "TransIP",
-        other => other,
-    }
+    descriptor(name).map(|d| d.display).unwrap_or(name)
 }
 
 /// Create an HTTP agent with explicit timeouts.

@@ -85,6 +85,21 @@ pub fn no_forwards(alias: &str) -> String {
     format!("No forwarding directives configured for '{}'.", alias)
 }
 
+pub fn save_config_failed(e: &impl std::fmt::Display) -> String {
+    format!("Failed to save config: {}", e)
+}
+
+pub fn included_host_read_only(alias: &str) -> String {
+    format!(
+        "Host '{}' is from an included file and cannot be modified.",
+        alias
+    )
+}
+
+pub fn operation_failed(e: &impl std::fmt::Display) -> String {
+    format!("Failed: {}", e)
+}
+
 // ── Snippet CLI ─────────────────────────────────────────────────
 
 pub const NO_SNIPPETS: &str = "No snippets configured. Use 'purple snippet add' to create one.";

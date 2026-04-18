@@ -25,6 +25,29 @@ pub struct ProviderSection {
     pub vault_addr: String,
 }
 
+impl Default for ProviderSection {
+    fn default() -> Self {
+        Self {
+            provider: String::new(),
+            token: String::new(),
+            alias_prefix: String::new(),
+            user: String::new(),
+            identity_file: String::new(),
+            url: String::new(),
+            // verify_tls defaults to true (secure). A user who wants to sync
+            // against self-signed Proxmox must opt in explicitly.
+            verify_tls: true,
+            auto_sync: false,
+            profile: String::new(),
+            regions: String::new(),
+            project: String::new(),
+            compartment: String::new(),
+            vault_role: String::new(),
+            vault_addr: String::new(),
+        }
+    }
+}
+
 /// Default for auto_sync: false for proxmox (N+1 API calls), true for all others.
 fn default_auto_sync(provider: &str) -> bool {
     !matches!(provider, "proxmox")

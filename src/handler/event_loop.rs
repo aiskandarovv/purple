@@ -305,6 +305,8 @@ pub(crate) fn handle_scp_complete(
             fb.transferring = None;
             if success {
                 app.history.record(&alias);
+                // history_width depends on formatted timestamps; rebuild next render
+                app.host_list_cache.invalidate();
                 fb.local_selected.clear();
                 fb.remote_selected.clear();
                 match file_browser::list_local(&fb.local_path, fb.show_hidden, fb.sort) {

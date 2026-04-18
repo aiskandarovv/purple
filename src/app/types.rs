@@ -673,6 +673,31 @@ pub struct ConflictState {
     pub form_include_dir_mtimes: Vec<(PathBuf, Option<SystemTime>)>,
     pub provider_form_mtime: Option<SystemTime>,
 }
+
+/// Lazily-computed derived state that feeds the host-list renderer.
+///
+/// The renderer runs on every keystroke and every animation tick. Rebuilding
+/// these from `hosts`/`display_list`/`history` per frame allocates thousands
+/// of short-lived `String`s on hosts lists in the 500+ range. Fields are
+/// `None` when dirty; the renderer populates them on first use after an
+/// invalidation and subsequent frames reuse the values until the next
+/// mutation calls `invalidate()`.
+#[derive(Default)]
+pub struct HostListRenderCache {
+    /// Max width of formatted "last connected" strings across all hosts.
+    /// Caches the `format_time_ago` allocations.
+    pub history_width: Option<usize>,
+    /// Group-header text -> host aliases in that group. Built from
+    /// `display_list`, so invalidates on every sort/filter/reload.
+    pub group_alias_map: Option<HashMap<String, Vec<String>>>,
+}
+
+impl HostListRenderCache {
+    pub fn invalidate(&mut self) {
+        self.history_width = None;
+        self.group_alias_map = None;
+    }
+}
 /// Baseline snapshot of host form content for dirty-check on Esc.
 #[derive(Clone)]
 pub struct FormBaseline {

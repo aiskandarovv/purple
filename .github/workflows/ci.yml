@@ -50,6 +50,24 @@ jobs:
       - name: Run clippy
         run: cargo clippy --locked --all-targets -- -D warnings
 
+  build:
+    name: Build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+
+      - name: Cargo build
+        run: cargo build --locked
+
   test:
     name: Test (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
@@ -101,3 +119,86 @@ jobs:
 
       - name: Check MSRV
         run: cargo check --locked
+
+  doc:
+    name: Doc
+    runs-on: ubuntu-22.04
+    env:
+      RUSTDOCFLAGS: "-D warnings"
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+
+      - name: Cargo doc
+        run: cargo doc --no-deps --locked
+
+  site-sync:
+    name: Site sync
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify embedded copies match sources
+        run: cd site && sh check-sync.sh
+
+  design-checks:
+    name: Design / messages / keybindings
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Design system enforcement
+        run: ./scripts/check-design-system.sh
+
+      - name: Messages centralization
+        run: ./scripts/check-messages.sh
+
+      - name: Keybinding invariants
+        run: ./scripts/check-keybindings.sh
+
+  smoke-tui:
+    name: TUI smoke test
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev tmux
+
+      - name: Build binary
+        run: cargo build --locked
+
+      - name: Run smoke test
+        run: ./tests/smoke_tui.sh ./target/debug/purple
+
+  visual-regression:
+    name: Visual regression
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.95"
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+
+      - name: Run visual regression suite
+        run: cargo test --locked --bin purple visual_regression

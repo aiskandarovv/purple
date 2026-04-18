@@ -1296,6 +1296,7 @@ fn run_tui(mut app: App) -> Result<()> {
                         let code = cr.status.code().unwrap_or(1);
                         if code != 255 {
                             app.history.record(&alias);
+                            app.host_list_cache.invalidate();
                         }
                         if code != 0 {
                             if let Some((hostname, known_hosts_path)) =
@@ -1381,6 +1382,7 @@ fn run_tui(mut app: App) -> Result<()> {
                     Ok(r) => {
                         if r.status.success() {
                             app.history.record(alias);
+                            app.host_list_cache.invalidate();
                         } else if multi {
                             eprintln!(
                                 "{}",

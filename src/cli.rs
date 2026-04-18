@@ -675,10 +675,7 @@ pub(super) fn handle_tunnel_command(
                 std::process::exit(1);
             }
             if config.is_included_host(&alias) {
-                eprintln!(
-                    "Host '{}' is from an included file and cannot be modified.",
-                    alias
-                );
+                eprintln!("{}", crate::messages::cli::included_host_read_only(&alias));
                 std::process::exit(1);
             }
             let rule = crate::tunnel::TunnelRule::from_cli_spec(&forward).unwrap_or_else(|e| {
@@ -694,7 +691,7 @@ pub(super) fn handle_tunnel_command(
             }
             config.add_forward(&alias, key, &value);
             if let Err(e) = config.write() {
-                eprintln!("Failed to save config: {}", e);
+                eprintln!("{}", crate::messages::cli::save_config_failed(&e));
                 std::process::exit(1);
             }
             println!("{}", crate::messages::cli::added_forward(&forward, &alias));
@@ -706,10 +703,7 @@ pub(super) fn handle_tunnel_command(
                 std::process::exit(1);
             }
             if config.is_included_host(&alias) {
-                eprintln!(
-                    "Host '{}' is from an included file and cannot be modified.",
-                    alias
-                );
+                eprintln!("{}", crate::messages::cli::included_host_read_only(&alias));
                 std::process::exit(1);
             }
             let rule = crate::tunnel::TunnelRule::from_cli_spec(&forward).unwrap_or_else(|e| {
@@ -727,7 +721,7 @@ pub(super) fn handle_tunnel_command(
                 std::process::exit(1);
             }
             if let Err(e) = config.write() {
-                eprintln!("Failed to save config: {}", e);
+                eprintln!("{}", crate::messages::cli::save_config_failed(&e));
                 std::process::exit(1);
             }
             println!(
@@ -961,7 +955,7 @@ pub(super) fn handle_snippet_command(
                         }
                     }
                     Err(e) => {
-                        eprintln!("Failed: {}", e);
+                        eprintln!("{}", crate::messages::cli::operation_failed(&e));
                         std::process::exit(1);
                     }
                 }

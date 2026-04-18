@@ -537,6 +537,9 @@ fn build_snippet_command(
     // Isolate child into its own process group so we can kill the
     // entire tree without affecting purple itself.
     #[cfg(unix)]
+    // SAFETY: the pre-fork callback runs between fork and the exec syscall in
+    // the child; only async-signal-safe calls are permitted. `setpgid(0, 0)`
+    // is async-signal-safe per POSIX and does not touch Rust runtime state.
     unsafe {
         use std::os::unix::process::CommandExt;
         cmd.pre_exec(|| {

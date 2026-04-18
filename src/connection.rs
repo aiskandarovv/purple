@@ -76,6 +76,10 @@ struct SignalMaskGuard {
 impl SignalMaskGuard {
     /// Block SIGINT and SIGTSTP, saving the previous mask for restore on drop.
     fn block_interactive() -> Self {
+        // SAFETY: `old` and `mask` are stack-allocated `sigset_t`s zeroed before
+        // use. The libc sigset / sigprocmask calls only read/write these
+        // pointers, which are valid for the duration of this block. `old` is
+        // moved into `Self` so the mask can be restored on drop.
         unsafe {
             let mut old: libc::sigset_t = std::mem::zeroed();
             let mut mask: libc::sigset_t = std::mem::zeroed();
@@ -91,6 +95,11 @@ impl SignalMaskGuard {
 #[cfg(unix)]
 impl Drop for SignalMaskGuard {
     fn drop(&mut self) {
+        // SAFETY: `self.old` is a valid `sigset_t` captured by
+        // `block_interactive`. `pending` is zeroed before `sigpending` writes
+        // to it. `libc::signal` is called with valid signal numbers. The
+        // sigprocmask call restores the previously-saved mask, which is still
+        // live for the duration of this drop.
         unsafe {
             // Discard any pending SIGINT/SIGTSTP that arrived while masked.
             // Without this, queued signals would fire immediately on unmask and

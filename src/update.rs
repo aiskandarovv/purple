@@ -360,12 +360,12 @@ pub fn self_update() -> Result<()> {
         );
     }
 
-    println!("\n  {} updater\n", bold("purple."));
+    println!("{}", crate::messages::update::header(&bold("purple.")));
 
     // Resolve current binary path
     let exe_path = std::env::current_exe().context("Failed to detect binary path")?;
     let exe_path = std::fs::canonicalize(&exe_path).unwrap_or(exe_path);
-    println!("  Binary: {}", exe_path.display());
+    println!("{}", crate::messages::update::binary_path(&exe_path));
 
     // Detect package manager installations
     match detect_install_method(&exe_path) {
@@ -418,10 +418,7 @@ pub fn self_update() -> Result<()> {
 
     // Warn when running via sudo — creates root-owned cache files
     if std::env::var_os("SUDO_USER").is_some() {
-        eprintln!(
-            "  {} Running via sudo. Consider fixing directory permissions instead.",
-            bold("!"),
-        );
+        eprintln!("  {} {}", bold("!"), crate::messages::update::SUDO_WARNING,);
     }
 
     if !is_writable(parent) {
@@ -477,12 +474,12 @@ pub fn self_update() -> Result<()> {
         &format!("{}/{}.sha256", base_url, tarball_name),
         &sha_path,
     )?;
-    println!("done.");
+    println!("{}", crate::messages::update::DONE);
 
     // Verify checksum
     print!("  Verifying checksum... ");
     verify_checksum(&tarball_path, &sha_path)?;
-    println!("ok.");
+    println!("{}", crate::messages::update::CHECKSUM_OK);
 
     // Extract
     print!("  Installing... ");
@@ -531,15 +528,17 @@ pub fn self_update() -> Result<()> {
         return Err(e).context("Failed to replace binary");
     }
 
-    println!("done.");
+    println!("{}", crate::messages::update::DONE);
     info!("[purple] Update completed: {latest}");
     println!(
-        "\n  {} installed at {}.",
-        bold_purple(&format!("purple v{}", latest)),
-        exe_path.display()
+        "{}",
+        crate::messages::update::installed_at(
+            &bold_purple(&format!("purple v{}", latest)),
+            &exe_path,
+        )
     );
 
-    println!("\n  {}", crate::messages::update::WHATS_NEW_HINT);
+    println!("{}", crate::messages::update::whats_new_hint_indented());
     println!();
 
     Ok(())
