@@ -108,7 +108,7 @@ mod tests {
             bom: false,
         };
         let mut app = App::new(config);
-        app.palette = Some(crate::app::CommandPaletteState::new());
+        app.palette = Some(crate::app::CommandPaletteState::default());
         app
     }
 

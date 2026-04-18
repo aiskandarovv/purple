@@ -5,25 +5,25 @@ use crate::quick_add;
 
 pub(super) fn handle_form(app: &mut App, key: KeyEvent) {
     // Dispatch to password picker if it's open
-    if app.ui.show_password_picker {
+    if app.ui.password_picker.open {
         super::picker::handle_password_picker(app, key);
         return;
     }
 
     // Dispatch to key picker if it's open
-    if app.ui.show_key_picker {
+    if app.ui.key_picker.open {
         super::picker::handle_key_picker_shared(app, key, false);
         return;
     }
 
     // Dispatch to proxyjump picker if it's open
-    if app.ui.show_proxyjump_picker {
+    if app.ui.proxyjump_picker.open {
         super::picker::handle_proxyjump_picker(app, key);
         return;
     }
 
     // Dispatch to vault role picker if it's open
-    if app.ui.show_vault_role_picker {
+    if app.ui.vault_role_picker.open {
         super::picker::handle_vault_role_picker(app, key);
         return;
     }
@@ -230,17 +230,17 @@ fn open_picker_for_focused_field(app: &mut App) {
     match app.forms.host.focused_field {
         FormField::IdentityFile => {
             app.scan_keys();
-            app.ui.show_key_picker = true;
-            app.ui.key_picker_state = ListState::default();
+            app.ui.key_picker.open = true;
+            app.ui.key_picker.list = ListState::default();
             if !app.keys.is_empty() {
-                app.ui.key_picker_state.select(Some(0));
+                app.ui.key_picker.list.select(Some(0));
             }
         }
         FormField::ProxyJump => {
-            app.ui.show_proxyjump_picker = true;
-            app.ui.proxyjump_picker_state = ListState::default();
+            app.ui.proxyjump_picker.open = true;
+            app.ui.proxyjump_picker.list = ListState::default();
             if let Some(idx) = app.proxyjump_first_host_index() {
-                app.ui.proxyjump_picker_state.select(Some(idx));
+                app.ui.proxyjump_picker.list.select(Some(idx));
             }
         }
         FormField::VaultSsh => {
@@ -252,15 +252,15 @@ fn open_picker_for_focused_field(app: &mut App) {
                 app.forms.host.insert_char(' ');
                 app.forms.host.update_hint();
             } else {
-                app.ui.show_vault_role_picker = true;
-                app.ui.vault_role_picker_state = ListState::default();
-                app.ui.vault_role_picker_state.select(Some(0));
+                app.ui.vault_role_picker.open = true;
+                app.ui.vault_role_picker.list = ListState::default();
+                app.ui.vault_role_picker.list.select(Some(0));
             }
         }
         FormField::AskPass => {
-            app.ui.show_password_picker = true;
-            app.ui.password_picker_state = ListState::default();
-            app.ui.password_picker_state.select(Some(0));
+            app.ui.password_picker.open = true;
+            app.ui.password_picker.list = ListState::default();
+            app.ui.password_picker.list.select(Some(0));
         }
         // Defensive: only reached if `FormField::is_picker()` grows a new
         // variant without a matching arm here. Insert a literal space so

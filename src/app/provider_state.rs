@@ -2,9 +2,96 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
+use crate::app::ProviderFormBaseline;
 use crate::app::forms::ProviderFormFields;
-use crate::app::types::{ProviderFormBaseline, SyncRecord};
 use crate::providers::config::ProviderConfig;
+
+/// Record of the last sync result for a provider.
+#[derive(Debug, Clone)]
+pub struct SyncRecord {
+    pub timestamp: u64,
+    pub message: String,
+    pub is_error: bool,
+}
+
+impl SyncRecord {
+    /// Load sync history from ~/.purple/sync_history.tsv.
+    /// Format: provider\ttimestamp\tis_error\tmessage
+    pub fn load_all() -> HashMap<String, SyncRecord> {
+        let mut map = HashMap::new();
+        let Some(home) = dirs::home_dir() else {
+            return map;
+        };
+        let path = home.join(".purple").join("sync_history.tsv");
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            return map;
+        };
+        for line in content.lines() {
+            let parts: Vec<&str> = line.splitn(4, '\t').collect();
+            if parts.len() < 4 {
+                continue;
+            }
+            let Some(ts) = parts[1].parse::<u64>().ok() else {
+                continue;
+            };
+            let is_error = parts[2] == "1";
+            map.insert(
+                parts[0].to_string(),
+                SyncRecord {
+                    timestamp: ts,
+                    message: parts[3].to_string(),
+                    is_error,
+                },
+            );
+        }
+        map
+    }
+
+    /// Save sync history to ~/.purple/sync_history.tsv.
+    pub fn save_all(history: &HashMap<String, SyncRecord>) {
+        if crate::demo_flag::is_demo() {
+            return;
+        }
+        let Some(home) = dirs::home_dir() else { return };
+        let dir = home.join(".purple");
+        let path = dir.join("sync_history.tsv");
+        let mut lines = Vec::new();
+        for (provider, record) in history {
+            lines.push(format!(
+                "{}\t{}\t{}\t{}",
+                provider,
+                record.timestamp,
+                if record.is_error { "1" } else { "0" },
+                record.message
+            ));
+        }
+        let _ = crate::fs_util::atomic_write(&path, lines.join("\n").as_bytes());
+    }
+
+    /// Parse sync history from TSV content string (for demo/test use).
+    pub fn load_from_content(content: &str) -> HashMap<String, SyncRecord> {
+        let mut map = HashMap::new();
+        for line in content.lines() {
+            let parts: Vec<&str> = line.splitn(4, '\t').collect();
+            if parts.len() < 4 {
+                continue;
+            }
+            let Some(ts) = parts[1].parse::<u64>().ok() else {
+                continue;
+            };
+            let is_error = parts[2] == "1";
+            map.insert(
+                parts[0].to_string(),
+                SyncRecord {
+                    timestamp: ts,
+                    message: parts[3].to_string(),
+                    is_error,
+                },
+            );
+        }
+        map
+    }
+}
 
 /// Provider-owned state grouped off the `App` god-struct. Holds the
 /// provider config, the edit form, the in-flight sync tracking
@@ -43,6 +130,15 @@ impl Default for ProviderState {
 }
 
 impl ProviderState {
+    /// Construct with persisted state loaded from disk.
+    pub fn load() -> Self {
+        Self {
+            config: crate::providers::config::ProviderConfig::load(),
+            sync_history: SyncRecord::load_all(),
+            ..Self::default()
+        }
+    }
+
     /// Provider names sorted by last sync (most recent first), then configured,
     /// then unconfigured. Includes any unknown provider names found in the
     /// config file (e.g. typos or future providers).
@@ -109,7 +205,7 @@ mod tests {
         });
         state.sync_history.insert(
             "digitalocean".to_string(),
-            crate::app::types::SyncRecord {
+            SyncRecord {
                 timestamp: 2_000,
                 message: "ok".to_string(),
                 is_error: false,
@@ -117,7 +213,7 @@ mod tests {
         );
         state.sync_history.insert(
             "vultr".to_string(),
-            crate::app::types::SyncRecord {
+            SyncRecord {
                 timestamp: 1_000,
                 message: "ok".to_string(),
                 is_error: false,

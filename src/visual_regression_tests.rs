@@ -438,10 +438,10 @@ fn visual_tag_picker() {
 fn visual_theme_picker() {
     let _g = setup();
     let mut app = demo::build_demo_app();
-    app.ui.theme_picker_builtins = ui::theme::ThemeDef::builtins();
-    app.ui.theme_picker_custom = Vec::new();
-    app.ui.theme_picker_saved_name = "Purple".to_string();
-    app.ui.theme_picker_state.select(Some(0));
+    app.ui.theme_picker.builtins = ui::theme::ThemeDef::builtins();
+    app.ui.theme_picker.custom = Vec::new();
+    app.ui.theme_picker.saved_name = "Purple".to_string();
+    app.ui.theme_picker.list.select(Some(0));
     app.screen = Screen::ThemePicker;
     let actual = render_screen(&mut app);
     assert_golden("theme_picker", &actual);
@@ -512,7 +512,7 @@ fn visual_file_browser() {
 fn visual_command_palette() {
     let _g = setup();
     let mut app = demo::build_demo_app();
-    app.palette = Some(crate::app::CommandPaletteState::new());
+    app.palette = Some(crate::app::CommandPaletteState::default());
     let actual = render_screen(&mut app);
     assert_golden("command_palette", &actual);
 }

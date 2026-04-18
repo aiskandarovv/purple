@@ -1,10 +1,11 @@
-use super::types::DisplayTag;
+use super::tag_state::DisplayTag;
 use super::*;
 use crate::ssh_config::model::{HostEntry, SshConfigFile};
 use crate::tunnel::TunnelType;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::time::SystemTime;
 
 fn make_app(content: &str) -> App {
     // Every test gets a unique tempdir so parallel `cargo test` threads
@@ -2405,41 +2406,41 @@ fn host_form_focus_next_visible_includes_vault_addr_when_role_set() {
 #[test]
 fn test_password_picker_state_init() {
     let app = make_app("Host test\n  HostName test.com\n");
-    assert!(!app.ui.show_password_picker);
+    assert!(!app.ui.password_picker.open);
 }
 
 #[test]
 fn test_select_next_password_source() {
     let mut app = make_app("Host test\n  HostName test.com\n");
-    app.ui.password_picker_state.select(Some(0));
+    app.ui.password_picker.list.select(Some(0));
     app.select_next_password_source();
-    assert_eq!(app.ui.password_picker_state.selected(), Some(1));
+    assert_eq!(app.ui.password_picker.list.selected(), Some(1));
 }
 
 #[test]
 fn test_select_prev_password_source() {
     let mut app = make_app("Host test\n  HostName test.com\n");
-    app.ui.password_picker_state.select(Some(2));
+    app.ui.password_picker.list.select(Some(2));
     app.select_prev_password_source();
-    assert_eq!(app.ui.password_picker_state.selected(), Some(1));
+    assert_eq!(app.ui.password_picker.list.selected(), Some(1));
 }
 
 #[test]
 fn test_select_password_source_wrap_bottom() {
     let mut app = make_app("Host test\n  HostName test.com\n");
     let last = crate::askpass::PASSWORD_SOURCES.len() - 1;
-    app.ui.password_picker_state.select(Some(last));
+    app.ui.password_picker.list.select(Some(last));
     app.select_next_password_source();
-    assert_eq!(app.ui.password_picker_state.selected(), Some(0));
+    assert_eq!(app.ui.password_picker.list.selected(), Some(0));
 }
 
 #[test]
 fn test_select_password_source_wrap_top() {
     let mut app = make_app("Host test\n  HostName test.com\n");
-    app.ui.password_picker_state.select(Some(0));
+    app.ui.password_picker.list.select(Some(0));
     app.select_prev_password_source();
     let last = crate::askpass::PASSWORD_SOURCES.len() - 1;
-    assert_eq!(app.ui.password_picker_state.selected(), Some(last));
+    assert_eq!(app.ui.password_picker.list.selected(), Some(last));
 }
 
 // --- ProviderFormFields vault_addr visibility ---
@@ -3177,8 +3178,8 @@ fn test_edit_askpass_rollback_restores_none() {
 #[test]
 fn test_password_picker_initial_state_not_shown() {
     let app = make_app("Host test\n  HostName test.com\n");
-    assert!(!app.ui.show_password_picker);
-    assert_eq!(app.ui.password_picker_state.selected(), None);
+    assert!(!app.ui.password_picker.open);
+    assert_eq!(app.ui.password_picker.list.selected(), None);
 }
 
 // --- askpass global default fallback ---
@@ -7015,7 +7016,7 @@ fn palette_commands_have_unique_keys() {
 
 #[test]
 fn palette_state_filters_by_query() {
-    let mut state = CommandPaletteState::new();
+    let mut state = CommandPaletteState::default();
     state.push_query('t');
     let filtered = state.filtered_commands();
     assert!(
@@ -7032,15 +7033,17 @@ fn palette_state_filters_by_query() {
 
 #[test]
 fn palette_state_empty_query_returns_all() {
-    let state = CommandPaletteState::new();
+    let state = CommandPaletteState::default();
     let filtered = state.filtered_commands();
     assert_eq!(filtered.len(), PaletteCommand::all().len());
 }
 
 #[test]
 fn palette_selected_resets_on_query_change() {
-    let mut state = CommandPaletteState::new();
-    state.selected = 5;
+    let mut state = CommandPaletteState {
+        selected: 5,
+        ..Default::default()
+    };
     state.push_query('x');
     assert_eq!(
         state.selected, 0,
@@ -7256,10 +7259,10 @@ fn select_next_proxyjump_skips_separator_forward() {
     let candidates = app.proxyjump_candidates();
     let sep = separator_index(&candidates);
     // Select the host just before the separator and step forward once.
-    app.ui.proxyjump_picker_state.select(Some(sep - 1));
+    app.ui.proxyjump_picker.list.select(Some(sep - 1));
     app.select_next_proxyjump();
     assert_eq!(
-        app.ui.proxyjump_picker_state.selected(),
+        app.ui.proxyjump_picker.list.selected(),
         Some(sep + 1),
         "forward navigation must skip the separator"
     );
@@ -7277,10 +7280,10 @@ fn select_prev_proxyjump_skips_separator_backward() {
     let candidates = app.proxyjump_candidates();
     let sep = separator_index(&candidates);
     // Select the host just after the separator and step backward once.
-    app.ui.proxyjump_picker_state.select(Some(sep + 1));
+    app.ui.proxyjump_picker.list.select(Some(sep + 1));
     app.select_prev_proxyjump();
     assert_eq!(
-        app.ui.proxyjump_picker_state.selected(),
+        app.ui.proxyjump_picker.list.selected(),
         Some(sep - 1),
         "backward navigation must skip the separator"
     );
@@ -7303,9 +7306,9 @@ fn select_next_proxyjump_skips_leading_section_label() {
         candidates.first(),
         Some(ProxyJumpCandidate::SectionLabel(_))
     ));
-    app.ui.proxyjump_picker_state.select(Some(0));
+    app.ui.proxyjump_picker.list.select(Some(0));
     app.select_next_proxyjump();
-    let selected = app.ui.proxyjump_picker_state.selected();
+    let selected = app.ui.proxyjump_picker.list.selected();
     assert!(
         selected.is_some()
             && matches!(
@@ -7329,10 +7332,10 @@ fn select_prev_proxyjump_from_section_label_lands_on_last_host() {
     ]);
     open_edit_screen(&mut app, "victim");
     let candidates = app.proxyjump_candidates();
-    app.ui.proxyjump_picker_state.select(Some(0));
+    app.ui.proxyjump_picker.list.select(Some(0));
     app.select_prev_proxyjump();
     let last = candidates.len() - 1;
-    assert_eq!(app.ui.proxyjump_picker_state.selected(), Some(last));
+    assert_eq!(app.ui.proxyjump_picker.list.selected(), Some(last));
     assert!(matches!(
         candidates.get(last),
         Some(ProxyJumpCandidate::Host { .. })
@@ -7353,10 +7356,10 @@ fn select_prev_proxyjump_wraps_from_first_host_to_last() {
     open_edit_screen(&mut app, "victim");
     let candidates = app.proxyjump_candidates();
     let last = candidates.len() - 1;
-    app.ui.proxyjump_picker_state.select(Some(0));
+    app.ui.proxyjump_picker.list.select(Some(0));
     app.select_prev_proxyjump();
     assert_eq!(
-        app.ui.proxyjump_picker_state.selected(),
+        app.ui.proxyjump_picker.list.selected(),
         Some(last),
         "backward wrap from index 0 must land on the last host"
     );
@@ -7372,9 +7375,9 @@ fn select_next_proxyjump_lands_on_index_zero_when_no_selection() {
         "Host victim\n  HostName 9.9.9.9\n",
     ]);
     open_edit_screen(&mut app, "victim");
-    app.ui.proxyjump_picker_state.select(None);
+    app.ui.proxyjump_picker.list.select(None);
     app.select_next_proxyjump();
-    assert_eq!(app.ui.proxyjump_picker_state.selected(), Some(0));
+    assert_eq!(app.ui.proxyjump_picker.list.selected(), Some(0));
 }
 
 #[test]
@@ -7385,10 +7388,10 @@ fn select_prev_proxyjump_lands_on_last_when_no_selection() {
         "Host victim\n  HostName 9.9.9.9\n",
     ]);
     open_edit_screen(&mut app, "victim");
-    app.ui.proxyjump_picker_state.select(None);
+    app.ui.proxyjump_picker.list.select(None);
     app.select_prev_proxyjump();
     let last = app.proxyjump_candidates().len() - 1;
-    assert_eq!(app.ui.proxyjump_picker_state.selected(), Some(last));
+    assert_eq!(app.ui.proxyjump_picker.list.selected(), Some(last));
 }
 
 #[test]
@@ -7399,9 +7402,9 @@ fn select_next_proxyjump_wraps_past_trailing_separator_free_list() {
         "Host victim\n  HostName 9.9.9.9\n",
     ]);
     open_edit_screen(&mut app, "victim");
-    app.ui.proxyjump_picker_state.select(Some(1));
+    app.ui.proxyjump_picker.list.select(Some(1));
     app.select_next_proxyjump();
-    assert_eq!(app.ui.proxyjump_picker_state.selected(), Some(0));
+    assert_eq!(app.ui.proxyjump_picker.list.selected(), Some(0));
 }
 
 #[test]

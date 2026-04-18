@@ -1,5 +1,6 @@
+use crate::app::FormBaseline;
 use crate::app::forms::HostForm;
-use crate::app::types::{BulkTagEditorState, FormBaseline};
+use crate::app::tag_state::BulkTagEditorState;
 
 /// Host-form and bulk-tag editor state grouped off the `App` god-struct.
 /// Holds the add/edit host form, its dirty-check baseline, the bulk-tag

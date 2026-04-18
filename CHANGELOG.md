@@ -1,3 +1,10 @@
+## 2.43.2 - 2026-04-18
+
+- feat: Cleaner internals, steadier releases.
+- change: Domain types now live with the state they belong to. Screens, pickers, tags, sync records and reload tracking each move to their own module, so the next change you make lands in one obvious place.
+- change: The `UiSelection` god-struct becomes a small set of focused picker states, making overlay behaviour easier to read and extend.
+- change: `App::new` shrinks from 124 lines to 48 by delegating to per-substate constructors that make startup initialisation explicit.
+
 ## 2.43.1 - 2026-04-18
 
 - feat: Tighter foundations for faster, safer releases.

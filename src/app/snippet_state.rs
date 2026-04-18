@@ -1,5 +1,5 @@
+use crate::app::SnippetFormBaseline;
 use crate::app::forms::{SnippetForm, SnippetOutputState, SnippetParamFormState};
-use crate::app::types::SnippetFormBaseline;
 use crate::snippet::{Snippet, SnippetStore};
 
 /// Snippet-owned state grouped off the `App` god-struct. Holds the on-disk
@@ -28,6 +28,16 @@ impl Default for SnippetState {
             pending_terminal: false,
             form_baseline: None,
             pending_delete: None,
+        }
+    }
+}
+
+impl SnippetState {
+    /// Construct with snippet store loaded from disk.
+    pub fn with_store_loaded() -> Self {
+        Self {
+            store: crate::snippet::SnippetStore::load(),
+            ..Self::default()
         }
     }
 }

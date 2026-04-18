@@ -791,25 +791,25 @@ fn test_ovh_space_on_regions_opens_picker() {
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
     assert!(
-        app.ui.show_region_picker,
+        app.ui.region_picker.open,
         "Space on OVH Regions should open picker"
     );
-    assert_eq!(app.ui.region_picker_cursor, 0);
+    assert_eq!(app.ui.region_picker.cursor, 0);
 }
 
 #[test]
 fn test_ovh_picker_select_eu() {
     let mut app = make_ovh_form_app();
     app.providers.form.focused_field = ProviderFormField::Regions;
-    app.ui.show_region_picker = true;
-    app.ui.region_picker_cursor = 0;
+    app.ui.region_picker.open = true;
+    app.ui.region_picker.cursor = 0;
 
     // Cursor starts on group header "API Endpoint" (row 0).
     // Row 1 = "eu", Row 2 = "ca", Row 3 = "us"
     // Move down to "eu" (row 1)
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
-    assert_eq!(app.ui.region_picker_cursor, 1);
+    assert_eq!(app.ui.region_picker.cursor, 1);
 
     // Press Space to select "eu"
     let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
@@ -817,15 +817,15 @@ fn test_ovh_picker_select_eu() {
 
     // Press Enter to confirm
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
-    assert!(!app.ui.show_region_picker);
+    assert!(!app.ui.region_picker.open);
     assert_eq!(app.providers.form.regions, "eu");
 }
 
 #[test]
 fn test_ovh_picker_select_us() {
     let mut app = make_ovh_form_app();
-    app.ui.show_region_picker = true;
-    app.ui.region_picker_cursor = 0;
+    app.ui.region_picker.open = true;
+    app.ui.region_picker.cursor = 0;
     app.screen = Screen::ProviderForm {
         provider: "ovh".to_string(),
     };
@@ -835,21 +835,21 @@ fn test_ovh_picker_select_us() {
     let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
     let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
     let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
-    assert_eq!(app.ui.region_picker_cursor, 3);
+    assert_eq!(app.ui.region_picker.cursor, 3);
 
     let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
     assert_eq!(app.providers.form.regions, "us");
 
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
-    assert!(!app.ui.show_region_picker);
+    assert!(!app.ui.region_picker.open);
     assert_eq!(app.providers.form.regions, "us");
 }
 
 #[test]
 fn test_ovh_picker_space_on_header_toggles_all() {
     let mut app = make_ovh_form_app();
-    app.ui.show_region_picker = true;
-    app.ui.region_picker_cursor = 0; // Group header
+    app.ui.region_picker.open = true;
+    app.ui.region_picker.cursor = 0; // Group header
     app.screen = Screen::ProviderForm {
         provider: "ovh".to_string(),
     };
@@ -879,8 +879,8 @@ fn test_ovh_endpoint_picker_rows() {
 fn test_ovh_picker_enter_selects_and_closes() {
     // OVH is single-select: Enter on an item should select it and close
     let mut app = make_ovh_form_app();
-    app.ui.show_region_picker = true;
-    app.ui.region_picker_cursor = 0;
+    app.ui.region_picker.open = true;
+    app.ui.region_picker.cursor = 0;
     app.screen = Screen::ProviderForm {
         provider: "ovh".to_string(),
     };
@@ -889,19 +889,19 @@ fn test_ovh_picker_enter_selects_and_closes() {
     // Move to "ca" (row 2)
     let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
     let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
-    assert_eq!(app.ui.region_picker_cursor, 2);
+    assert_eq!(app.ui.region_picker.cursor, 2);
 
     // Enter directly (no Space needed) selects "ca" and closes
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
-    assert!(!app.ui.show_region_picker);
+    assert!(!app.ui.region_picker.open);
     assert_eq!(app.providers.form.regions, "ca");
 }
 
 #[test]
 fn test_ovh_picker_enter_on_header_closes_without_select() {
     let mut app = make_ovh_form_app();
-    app.ui.show_region_picker = true;
-    app.ui.region_picker_cursor = 0; // group header
+    app.ui.region_picker.open = true;
+    app.ui.region_picker.cursor = 0; // group header
     app.screen = Screen::ProviderForm {
         provider: "ovh".to_string(),
     };
@@ -909,7 +909,7 @@ fn test_ovh_picker_enter_on_header_closes_without_select() {
     let (tx, _rx) = mpsc::channel();
     // Enter on header: no item to select, just closes
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
-    assert!(!app.ui.show_region_picker);
+    assert!(!app.ui.region_picker.open);
     assert_eq!(app.providers.form.regions, "");
 }
 
@@ -917,8 +917,8 @@ fn test_ovh_picker_enter_on_header_closes_without_select() {
 fn test_ovh_picker_enter_replaces_previous_selection() {
     let mut app = make_ovh_form_app();
     app.providers.form.regions = "eu".to_string(); // previously selected EU
-    app.ui.show_region_picker = true;
-    app.ui.region_picker_cursor = 3; // "us"
+    app.ui.region_picker.open = true;
+    app.ui.region_picker.cursor = 3; // "us"
     app.screen = Screen::ProviderForm {
         provider: "ovh".to_string(),
     };
@@ -936,7 +936,7 @@ fn test_azure_enter_on_regions_does_not_open_picker() {
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
     // Must NOT open region picker (Azure uses text input, not picker)
-    assert!(!app.ui.show_region_picker);
+    assert!(!app.ui.region_picker.open);
     // Screen should no longer be ProviderForm (submit transitions away)
     // or validation error sets status (screen stays on form)
     // Either way: not a picker.
@@ -1080,7 +1080,7 @@ fn test_provider_form_space_opens_key_picker() {
     let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::IdentityFile);
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
-    assert!(app.ui.show_key_picker);
+    assert!(app.ui.key_picker.open);
 }
 
 #[test]
@@ -1369,8 +1369,8 @@ fn test_space_on_askpass_opens_password_picker() {
     app.forms.host.focused_field = FormField::AskPass;
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
-    assert!(app.ui.show_password_picker);
-    assert_eq!(app.ui.password_picker_state.selected(), Some(0));
+    assert!(app.ui.password_picker.open);
+    assert_eq!(app.ui.password_picker.list.selected(), Some(0));
 }
 
 // --- Esc closes picker ---
@@ -1378,11 +1378,10 @@ fn test_space_on_askpass_opens_password_picker() {
 #[test]
 fn test_password_picker_esc_closes() {
     let mut app = make_form_app();
-    app.ui.show_password_picker = true;
-    app.ui.password_picker_state.select(Some(2));
+    app.ui.password_picker.open_at(2);
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
-    assert!(!app.ui.show_password_picker);
+    assert!(!app.ui.password_picker.open);
     // Form field should be unchanged
     assert_eq!(app.forms.host.askpass, "");
 }
@@ -1392,63 +1391,57 @@ fn test_password_picker_esc_closes() {
 #[test]
 fn test_password_picker_j_moves_down() {
     let mut app = make_form_app();
-    app.ui.show_password_picker = true;
-    app.ui.password_picker_state.select(Some(0));
+    app.ui.password_picker.open_at(0);
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
-    assert_eq!(app.ui.password_picker_state.selected(), Some(1));
+    assert_eq!(app.ui.password_picker.list.selected(), Some(1));
 }
 
 #[test]
 fn test_password_picker_k_moves_up() {
     let mut app = make_form_app();
-    app.ui.show_password_picker = true;
-    app.ui.password_picker_state.select(Some(2));
+    app.ui.password_picker.open_at(2);
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Char('k')), &tx);
-    assert_eq!(app.ui.password_picker_state.selected(), Some(1));
+    assert_eq!(app.ui.password_picker.list.selected(), Some(1));
 }
 
 #[test]
 fn test_password_picker_down_arrow() {
     let mut app = make_form_app();
-    app.ui.show_password_picker = true;
-    app.ui.password_picker_state.select(Some(0));
+    app.ui.password_picker.open_at(0);
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Down), &tx);
-    assert_eq!(app.ui.password_picker_state.selected(), Some(1));
+    assert_eq!(app.ui.password_picker.list.selected(), Some(1));
 }
 
 #[test]
 fn test_password_picker_up_arrow() {
     let mut app = make_form_app();
-    app.ui.show_password_picker = true;
-    app.ui.password_picker_state.select(Some(3));
+    app.ui.password_picker.open_at(3);
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Up), &tx);
-    assert_eq!(app.ui.password_picker_state.selected(), Some(2));
+    assert_eq!(app.ui.password_picker.list.selected(), Some(2));
 }
 
 #[test]
 fn test_password_picker_wraps_around_bottom() {
     let mut app = make_form_app();
-    app.ui.show_password_picker = true;
     let last = crate::askpass::PASSWORD_SOURCES.len() - 1;
-    app.ui.password_picker_state.select(Some(last));
+    app.ui.password_picker.open_at(last);
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
-    assert_eq!(app.ui.password_picker_state.selected(), Some(0));
+    assert_eq!(app.ui.password_picker.list.selected(), Some(0));
 }
 
 #[test]
 fn test_password_picker_wraps_around_top() {
     let mut app = make_form_app();
-    app.ui.show_password_picker = true;
-    app.ui.password_picker_state.select(Some(0));
+    app.ui.password_picker.open_at(0);
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Char('k')), &tx);
     let last = crate::askpass::PASSWORD_SOURCES.len() - 1;
-    assert_eq!(app.ui.password_picker_state.selected(), Some(last));
+    assert_eq!(app.ui.password_picker.list.selected(), Some(last));
 }
 
 // --- Enter selects source: OS Keychain ---
@@ -1456,11 +1449,10 @@ fn test_password_picker_wraps_around_top() {
 #[test]
 fn test_password_picker_select_keychain() {
     let mut app = make_form_app();
-    app.ui.show_password_picker = true;
-    app.ui.password_picker_state.select(Some(0)); // OS Keychain
+    app.ui.password_picker.open_at(0); // OS Keychain
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
-    assert!(!app.ui.show_password_picker);
+    assert!(!app.ui.password_picker.open);
     assert_eq!(app.forms.host.askpass, "keychain");
 }
 
@@ -1469,11 +1461,10 @@ fn test_password_picker_select_keychain() {
 #[test]
 fn test_password_picker_select_1password() {
     let mut app = make_form_app();
-    app.ui.show_password_picker = true;
-    app.ui.password_picker_state.select(Some(1)); // 1Password
+    app.ui.password_picker.open_at(1); // 1Password
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
-    assert!(!app.ui.show_password_picker);
+    assert!(!app.ui.password_picker.open);
     assert_eq!(app.forms.host.askpass, "op://");
     assert_eq!(app.forms.host.focused_field, FormField::AskPass);
 }
@@ -1483,11 +1474,10 @@ fn test_password_picker_select_1password() {
 #[test]
 fn test_password_picker_select_bitwarden() {
     let mut app = make_form_app();
-    app.ui.show_password_picker = true;
-    app.ui.password_picker_state.select(Some(2)); // Bitwarden
+    app.ui.password_picker.open_at(2); // Bitwarden
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
-    assert!(!app.ui.show_password_picker);
+    assert!(!app.ui.password_picker.open);
     assert_eq!(app.forms.host.askpass, "bw:");
     assert_eq!(app.forms.host.focused_field, FormField::AskPass);
 }
@@ -1497,11 +1487,10 @@ fn test_password_picker_select_bitwarden() {
 #[test]
 fn test_password_picker_select_pass() {
     let mut app = make_form_app();
-    app.ui.show_password_picker = true;
-    app.ui.password_picker_state.select(Some(3)); // pass
+    app.ui.password_picker.open_at(3); // pass
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
-    assert!(!app.ui.show_password_picker);
+    assert!(!app.ui.password_picker.open);
     assert_eq!(app.forms.host.askpass, "pass:");
     assert_eq!(app.forms.host.focused_field, FormField::AskPass);
 }
@@ -1511,11 +1500,10 @@ fn test_password_picker_select_pass() {
 #[test]
 fn test_password_picker_select_vault() {
     let mut app = make_form_app();
-    app.ui.show_password_picker = true;
-    app.ui.password_picker_state.select(Some(4)); // HashiCorp Vault
+    app.ui.password_picker.open_at(4); // HashiCorp Vault
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
-    assert!(!app.ui.show_password_picker);
+    assert!(!app.ui.password_picker.open);
     assert_eq!(app.forms.host.askpass, "vault:");
     assert_eq!(app.forms.host.focused_field, FormField::AskPass);
 }
@@ -1526,11 +1514,10 @@ fn test_password_picker_select_vault() {
 fn test_password_picker_select_custom() {
     let mut app = make_form_app();
     app.forms.host.askpass = "old-value".to_string();
-    app.ui.show_password_picker = true;
-    app.ui.password_picker_state.select(Some(5)); // Custom command
+    app.ui.password_picker.open_at(5); // Custom command
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
-    assert!(!app.ui.show_password_picker);
+    assert!(!app.ui.password_picker.open);
     assert_eq!(app.forms.host.askpass, "");
 }
 
@@ -1540,11 +1527,10 @@ fn test_password_picker_select_custom() {
 fn test_password_picker_select_none() {
     let mut app = make_form_app();
     app.forms.host.askpass = "keychain".to_string();
-    app.ui.show_password_picker = true;
-    app.ui.password_picker_state.select(Some(6)); // None
+    app.ui.password_picker.open_at(6); // None
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
-    assert!(!app.ui.show_password_picker);
+    assert!(!app.ui.password_picker.open);
     assert_eq!(app.forms.host.askpass, "");
 }
 
@@ -1554,8 +1540,7 @@ fn test_password_picker_select_none() {
 fn test_password_picker_blocks_char_input() {
     let mut app = make_form_app();
     app.forms.host.askpass = "".to_string();
-    app.ui.show_password_picker = true;
-    app.ui.password_picker_state.select(Some(0));
+    app.ui.password_picker.open_at(0);
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Char('x')), &tx);
     // 'x' should not be appended to any form field
@@ -1567,8 +1552,7 @@ fn test_password_picker_blocks_char_input() {
 fn test_password_picker_blocks_tab() {
     let mut app = make_form_app();
     let original_field = app.forms.host.focused_field;
-    app.ui.show_password_picker = true;
-    app.ui.password_picker_state.select(Some(0));
+    app.ui.password_picker.open_at(0);
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Tab), &tx);
     // Tab should not change focused field
@@ -1588,7 +1572,7 @@ fn test_password_picker_works_on_edit_host() {
     let (tx, _rx) = mpsc::channel();
     // Space on empty picker field opens the picker.
     let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
-    assert!(app.ui.show_password_picker);
+    assert!(app.ui.password_picker.open);
     // Inside the picker, Enter selects the highlighted entry (keychain).
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
     assert_eq!(app.forms.host.askpass, "keychain");
@@ -1599,14 +1583,13 @@ fn test_password_picker_works_on_edit_host() {
 #[test]
 fn test_password_picker_takes_priority_over_key_picker() {
     let mut app = make_form_app();
-    app.ui.show_password_picker = true;
-    app.ui.show_key_picker = true;
-    app.ui.password_picker_state.select(Some(0));
+    app.ui.key_picker.open = true;
+    app.ui.password_picker.open_at(0);
     let (tx, _rx) = mpsc::channel();
     // Esc should close password picker, not key picker
     let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
-    assert!(!app.ui.show_password_picker);
-    assert!(app.ui.show_key_picker); // still open
+    assert!(!app.ui.password_picker.open);
+    assert!(app.ui.key_picker.open); // still open
 }
 
 // =========================================================================
@@ -1864,7 +1847,7 @@ fn test_picker_select_vault_then_type_rest() {
     for _ in 0..4 {
         let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
     }
-    assert_eq!(app.ui.password_picker_state.selected(), Some(4));
+    assert_eq!(app.ui.password_picker.list.selected(), Some(4));
     // Inside the picker, Enter selects.
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
     assert_eq!(app.forms.host.askpass, "vault:");
@@ -1897,8 +1880,7 @@ fn test_picker_select_keychain_no_further_typing_needed() {
 #[test]
 fn test_picker_keychain_sets_status_message() {
     let mut app = make_form_app();
-    app.ui.show_password_picker = true;
-    app.ui.password_picker_state.select(Some(0));
+    app.ui.password_picker.open_at(0);
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
     assert!(
@@ -1915,8 +1897,7 @@ fn test_picker_keychain_sets_status_message() {
 fn test_picker_none_sets_cleared_status() {
     let mut app = make_form_app();
     app.forms.host.askpass = "keychain".to_string();
-    app.ui.show_password_picker = true;
-    app.ui.password_picker_state.select(Some(6)); // None
+    app.ui.password_picker.open_at(6); // None
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
     assert!(
@@ -1934,8 +1915,7 @@ fn test_picker_prefix_source_shows_guidance() {
     // Prefix sources (op://, bw:, etc.) show a guidance message
     let mut app = make_form_app();
     app.status_center.toast = None;
-    app.ui.show_password_picker = true;
-    app.ui.password_picker_state.select(Some(1)); // 1Password (op://)
+    app.ui.password_picker.open_at(1); // 1Password (op://)
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
     assert!(
@@ -1960,7 +1940,7 @@ fn test_backspace_after_prefix_selection() {
     let (tx, _rx) = mpsc::channel();
     // Space opens the picker; Enter selects 1Password (after pre-positioning).
     let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
-    app.ui.password_picker_state.select(Some(1));
+    app.ui.password_picker.list.select(Some(1));
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
     assert_eq!(app.forms.host.askpass, "op://");
     assert_eq!(app.forms.host.focused_field, FormField::AskPass);
@@ -2004,13 +1984,12 @@ fn test_edit_form_empty_askpass_when_none() {
 #[test]
 fn test_password_picker_ignores_unknown_keys() {
     let mut app = make_form_app();
-    app.ui.show_password_picker = true;
-    app.ui.password_picker_state.select(Some(2));
+    app.ui.password_picker.open_at(2);
     let (tx, _rx) = mpsc::channel();
     // F1 key should be a no-op
     let _ = handle_key_event(&mut app, key(KeyCode::F(1)), &tx);
-    assert!(app.ui.show_password_picker);
-    assert_eq!(app.ui.password_picker_state.selected(), Some(2));
+    assert!(app.ui.password_picker.open);
+    assert_eq!(app.ui.password_picker.list.selected(), Some(2));
 }
 
 // =========================================================================
@@ -2086,7 +2065,7 @@ fn test_full_flow_picker_to_typed_value() {
 
     // Space opens picker; pre-position to Bitwarden (index 2); Enter selects.
     let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
-    app.ui.password_picker_state.select(Some(2));
+    app.ui.password_picker.list.select(Some(2));
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
 
     // Verify field has prefix
@@ -2136,9 +2115,9 @@ fn test_full_flow_clear_askpass_via_picker_none() {
     // pre-set the show_password_picker state directly (mirrors the user
     // backspacing the field clean and pressing Space, but skips the steps
     // since we are testing the post-picker behavior).
-    app.ui.show_password_picker = true;
-    app.ui.password_picker_state = ratatui::widgets::ListState::default();
-    app.ui.password_picker_state.select(Some(0));
+    app.ui.password_picker.open = true;
+    app.ui.password_picker.list = ratatui::widgets::ListState::default();
+    app.ui.password_picker.list.select(Some(0));
     for _ in 0..6 {
         let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
     }
@@ -2180,7 +2159,7 @@ fn test_ctrl_p_on_provider_form_does_not_open_password_picker() {
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, ctrl_key('p'), &tx);
     // Provider form does not have a password picker
-    assert!(!app.ui.show_password_picker);
+    assert!(!app.ui.password_picker.open);
 }
 
 // =========================================================================
@@ -2341,7 +2320,7 @@ fn test_space_on_empty_askpass_field_opens_picker() {
     assert!(app.forms.host.askpass.is_empty());
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
-    assert!(app.ui.show_password_picker);
+    assert!(app.ui.password_picker.open);
 }
 
 #[test]
@@ -2355,7 +2334,7 @@ fn test_space_on_populated_askpass_field_inserts_literal() {
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
     assert!(
-        !app.ui.show_password_picker,
+        !app.ui.password_picker.open,
         "Space on a populated picker field must NOT open the picker"
     );
     assert_eq!(app.forms.host.askpass, "my-script ");
@@ -2370,10 +2349,10 @@ fn test_picker_open_on_empty_then_enter_selects_keychain() {
     assert!(app.forms.host.askpass.is_empty());
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
-    assert!(app.ui.show_password_picker);
+    assert!(app.ui.password_picker.open);
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
     assert_eq!(app.forms.host.askpass, "keychain");
-    assert!(!app.ui.show_password_picker);
+    assert!(!app.ui.password_picker.open);
 }
 
 // =========================================================================
@@ -2461,10 +2440,10 @@ fn test_picker_esc_preserves_existing_askpass() {
     // Field has content → user must clear it to reach the picker. Simulate
     // by setting the picker open directly (the unit under test is the Esc
     // behavior, not the open path).
-    app.ui.show_password_picker = true;
-    app.ui.password_picker_state = ratatui::widgets::ListState::default();
-    app.ui.password_picker_state.select(Some(0));
-    assert!(app.ui.show_password_picker);
+    app.ui.password_picker.open = true;
+    app.ui.password_picker.list = ratatui::widgets::ListState::default();
+    app.ui.password_picker.list.select(Some(0));
+    assert!(app.ui.password_picker.open);
     // Navigate but then Esc
     let _ = handle_key_event(&mut app, key(KeyCode::Char('j')), &tx);
     let _ = handle_key_event(&mut app, key(KeyCode::Esc), &tx);
@@ -2550,8 +2529,7 @@ Host gamma
 #[test]
 fn test_password_picker_keychain_sets_status_message() {
     let mut app = make_form_app();
-    app.ui.show_password_picker = true;
-    app.ui.password_picker_state.select(Some(0)); // Keychain
+    app.ui.password_picker.open_at(0); // Keychain
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
     let toast = app.status_center.toast.as_ref().unwrap();
@@ -2566,8 +2544,7 @@ fn test_password_picker_keychain_sets_status_message() {
 fn test_password_picker_none_sets_cleared_status() {
     let mut app = make_form_app();
     app.forms.host.askpass = "keychain".to_string();
-    app.ui.show_password_picker = true;
-    app.ui.password_picker_state.select(Some(6)); // None
+    app.ui.password_picker.open_at(6); // None
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
     let toast = app.status_center.toast.as_ref().unwrap();
@@ -2581,8 +2558,7 @@ fn test_password_picker_none_sets_cleared_status() {
 #[test]
 fn test_password_picker_prefix_source_focuses_askpass_field() {
     let mut app = make_form_app();
-    app.ui.show_password_picker = true;
-    app.ui.password_picker_state.select(Some(1)); // 1Password (op://)
+    app.ui.password_picker.open_at(1); // 1Password (op://)
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
     assert_eq!(
@@ -2606,8 +2582,7 @@ fn test_password_picker_prefix_source_focuses_askpass_field() {
 #[test]
 fn test_password_picker_prefix_bw_focuses_askpass() {
     let mut app = make_form_app();
-    app.ui.show_password_picker = true;
-    app.ui.password_picker_state.select(Some(2)); // Bitwarden (bw:)
+    app.ui.password_picker.open_at(2); // Bitwarden (bw:)
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
     assert_eq!(app.forms.host.focused_field, FormField::AskPass);
@@ -2617,8 +2592,7 @@ fn test_password_picker_prefix_bw_focuses_askpass() {
 #[test]
 fn test_password_picker_prefix_pass_focuses_askpass() {
     let mut app = make_form_app();
-    app.ui.show_password_picker = true;
-    app.ui.password_picker_state.select(Some(3)); // pass (pass:)
+    app.ui.password_picker.open_at(3); // pass (pass:)
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
     assert_eq!(app.forms.host.focused_field, FormField::AskPass);
@@ -2628,8 +2602,7 @@ fn test_password_picker_prefix_pass_focuses_askpass() {
 #[test]
 fn test_password_picker_prefix_vault_focuses_askpass() {
     let mut app = make_form_app();
-    app.ui.show_password_picker = true;
-    app.ui.password_picker_state.select(Some(4)); // Vault (vault:)
+    app.ui.password_picker.open_at(4); // Vault (vault:)
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
     assert_eq!(app.forms.host.focused_field, FormField::AskPass);
@@ -2730,12 +2703,12 @@ fn test_form_submit_empty_askpass_is_none() {
 #[test]
 fn test_password_picker_enter_with_no_selection() {
     let mut app = make_form_app();
-    app.ui.show_password_picker = true;
-    app.ui.password_picker_state = ratatui::widgets::ListState::default(); // no selection
+    app.ui.password_picker.open = true;
+    app.ui.password_picker.list = ratatui::widgets::ListState::default(); // no selection
     app.forms.host.askpass = "old".to_string();
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
-    assert!(!app.ui.show_password_picker);
+    assert!(!app.ui.password_picker.open);
     assert_eq!(app.forms.host.askpass, "old");
 }
 
@@ -2765,19 +2738,17 @@ fn test_bw_session_none_for_non_bw_source() {
 fn test_password_picker_ctrl_d_closes_picker() {
     // Use "None" to avoid writing a value to the real preferences file
     let mut app = make_form_app();
-    app.ui.show_password_picker = true;
-    app.ui.password_picker_state.select(Some(6)); // None
+    app.ui.password_picker.open_at(6); // None
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, ctrl_key('d'), &tx);
-    assert!(!app.ui.show_password_picker);
+    assert!(!app.ui.password_picker.open);
 }
 
 #[test]
 fn test_password_picker_ctrl_d_does_not_change_form_askpass() {
     let mut app = make_form_app();
     app.forms.host.askpass = "old".to_string();
-    app.ui.show_password_picker = true;
-    app.ui.password_picker_state.select(Some(6)); // None
+    app.ui.password_picker.open_at(6); // None
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, ctrl_key('d'), &tx);
     // Ctrl+D only sets the global default, not the form field
@@ -2787,13 +2758,12 @@ fn test_password_picker_ctrl_d_does_not_change_form_askpass() {
 #[test]
 fn test_password_picker_ctrl_d_none_sets_status() {
     let mut app = make_form_app();
-    app.ui.show_password_picker = true;
-    app.ui.password_picker_state.select(Some(6)); // None
+    app.ui.password_picker.open_at(6); // None
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, ctrl_key('d'), &tx);
     // Shows "cleared" on success or "Failed to save" if ~/.purple doesn't exist
     assert!(app.status_center.status.is_some() || app.status_center.toast.is_some());
-    assert!(!app.ui.show_password_picker);
+    assert!(!app.ui.password_picker.open);
 }
 
 #[test]
@@ -6147,7 +6117,7 @@ fn colon_opens_command_palette() {
 #[test]
 fn palette_esc_closes() {
     let mut app = make_app("");
-    app.palette = Some(crate::app::CommandPaletteState::new());
+    app.palette = Some(crate::app::CommandPaletteState::default());
     let (tx, _rx) = mpsc::channel();
     handle_key_event(&mut app, key(KeyCode::Esc), &tx).unwrap();
     assert!(app.palette.is_none());
@@ -6157,7 +6127,7 @@ fn palette_esc_closes() {
 fn palette_char_always_filters() {
     // All chars go to filter, even recognized command keys like 'K'
     let mut app = make_app("");
-    app.palette = Some(crate::app::CommandPaletteState::new());
+    app.palette = Some(crate::app::CommandPaletteState::default());
     let (tx, _rx) = mpsc::channel();
     handle_key_event(&mut app, key(KeyCode::Char('K')), &tx).unwrap();
     assert!(app.palette.is_some(), "palette should stay open");
@@ -6172,7 +6142,7 @@ fn palette_char_always_filters() {
 fn palette_filter_then_enter_executes() {
     // Type "SSH" to filter, then Enter to execute the selected result
     let mut app = make_app("");
-    let mut state = crate::app::CommandPaletteState::new();
+    let mut state = crate::app::CommandPaletteState::default();
     state.push_query('S');
     state.push_query('S');
     state.push_query('H');
@@ -6190,7 +6160,7 @@ fn palette_filter_then_enter_executes() {
 #[test]
 fn palette_up_down_navigates() {
     let mut app = make_app("");
-    app.palette = Some(crate::app::CommandPaletteState::new());
+    app.palette = Some(crate::app::CommandPaletteState::default());
     let (tx, _rx) = mpsc::channel();
     handle_key_event(&mut app, key(KeyCode::Down), &tx).unwrap();
     assert_eq!(app.palette.as_ref().unwrap().selected, 1);
@@ -6201,7 +6171,7 @@ fn palette_up_down_navigates() {
 #[test]
 fn palette_any_char_appends_to_filter() {
     let mut app = make_app("");
-    app.palette = Some(crate::app::CommandPaletteState::new());
+    app.palette = Some(crate::app::CommandPaletteState::default());
     let (tx, _rx) = mpsc::channel();
     handle_key_event(&mut app, key(KeyCode::Char('t')), &tx).unwrap();
     assert!(app.palette.is_some());
@@ -6213,7 +6183,7 @@ fn palette_any_char_appends_to_filter() {
 #[test]
 fn palette_enter_on_empty_filter_does_nothing() {
     let mut app = make_app("");
-    app.palette = Some(crate::app::CommandPaletteState::new());
+    app.palette = Some(crate::app::CommandPaletteState::default());
     app.palette.as_mut().unwrap().push_query('z');
     app.palette.as_mut().unwrap().push_query('z');
     app.palette.as_mut().unwrap().push_query('z');
@@ -6225,7 +6195,7 @@ fn palette_enter_on_empty_filter_does_nothing() {
 #[test]
 fn palette_backspace_on_empty_closes() {
     let mut app = make_app("");
-    app.palette = Some(crate::app::CommandPaletteState::new());
+    app.palette = Some(crate::app::CommandPaletteState::default());
     let (tx, _rx) = mpsc::channel();
     handle_key_event(&mut app, key(KeyCode::Backspace), &tx).unwrap();
     assert!(app.palette.is_none());
@@ -6234,7 +6204,7 @@ fn palette_backspace_on_empty_closes() {
 #[test]
 fn palette_backspace_removes_filter_char() {
     let mut app = make_app("");
-    app.palette = Some(crate::app::CommandPaletteState::new());
+    app.palette = Some(crate::app::CommandPaletteState::default());
     app.palette.as_mut().unwrap().push_query('t');
     app.palette.as_mut().unwrap().push_query('u');
     let (tx, _rx) = mpsc::channel();
@@ -6245,7 +6215,7 @@ fn palette_backspace_removes_filter_char() {
 #[test]
 fn palette_navigate_then_enter_executes() {
     let mut app = make_app("");
-    app.palette = Some(crate::app::CommandPaletteState::new());
+    app.palette = Some(crate::app::CommandPaletteState::default());
     let (tx, _rx) = mpsc::channel();
     // The 3rd command in all() is 'e' (edit). Navigate Down twice to index 2.
     handle_key_event(&mut app, key(KeyCode::Down), &tx).unwrap();
@@ -6260,9 +6230,11 @@ fn palette_navigate_then_enter_executes() {
 #[test]
 fn palette_filter_shrink_then_enter_clamps_selected() {
     let mut app = make_app("");
-    let mut state = crate::app::CommandPaletteState::new();
     // Set selected to a high index, then add a filter that reduces the list
-    state.selected = 10;
+    let mut state = crate::app::CommandPaletteState {
+        selected: 10,
+        ..Default::default()
+    };
     state.push_query('S'); // push_query resets selected to 0
     state.push_query('S');
     state.push_query('H');
@@ -6284,7 +6256,7 @@ fn palette_filter_shrink_then_enter_clamps_selected() {
 
 #[test]
 fn palette_query_capped_at_64() {
-    let mut state = crate::app::CommandPaletteState::new();
+    let mut state = crate::app::CommandPaletteState::default();
     for _ in 0..100 {
         state.push_query('a');
     }
@@ -6308,7 +6280,7 @@ fn proxyjump_picker_app() -> App {
     app.screen = Screen::EditHost {
         alias: "victim".to_string(),
     };
-    app.ui.show_proxyjump_picker = true;
+    app.ui.proxyjump_picker.open = true;
     app
 }
 
@@ -6320,13 +6292,13 @@ fn proxyjump_picker_enter_on_section_label_is_noop() {
         .iter()
         .position(|c| matches!(c, ProxyJumpCandidate::SectionLabel(_)))
         .expect("test setup must produce a SectionLabel");
-    app.ui.proxyjump_picker_state.select(Some(label_idx));
+    app.ui.proxyjump_picker.list.select(Some(label_idx));
 
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
 
     assert!(
-        app.ui.show_proxyjump_picker,
+        app.ui.proxyjump_picker.open,
         "Enter on a SectionLabel must not close the picker"
     );
     assert!(
@@ -6343,13 +6315,13 @@ fn proxyjump_picker_enter_on_separator_is_noop() {
         .iter()
         .position(|c| matches!(c, ProxyJumpCandidate::Separator))
         .expect("test setup must produce a separator");
-    app.ui.proxyjump_picker_state.select(Some(sep));
+    app.ui.proxyjump_picker.list.select(Some(sep));
 
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
 
     assert!(
-        app.ui.show_proxyjump_picker,
+        app.ui.proxyjump_picker.open,
         "Enter on a Separator must not close the picker"
     );
     assert!(
@@ -6364,13 +6336,13 @@ fn proxyjump_picker_enter_on_host_applies_alias_and_closes() {
     // Select the first host (the suggested one). `proxyjump_first_host_index`
     // resolves to the right index regardless of any leading SectionLabel.
     let first_host = app.proxyjump_first_host_index().expect("host expected");
-    app.ui.proxyjump_picker_state.select(Some(first_host));
+    app.ui.proxyjump_picker.list.select(Some(first_host));
 
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
 
     assert!(
-        !app.ui.show_proxyjump_picker,
+        !app.ui.proxyjump_picker.open,
         "Enter on a Host must close the picker"
     );
     assert_eq!(
@@ -7144,7 +7116,7 @@ fn enter_on_identity_file_field_does_not_open_key_picker() {
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
     assert!(
-        !app.ui.show_key_picker,
+        !app.ui.key_picker.open,
         "Enter on IdentityFile must NOT open the key picker (use Space)"
     );
 }
@@ -7156,7 +7128,7 @@ fn space_on_empty_identity_file_opens_key_picker() {
     assert!(app.forms.host.identity_file.is_empty());
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
-    assert!(app.ui.show_key_picker);
+    assert!(app.ui.key_picker.open);
 }
 
 #[test]
@@ -7168,7 +7140,7 @@ fn space_on_populated_identity_file_inserts_literal() {
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
     assert!(
-        !app.ui.show_key_picker,
+        !app.ui.key_picker.open,
         "Space on populated IdentityFile must NOT open picker"
     );
     assert_eq!(app.forms.host.identity_file, "/home/me/keys/id ");
@@ -7180,7 +7152,7 @@ fn enter_on_proxy_jump_field_does_not_open_picker() {
     app.forms.host.focused_field = FormField::ProxyJump;
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
-    assert!(!app.ui.show_proxyjump_picker);
+    assert!(!app.ui.proxyjump_picker.open);
 }
 
 #[test]
@@ -7189,7 +7161,7 @@ fn space_on_empty_proxy_jump_opens_picker() {
     app.forms.host.focused_field = FormField::ProxyJump;
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
-    assert!(app.ui.show_proxyjump_picker);
+    assert!(app.ui.proxyjump_picker.open);
 }
 
 #[test]
@@ -7200,7 +7172,7 @@ fn space_on_populated_proxy_jump_inserts_literal() {
     app.forms.host.cursor_pos = 7;
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
-    assert!(!app.ui.show_proxyjump_picker);
+    assert!(!app.ui.proxyjump_picker.open);
     assert_eq!(app.forms.host.proxy_jump, "bastion ");
 }
 
@@ -7215,7 +7187,7 @@ fn space_on_empty_vault_ssh_with_no_candidates_inserts_literal() {
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
     assert!(
-        !app.ui.show_vault_role_picker,
+        !app.ui.vault_role_picker.open,
         "no candidates → no picker, even on empty field"
     );
     assert_eq!(
@@ -7231,7 +7203,7 @@ fn enter_on_provider_identity_file_does_not_open_picker() {
     let mut app = make_form_app_focused_on("digitalocean", ProviderFormField::IdentityFile);
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Enter), &tx);
-    assert!(!app.ui.show_key_picker);
+    assert!(!app.ui.key_picker.open);
 }
 
 #[test]
@@ -7241,7 +7213,7 @@ fn space_on_populated_provider_identity_file_inserts_literal() {
     app.providers.form.cursor_pos = 5;
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
-    assert!(!app.ui.show_key_picker);
+    assert!(!app.ui.key_picker.open);
     assert_eq!(app.providers.form.identity_file, "/path ");
 }
 
@@ -7254,7 +7226,7 @@ fn space_on_populated_ovh_regions_inserts_literal() {
     let (tx, _rx) = mpsc::channel();
     let _ = handle_key_event(&mut app, key(KeyCode::Char(' ')), &tx);
     assert!(
-        !app.ui.show_region_picker,
+        !app.ui.region_picker.open,
         "Space on populated Regions must NOT open picker"
     );
     assert_eq!(app.providers.form.regions, "eu ");

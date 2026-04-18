@@ -1,6 +1,5 @@
-use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::collections::HashMap;
+use std::path::PathBuf;
 
 use ratatui::widgets::ListState;
 
@@ -40,6 +39,7 @@ pub(super) fn eq_ci(a: &str, b: &str) -> bool {
 }
 
 mod baselines;
+mod container_state;
 mod display_list;
 mod form_state;
 mod forms;
@@ -48,36 +48,45 @@ mod host_state;
 mod hosts;
 mod ping;
 mod provider_state;
+mod reload_state;
+mod screen;
 mod search;
 mod selection;
 mod snippet_state;
 mod status_state;
+mod tag_state;
 mod tunnel_state;
-mod types;
+mod ui_state;
 mod update;
 mod vault;
 
+pub use baselines::{FormBaseline, ProviderFormBaseline, SnippetFormBaseline, TunnelFormBaseline};
+pub use container_state::ContainerState;
 pub use form_state::FormState;
 pub(crate) use forms::char_to_byte_pos;
 pub use forms::{
     FormField, HostForm, ProviderFormField, ProviderFormFields, SnippetForm, SnippetFormField,
     SnippetHostOutput, SnippetOutputState, SnippetParamFormState, TunnelForm, TunnelFormField,
 };
-pub use host_state::HostState;
-pub use ping::PingState;
-pub use provider_state::ProviderState;
-pub use snippet_state::SnippetState;
-pub use status_state::StatusCenter;
-pub use tunnel_state::TunnelState;
-pub use types::{
-    BulkTagAction, BulkTagApplyResult, BulkTagEditorState, BulkTagRow, ConflictState,
-    ContainerState, DeletedHost, FormBaseline, GroupBy, HostListItem, HostListRenderCache,
-    MessageClass, PingStatus, ProviderFormBaseline, ProxyJumpCandidate, ReloadState, Screen,
-    SearchState, SnippetFormBaseline, SortMode, StatusMessage, SyncRecord, TagState,
-    TunnelFormBaseline, UiSelection, ViewMode, WhatsNewState, classify_ping, health_summary_spans,
-    health_summary_spans_for, ping_sort_key, propagate_ping_to_dependents, select_display_tags,
-    status_glyph,
+pub use host_state::{
+    DeletedHost, GroupBy, HostListItem, HostState, ProxyJumpCandidate, SortMode, ViewMode,
+    health_summary_spans, health_summary_spans_for,
 };
+pub use ping::{
+    PingState, PingStatus, classify_ping, ping_sort_key, propagate_ping_to_dependents, status_glyph,
+};
+pub use provider_state::{ProviderState, SyncRecord};
+pub use reload_state::{ConflictState, ReloadState};
+pub use screen::{Screen, WhatsNewState};
+pub use search::SearchState;
+pub use snippet_state::SnippetState;
+pub use status_state::{MessageClass, StatusCenter, StatusMessage};
+pub use tag_state::{
+    BulkTagAction, BulkTagApplyResult, BulkTagEditorState, BulkTagRow, TagState,
+    select_display_tags,
+};
+pub use tunnel_state::TunnelState;
+pub use ui_state::UiSelection;
 pub use update::UpdateState;
 pub use vault::VaultState;
 
@@ -181,114 +190,38 @@ impl App {
         let hosts = config.host_entries();
         let patterns = config.pattern_entries();
         let display_list = Self::build_display_list_from(&config, &hosts, &patterns);
-        let mut list_state = ListState::default();
-        // Select first selectable item
-        if let Some(pos) = display_list.iter().position(|item| {
+
+        let initial_selection = display_list.iter().position(|item| {
             matches!(
                 item,
                 HostListItem::Host { .. } | HostListItem::Pattern { .. }
             )
-        }) {
-            list_state.select(Some(pos));
-        }
+        });
 
-        let config_path = config.path.clone();
-        let last_modified = Self::get_mtime(&config_path);
-        let include_mtimes = Self::snapshot_include_mtimes(&config);
-        let include_dir_mtimes = Self::snapshot_include_dir_mtimes(&config);
+        let reload = ReloadState::from_config(&config);
+        let hosts_state = HostState::from_config(config, hosts, patterns, display_list);
 
         Self {
             screen: Screen::HostList,
             running: true,
-            hosts_state: HostState {
-                ssh_config: config,
-                list: hosts,
-                patterns,
-                display_list,
-                render_cache: HostListRenderCache::default(),
-                undo_stack: Vec::new(),
-                multi_select: HashSet::new(),
-                sort_mode: SortMode::Original,
-                group_by: GroupBy::None,
-                view_mode: ViewMode::Compact,
-                group_filter: None,
-                group_tab_index: 0,
-                group_tab_order: Vec::new(),
-                group_host_counts: HashMap::new(),
-            },
+            hosts_state,
             pending_connect: None,
             status_center: StatusCenter::default(),
-            ui: UiSelection {
-                list_state,
-                key_list_state: ListState::default(),
-                show_key_picker: false,
-                key_picker_state: ListState::default(),
-                show_password_picker: false,
-                password_picker_state: ListState::default(),
-                show_proxyjump_picker: false,
-                proxyjump_picker_state: ListState::default(),
-                show_vault_role_picker: false,
-                vault_role_picker_state: ListState::default(),
-                tag_picker_state: ListState::default(),
-                bulk_tag_editor_state: ListState::default(),
-                theme_picker_state: ListState::default(),
-                theme_picker_builtins: Vec::new(),
-                theme_picker_custom: Vec::new(),
-                theme_picker_saved_name: String::new(),
-                theme_picker_original: None,
-                provider_list_state: ListState::default(),
-                tunnel_list_state: ListState::default(),
-                snippet_picker_state: ListState::default(),
-                snippet_search: None,
-                show_region_picker: false,
-                region_picker_cursor: 0,
-                help_scroll: 0,
-                detail_scroll: 0,
-            },
-            search: SearchState {
-                query: None,
-                filtered_indices: Vec::new(),
-                filtered_pattern_indices: Vec::new(),
-                pre_search_selection: None,
-                scope_indices: None,
-            },
-            reload: ReloadState {
-                config_path,
-                last_modified,
-                include_mtimes,
-                include_dir_mtimes,
-            },
-            conflict: ConflictState {
-                form_mtime: None,
-                form_include_mtimes: Vec::new(),
-                form_include_dir_mtimes: Vec::new(),
-                provider_form_mtime: None,
-            },
+            ui: UiSelection::new_with_initial_selection(initial_selection),
+            search: SearchState::default(),
+            reload,
+            conflict: ConflictState::default(),
             keys: Vec::new(),
             tags: TagState::default(),
             forms: FormState::default(),
             history: ConnectionHistory::load(),
             detail_toggle_pending: false,
-            providers: ProviderState {
-                config: crate::providers::config::ProviderConfig::load(),
-                sync_history: SyncRecord::load_all(),
-                ..ProviderState::default()
-            },
-            ping: PingState {
-                slow_threshold_ms: crate::preferences::load_slow_threshold(),
-                auto_ping: crate::preferences::load_auto_ping(),
-                ..PingState::default()
-            },
+            providers: ProviderState::load(),
+            ping: PingState::from_preferences(),
             vault: VaultState::default(),
             tunnels: TunnelState::default(),
-            snippets: SnippetState {
-                store: crate::snippet::SnippetStore::load(),
-                ..SnippetState::default()
-            },
-            update: UpdateState {
-                hint: crate::update::update_hint(),
-                ..UpdateState::default()
-            },
+            snippets: SnippetState::with_store_loaded(),
+            update: UpdateState::with_current_hint(),
             bw_session: None,
             file_browser: None,
             file_browser_paths: HashMap::new(),
@@ -646,11 +579,6 @@ impl App {
         self.status_center.tick_toast();
     }
 
-    /// Get the modification time of a file.
-    fn get_mtime(path: &Path) -> Option<SystemTime> {
-        std::fs::metadata(path).ok()?.modified().ok()
-    }
-
     /// Check if config or any Include file has changed externally and reload if so.
     /// Skips reload when the user is in a form (AddHost/EditHost) to avoid
     /// overwriting in-memory config while the user is editing.
@@ -682,18 +610,18 @@ impl App {
         {
             return;
         }
-        let current_mtime = Self::get_mtime(&self.reload.config_path);
+        let current_mtime = reload_state::get_mtime(&self.reload.config_path);
         let changed = current_mtime != self.reload.last_modified
             || self
                 .reload
                 .include_mtimes
                 .iter()
-                .any(|(path, old_mtime)| Self::get_mtime(path) != *old_mtime)
+                .any(|(path, old_mtime)| reload_state::get_mtime(path) != *old_mtime)
             || self
                 .reload
                 .include_dir_mtimes
                 .iter()
-                .any(|(path, old_mtime)| Self::get_mtime(path) != *old_mtime);
+                .any(|(path, old_mtime)| reload_state::get_mtime(path) != *old_mtime);
         if changed {
             if let Ok(new_config) = SshConfigFile::parse(&self.reload.config_path) {
                 self.hosts_state.ssh_config = new_config;
@@ -706,9 +634,9 @@ impl App {
                 self.reload_hosts();
                 self.reload.last_modified = current_mtime;
                 self.reload.include_mtimes =
-                    Self::snapshot_include_mtimes(&self.hosts_state.ssh_config);
+                    reload_state::snapshot_include_mtimes(&self.hosts_state.ssh_config);
                 self.reload.include_dir_mtimes =
-                    Self::snapshot_include_dir_mtimes(&self.hosts_state.ssh_config);
+                    reload_state::snapshot_include_dir_mtimes(&self.hosts_state.ssh_config);
                 let count = self.hosts_state.list.len();
                 self.notify_background(crate::messages::config_reloaded(count));
             }
@@ -724,26 +652,27 @@ impl App {
     /// recover them, but detecting the conflict BEFORE writing is strictly
     /// better than after.
     pub fn external_config_changed(&self) -> bool {
-        let current_mtime = Self::get_mtime(&self.reload.config_path);
+        let current_mtime = reload_state::get_mtime(&self.reload.config_path);
         current_mtime != self.reload.last_modified
             || self
                 .reload
                 .include_mtimes
                 .iter()
-                .any(|(path, old_mtime)| Self::get_mtime(path) != *old_mtime)
+                .any(|(path, old_mtime)| reload_state::get_mtime(path) != *old_mtime)
             || self
                 .reload
                 .include_dir_mtimes
                 .iter()
-                .any(|(path, old_mtime)| Self::get_mtime(path) != *old_mtime)
+                .any(|(path, old_mtime)| reload_state::get_mtime(path) != *old_mtime)
     }
 
     /// Update the last_modified timestamp (call after writing config).
     pub fn update_last_modified(&mut self) {
-        self.reload.last_modified = Self::get_mtime(&self.reload.config_path);
-        self.reload.include_mtimes = Self::snapshot_include_mtimes(&self.hosts_state.ssh_config);
+        self.reload.last_modified = reload_state::get_mtime(&self.reload.config_path);
+        self.reload.include_mtimes =
+            reload_state::snapshot_include_mtimes(&self.hosts_state.ssh_config);
         self.reload.include_dir_mtimes =
-            Self::snapshot_include_dir_mtimes(&self.hosts_state.ssh_config);
+            reload_state::snapshot_include_dir_mtimes(&self.hosts_state.ssh_config);
     }
 
     /// Returns true if any host or provider has a vault role configured.
@@ -958,10 +887,6 @@ pub struct CommandPaletteState {
 }
 
 impl CommandPaletteState {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub fn push_query(&mut self, c: char) {
         if self.query.len() < 64 {
             self.query.push(c);

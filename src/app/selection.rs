@@ -241,18 +241,18 @@ impl App {
 
     /// Move key picker selection up.
     pub fn select_prev_picker_key(&mut self) {
-        super::cycle_selection(&mut self.ui.key_picker_state, self.keys.len(), false);
+        super::cycle_selection(&mut self.ui.key_picker.list, self.keys.len(), false);
     }
 
     /// Move key picker selection down.
     pub fn select_next_picker_key(&mut self) {
-        super::cycle_selection(&mut self.ui.key_picker_state, self.keys.len(), true);
+        super::cycle_selection(&mut self.ui.key_picker.list, self.keys.len(), true);
     }
 
     /// Move password picker selection up.
     pub fn select_prev_password_source(&mut self) {
         super::cycle_selection(
-            &mut self.ui.password_picker_state,
+            &mut self.ui.password_picker.list,
             crate::askpass::PASSWORD_SOURCES.len(),
             false,
         );
@@ -261,7 +261,7 @@ impl App {
     /// Move password picker selection down.
     pub fn select_next_password_source(&mut self) {
         super::cycle_selection(
-            &mut self.ui.password_picker_state,
+            &mut self.ui.password_picker.list,
             crate::askpass::PASSWORD_SOURCES.len(),
             true,
         );
@@ -365,13 +365,13 @@ impl App {
     /// Move vault role picker selection up.
     pub fn select_prev_vault_role(&mut self) {
         let len = self.vault_role_candidates().len();
-        super::cycle_selection(&mut self.ui.vault_role_picker_state, len, false);
+        super::cycle_selection(&mut self.ui.vault_role_picker.list, len, false);
     }
 
     /// Move vault role picker selection down.
     pub fn select_next_vault_role(&mut self) {
         let len = self.vault_role_candidates().len();
-        super::cycle_selection(&mut self.ui.vault_role_picker_state, len, true);
+        super::cycle_selection(&mut self.ui.vault_role_picker.list, len, true);
     }
 
     /// Collect all unique tags from hosts, sorted alphabetically.
@@ -952,14 +952,14 @@ fn step_proxyjump_selection(app: &mut App, forward: bool) {
     let candidates = app.proxyjump_candidates();
     let len = candidates.len();
     if len == 0 {
-        app.ui.proxyjump_picker_state.select(None);
+        app.ui.proxyjump_picker.list.select(None);
         return;
     }
     // When no prior selection exists, seed `next` so the first modular
     // step lands on index 0 (forward) or len-1 (backward). Without this
     // seed a fresh picker with selected() == None would skip index 0 on
     // a Down press.
-    let seed: usize = match app.ui.proxyjump_picker_state.selected() {
+    let seed: usize = match app.ui.proxyjump_picker.list.selected() {
         Some(idx) => idx,
         None if forward => len - 1,
         None => 0,
@@ -972,7 +972,7 @@ fn step_proxyjump_selection(app: &mut App, forward: bool) {
             (next + len - 1) % len
         };
         if matches!(candidates.get(next), Some(ProxyJumpCandidate::Host { .. })) {
-            app.ui.proxyjump_picker_state.select(Some(next));
+            app.ui.proxyjump_picker.list.select(Some(next));
             return;
         }
     }

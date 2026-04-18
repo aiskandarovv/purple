@@ -3,8 +3,8 @@ use crossterm::event::{KeyCode, KeyEvent};
 use crate::app::{App, Screen};
 
 pub(super) fn handle_theme_picker(app: &mut App, key: KeyEvent) {
-    let builtins = &app.ui.theme_picker_builtins;
-    let custom = &app.ui.theme_picker_custom;
+    let builtins = &app.ui.theme_picker.builtins;
+    let custom = &app.ui.theme_picker.custom;
     let has_custom = !custom.is_empty();
     let divider_idx = if has_custom {
         Some(builtins.len())
@@ -21,12 +21,12 @@ pub(super) fn handle_theme_picker(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') => {
             // Restore the theme that was active when the picker opened
-            if let Some(original) = app.ui.theme_picker_original.take() {
+            if let Some(original) = app.ui.theme_picker.original.take() {
                 crate::ui::theme::set_theme(original);
             }
-            app.ui.theme_picker_builtins = Vec::new();
-            app.ui.theme_picker_custom = Vec::new();
-            app.ui.theme_picker_saved_name = String::new();
+            app.ui.theme_picker.builtins = Vec::new();
+            app.ui.theme_picker.custom = Vec::new();
+            app.ui.theme_picker.saved_name = String::new();
             app.set_screen(Screen::HostList);
         }
         KeyCode::Char('?') => {
@@ -36,7 +36,7 @@ pub(super) fn handle_theme_picker(app: &mut App, key: KeyEvent) {
             });
         }
         KeyCode::Char('j') | KeyCode::Down => {
-            let current = app.ui.theme_picker_state.selected().unwrap_or(0);
+            let current = app.ui.theme_picker.list.selected().unwrap_or(0);
             let mut next = current + 1;
             if next >= total {
                 next = 0;
@@ -47,21 +47,21 @@ pub(super) fn handle_theme_picker(app: &mut App, key: KeyEvent) {
                     next = 0;
                 }
             }
-            app.ui.theme_picker_state.select(Some(next));
+            app.ui.theme_picker.list.select(Some(next));
             preview_theme_at_index(next, builtins, custom, divider_idx);
         }
         KeyCode::Char('k') | KeyCode::Up => {
-            let current = app.ui.theme_picker_state.selected().unwrap_or(0);
+            let current = app.ui.theme_picker.list.selected().unwrap_or(0);
             let mut next = if current == 0 { total - 1 } else { current - 1 };
             if divider_idx == Some(next) {
                 next = if next == 0 { total - 1 } else { next - 1 };
             }
-            app.ui.theme_picker_state.select(Some(next));
+            app.ui.theme_picker.list.select(Some(next));
             preview_theme_at_index(next, builtins, custom, divider_idx);
         }
         KeyCode::Enter => {
             if let Some(theme) = theme_at_index(
-                app.ui.theme_picker_state.selected().unwrap_or(0),
+                app.ui.theme_picker.list.selected().unwrap_or(0),
                 builtins,
                 custom,
                 divider_idx,
@@ -71,10 +71,10 @@ pub(super) fn handle_theme_picker(app: &mut App, key: KeyEvent) {
                 }
                 crate::ui::theme::set_theme(theme);
             }
-            app.ui.theme_picker_builtins = Vec::new();
-            app.ui.theme_picker_custom = Vec::new();
-            app.ui.theme_picker_saved_name = String::new();
-            app.ui.theme_picker_original = None;
+            app.ui.theme_picker.builtins = Vec::new();
+            app.ui.theme_picker.custom = Vec::new();
+            app.ui.theme_picker.saved_name = String::new();
+            app.ui.theme_picker.original = None;
             app.set_screen(Screen::HostList);
         }
         _ => {}

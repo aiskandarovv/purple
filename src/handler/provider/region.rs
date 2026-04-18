@@ -95,7 +95,7 @@ pub(crate) fn handle_region_picker(app: &mut App, key: KeyEvent) {
         KeyCode::Esc => {
             app.providers.form.regions = rebuild_regions_string(&selected, &provider_name);
             app.providers.form.sync_cursor_to_end();
-            app.ui.show_region_picker = false;
+            app.ui.region_picker.open = false;
             let count = selected.len();
             if count > 0 {
                 app.notify(crate::messages::regions_selected_count(count, zone_label));
@@ -106,7 +106,7 @@ pub(crate) fn handle_region_picker(app: &mut App, key: KeyEvent) {
             // exclusively and closes. For multi-select: Enter confirms current
             // selection (same as Esc).
             if provider_name == "ovh" {
-                let cursor = app.ui.region_picker_cursor;
+                let cursor = app.ui.region_picker.cursor;
                 if let Some(Some(code)) = rows.get(cursor) {
                     selected.clear();
                     selected.insert(code.to_string());
@@ -114,20 +114,20 @@ pub(crate) fn handle_region_picker(app: &mut App, key: KeyEvent) {
             }
             app.providers.form.regions = rebuild_regions_string(&selected, &provider_name);
             app.providers.form.sync_cursor_to_end();
-            app.ui.show_region_picker = false;
+            app.ui.region_picker.open = false;
             let count = selected.len();
             if count > 0 {
                 app.notify(crate::messages::regions_selected_count(count, zone_label));
             }
         }
-        KeyCode::Down | KeyCode::Char('j') if app.ui.region_picker_cursor + 1 < total => {
-            app.ui.region_picker_cursor += 1;
+        KeyCode::Down | KeyCode::Char('j') if app.ui.region_picker.cursor + 1 < total => {
+            app.ui.region_picker.cursor += 1;
         }
-        KeyCode::Up | KeyCode::Char('k') if app.ui.region_picker_cursor > 0 => {
-            app.ui.region_picker_cursor -= 1;
+        KeyCode::Up | KeyCode::Char('k') if app.ui.region_picker.cursor > 0 => {
+            app.ui.region_picker.cursor -= 1;
         }
         KeyCode::Char(' ') => {
-            let cursor = app.ui.region_picker_cursor;
+            let cursor = app.ui.region_picker.cursor;
             if let Some(Some(code)) = rows.get(cursor) {
                 // Toggle single region
                 if selected.contains(*code) {

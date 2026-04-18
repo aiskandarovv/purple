@@ -503,12 +503,12 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
                     }
                 })
                 .unwrap_or(0);
-            app.ui.theme_picker_state.select(Some(idx));
-            app.ui.theme_picker_builtins = builtins;
-            app.ui.theme_picker_custom = custom;
-            app.ui.theme_picker_saved_name =
+            app.ui.theme_picker.list.select(Some(idx));
+            app.ui.theme_picker.builtins = builtins;
+            app.ui.theme_picker.custom = custom;
+            app.ui.theme_picker.saved_name =
                 crate::preferences::load_theme().unwrap_or_else(|| "Purple".to_string());
-            app.ui.theme_picker_original = Some(crate::ui::theme::current_theme());
+            app.ui.theme_picker.original = Some(crate::ui::theme::current_theme());
             app.set_screen(Screen::ThemePicker);
         }
         KeyCode::Char('T') => {
@@ -659,7 +659,7 @@ pub(super) fn handle_host_list(app: &mut App, key: KeyEvent, events_tx: &mpsc::S
         }
         KeyCode::Char(':') => {
             log::debug!("palette: opened from host list");
-            app.palette = Some(crate::app::CommandPaletteState::new());
+            app.palette = Some(crate::app::CommandPaletteState::default());
         }
         KeyCode::Char('F') => actions::open_file_browser(app, events_tx),
         KeyCode::Char('C') => actions::open_container_overlay(app, events_tx),

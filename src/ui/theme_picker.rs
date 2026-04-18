@@ -8,9 +8,9 @@ use crate::app::App;
 use crate::ui::theme::ThemeDef;
 
 pub fn render(frame: &mut Frame, app: &mut App) {
-    let builtins = &app.ui.theme_picker_builtins;
-    let custom = &app.ui.theme_picker_custom;
-    let current_name = &app.ui.theme_picker_saved_name;
+    let builtins = &app.ui.theme_picker.builtins;
+    let custom = &app.ui.theme_picker.custom;
+    let current_name = &app.ui.theme_picker.saved_name;
 
     let has_custom = !custom.is_empty();
     let total = builtins.len() + if has_custom { 1 + custom.len() } else { 0 };
@@ -52,7 +52,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         .highlight_style(theme::selected_row())
         .highlight_symbol(design::LIST_HIGHLIGHT);
 
-    frame.render_stateful_widget(list, inner, &mut app.ui.theme_picker_state);
+    frame.render_stateful_widget(list, inner, &mut app.ui.theme_picker.list);
 
     let footer_area = design::render_overlay_footer(frame, area);
     design::Footer::new()

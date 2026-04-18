@@ -7,6 +7,18 @@ use std::collections::HashSet;
 use super::{HostListItem, PingStatus};
 use crate::app::App;
 
+/// Search mode state.
+#[derive(Default)]
+pub struct SearchState {
+    pub query: Option<String>,
+    pub filtered_indices: Vec<usize>,
+    pub filtered_pattern_indices: Vec<usize>,
+    pub pre_search_selection: Option<usize>,
+    /// When a group tab is active, holds the host indices visible in that group.
+    /// Search results are intersected with this set to scope the search.
+    pub scope_indices: Option<HashSet<usize>>,
+}
+
 impl App {
     /// Compute the search scope from the current display list when group-filtered.
     fn compute_search_scope(&self) -> Option<HashSet<usize>> {

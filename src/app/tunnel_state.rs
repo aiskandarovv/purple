@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
+use crate::app::TunnelFormBaseline;
 use crate::app::forms::TunnelForm;
-use crate::app::types::TunnelFormBaseline;
 use crate::tunnel::{ActiveTunnel, TunnelRule};
 
 /// Tunnel-owned state grouped off the `App` god-struct. Contains the rule

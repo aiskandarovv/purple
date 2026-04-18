@@ -234,13 +234,13 @@ pub(super) fn handle_provider_form(
     events_tx: &mpsc::Sender<AppEvent>,
 ) {
     // Dispatch to key picker if open
-    if app.ui.show_key_picker {
+    if app.ui.key_picker.open {
         super::picker::handle_key_picker_shared(app, key, true);
         return;
     }
 
     // Dispatch to region picker if open
-    if app.ui.show_region_picker {
+    if app.ui.region_picker.open {
         region::handle_region_picker(app, key);
         return;
     }
@@ -409,14 +409,14 @@ pub(super) fn handle_provider_form(
             let f = app.providers.form.focused_field;
             if f == crate::app::ProviderFormField::IdentityFile {
                 app.scan_keys();
-                app.ui.show_key_picker = true;
-                app.ui.key_picker_state = ratatui::widgets::ListState::default();
+                app.ui.key_picker.open = true;
+                app.ui.key_picker.list = ratatui::widgets::ListState::default();
                 if !app.keys.is_empty() {
-                    app.ui.key_picker_state.select(Some(0));
+                    app.ui.key_picker.list.select(Some(0));
                 }
             } else if f == crate::app::ProviderFormField::Regions {
-                app.ui.show_region_picker = true;
-                app.ui.region_picker_cursor = 0;
+                app.ui.region_picker.open = true;
+                app.ui.region_picker.cursor = 0;
             }
         }
         KeyCode::Char(c) => {

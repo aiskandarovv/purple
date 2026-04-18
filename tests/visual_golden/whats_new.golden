@@ -10,7 +10,7 @@
 │   ● aws-worke│                   | .__/ \__,_|_|  | .__/|_|\___|                  │          6h  │
 │   ● aws-batch│                   |_|              |_|                             │          7h  │
 │   ● aws-ml-eu│                                                                    │          8h  │
-│   ● do-web-am│                      welcome to purple 2.43.1                      │ean      10h  │
+│   ● do-web-am│                      welcome to purple 2.43.2                      │ean      10h  │
 │   ● do-stagin│                                                                    │         11h  │
 │   ● do-worker│                                                                    │         12h  │
 │   ● do-ci-run│  2.41.0  2026-04-15                                                │         13h  │

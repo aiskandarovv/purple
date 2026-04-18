@@ -12,3 +12,13 @@ pub struct UpdateState {
     /// Update hint string (install command suggestion).
     pub hint: &'static str,
 }
+
+impl UpdateState {
+    /// Construct with the current install-method hint detected at runtime.
+    pub fn with_current_hint() -> Self {
+        Self {
+            hint: crate::update::update_hint(),
+            ..Self::default()
+        }
+    }
+}

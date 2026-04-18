@@ -265,12 +265,12 @@ pub fn render_provider_form(frame: &mut Frame, app: &mut App, provider_name: &st
     }
 
     // Key picker popup overlay
-    if app.ui.show_key_picker {
+    if app.ui.key_picker.open {
         super::host_form::render_key_picker_overlay(frame, app);
     }
 
     // Region picker popup overlay
-    if app.ui.show_region_picker {
+    if app.ui.region_picker.open {
         render_region_picker_overlay(frame, app);
     }
 }
@@ -518,7 +518,7 @@ fn render_region_picker_overlay(frame: &mut Frame, app: &mut App) {
     frame.render_widget(block, block_area);
 
     // Scroll so cursor is always visible
-    let cursor = app.ui.region_picker_cursor;
+    let cursor = app.ui.region_picker.cursor;
     let scroll_offset = if cursor >= visible_rows as usize {
         cursor - visible_rows as usize + 1
     } else {

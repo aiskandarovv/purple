@@ -2,12 +2,59 @@
 //! with capture/compare logic for every form kind (host, tunnel, snippet,
 //! provider) plus the mtime helpers that detect external config changes.
 
-use std::path::PathBuf;
-use std::time::SystemTime;
-
-use super::{FormBaseline, ProviderFormBaseline, SnippetFormBaseline, TunnelFormBaseline};
 use crate::app::App;
-use crate::ssh_config::model::SshConfigFile;
+use crate::app::reload_state::{get_mtime, snapshot_include_dir_mtimes, snapshot_include_mtimes};
+
+/// Baseline snapshot of host form content for dirty-check on Esc.
+#[derive(Clone)]
+pub struct FormBaseline {
+    pub alias: String,
+    pub hostname: String,
+    pub user: String,
+    pub port: String,
+    pub identity_file: String,
+    pub proxy_jump: String,
+    pub askpass: String,
+    pub vault_ssh: String,
+    pub vault_addr: String,
+    pub tags: String,
+}
+
+/// Baseline snapshot of tunnel form content for dirty-check on Esc.
+#[derive(Clone)]
+pub struct TunnelFormBaseline {
+    pub tunnel_type: crate::tunnel::TunnelType,
+    pub bind_port: String,
+    pub remote_host: String,
+    pub remote_port: String,
+    pub bind_address: String,
+}
+
+/// Baseline snapshot of snippet form content for dirty-check on Esc.
+#[derive(Clone)]
+pub struct SnippetFormBaseline {
+    pub name: String,
+    pub command: String,
+    pub description: String,
+}
+
+/// Baseline snapshot of provider form content for dirty-check on Esc.
+#[derive(Clone)]
+pub struct ProviderFormBaseline {
+    pub url: String,
+    pub token: String,
+    pub profile: String,
+    pub project: String,
+    pub compartment: String,
+    pub regions: String,
+    pub alias_prefix: String,
+    pub user: String,
+    pub identity_file: String,
+    pub verify_tls: bool,
+    pub auto_sync: bool,
+    pub vault_role: String,
+    pub vault_addr: String,
+}
 
 impl App {
     /// Clear form mtime state (call on form cancel or successful submit).
@@ -20,17 +67,16 @@ impl App {
 
     /// Capture config and Include file mtimes when opening a host form.
     pub fn capture_form_mtime(&mut self) {
-        self.conflict.form_mtime = Self::get_mtime(&self.reload.config_path);
-        self.conflict.form_include_mtimes =
-            Self::snapshot_include_mtimes(&self.hosts_state.ssh_config);
+        self.conflict.form_mtime = get_mtime(&self.reload.config_path);
+        self.conflict.form_include_mtimes = snapshot_include_mtimes(&self.hosts_state.ssh_config);
         self.conflict.form_include_dir_mtimes =
-            Self::snapshot_include_dir_mtimes(&self.hosts_state.ssh_config);
+            snapshot_include_dir_mtimes(&self.hosts_state.ssh_config);
     }
 
     /// Capture ~/.purple/providers mtime when opening a provider form.
     pub fn capture_provider_form_mtime(&mut self) {
         let path = dirs::home_dir().map(|h| h.join(".purple/providers"));
-        self.conflict.provider_form_mtime = path.as_ref().and_then(|p| Self::get_mtime(p));
+        self.conflict.provider_form_mtime = path.as_ref().and_then(|p| get_mtime(p));
     }
 
     /// Capture a baseline snapshot of the host form for dirty-check on Esc.
@@ -159,18 +205,18 @@ impl App {
     pub fn config_changed_since_form_open(&self) -> bool {
         match self.conflict.form_mtime {
             Some(open_mtime) => {
-                if Self::get_mtime(&self.reload.config_path) != Some(open_mtime) {
+                if get_mtime(&self.reload.config_path) != Some(open_mtime) {
                     return true;
                 }
                 self.conflict
                     .form_include_mtimes
                     .iter()
-                    .any(|(path, old_mtime)| Self::get_mtime(path) != *old_mtime)
+                    .any(|(path, old_mtime)| get_mtime(path) != *old_mtime)
                     || self
                         .conflict
                         .form_include_dir_mtimes
                         .iter()
-                        .any(|(path, old_mtime)| Self::get_mtime(path) != *old_mtime)
+                        .any(|(path, old_mtime)| get_mtime(path) != *old_mtime)
             }
             None => false,
         }
@@ -179,35 +225,7 @@ impl App {
     /// Check if ~/.purple/providers has changed since the provider form was opened.
     pub fn provider_config_changed_since_form_open(&self) -> bool {
         let path = dirs::home_dir().map(|h| h.join(".purple/providers"));
-        let current_mtime = path.as_ref().and_then(|p| Self::get_mtime(p));
+        let current_mtime = path.as_ref().and_then(|p| get_mtime(p));
         self.conflict.provider_form_mtime != current_mtime
-    }
-
-    /// Snapshot mtimes of all resolved Include files.
-    pub(super) fn snapshot_include_mtimes(
-        config: &SshConfigFile,
-    ) -> Vec<(PathBuf, Option<SystemTime>)> {
-        config
-            .include_paths()
-            .into_iter()
-            .map(|p| {
-                let mtime = Self::get_mtime(&p);
-                (p, mtime)
-            })
-            .collect()
-    }
-
-    /// Snapshot mtimes of parent directories of Include glob patterns.
-    pub(super) fn snapshot_include_dir_mtimes(
-        config: &SshConfigFile,
-    ) -> Vec<(PathBuf, Option<SystemTime>)> {
-        config
-            .include_glob_dirs()
-            .into_iter()
-            .map(|p| {
-                let mtime = Self::get_mtime(&p);
-                (p, mtime)
-            })
-            .collect()
     }
 }

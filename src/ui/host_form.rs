@@ -112,10 +112,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     frame.render_widget(block, block_area);
 
     // Suppress cursor when a picker overlay is visible above this form
-    let picker_open = app.ui.show_key_picker
-        || app.ui.show_proxyjump_picker
-        || app.ui.show_password_picker
-        || app.ui.show_vault_role_picker;
+    let picker_open = app.ui.key_picker.open
+        || app.ui.proxyjump_picker.open
+        || app.ui.password_picker.open
+        || app.ui.vault_role_picker.open;
     let has_vault_roles = !app.vault_role_candidates().is_empty();
 
     // Compute provider vault role hint for the VaultSsh field placeholder
@@ -244,22 +244,22 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 
     // Key picker popup overlay
-    if app.ui.show_key_picker {
+    if app.ui.key_picker.open {
         render_key_picker_overlay(frame, app);
     }
 
     // ProxyJump picker popup overlay
-    if app.ui.show_proxyjump_picker {
+    if app.ui.proxyjump_picker.open {
         render_proxyjump_picker_overlay(frame, app);
     }
 
     // Password source picker popup overlay
-    if app.ui.show_password_picker {
+    if app.ui.password_picker.open {
         render_password_picker_overlay(frame, app);
     }
 
     // Vault role picker popup overlay
-    if app.ui.show_vault_role_picker {
+    if app.ui.vault_role_picker.open {
         render_vault_role_picker_overlay(frame, app);
     }
 }
@@ -331,7 +331,7 @@ pub fn render_key_picker_overlay(frame: &mut Frame, app: &mut App) {
         "Select Key",
         None,
         items,
-        &mut app.ui.key_picker_state,
+        &mut app.ui.key_picker.list,
     );
 }
 
@@ -402,7 +402,7 @@ fn render_proxyjump_picker_overlay(frame: &mut Frame, app: &mut App) {
         "ProxyJump",
         None,
         items,
-        &mut app.ui.proxyjump_picker_state,
+        &mut app.ui.proxyjump_picker.list,
     );
 }
 
@@ -426,7 +426,7 @@ fn render_vault_role_picker_overlay(frame: &mut Frame, app: &mut App) {
         "Vault SSH Role",
         None,
         items,
-        &mut app.ui.vault_role_picker_state,
+        &mut app.ui.vault_role_picker.list,
     );
 }
 
@@ -457,7 +457,7 @@ fn render_password_picker_overlay(frame: &mut Frame, app: &mut App) {
         "Password Source",
         Some("Ctrl+D: global default"),
         items,
-        &mut app.ui.password_picker_state,
+        &mut app.ui.password_picker.list,
     );
 }
 
@@ -638,8 +638,7 @@ mod tests {
         let backend = TestBackend::new(80, 20);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = make_app();
-        app.ui.show_password_picker = true;
-        app.ui.password_picker_state.select(Some(0));
+        app.ui.password_picker.open_at(0);
         terminal
             .draw(|frame| {
                 render_password_picker_overlay(frame, &mut app);
@@ -662,8 +661,7 @@ mod tests {
         let backend = TestBackend::new(80, 20);
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = make_app();
-        app.ui.show_password_picker = true;
-        app.ui.password_picker_state.select(Some(0));
+        app.ui.password_picker.open_at(0);
         terminal
             .draw(|frame| {
                 render_password_picker_overlay(frame, &mut app);
@@ -718,9 +716,10 @@ mod tests {
         app.screen = Screen::EditHost {
             alias: editing_alias.to_string(),
         };
-        app.ui.show_proxyjump_picker = true;
+        app.ui.proxyjump_picker.open = true;
         app.ui
-            .proxyjump_picker_state
+            .proxyjump_picker
+            .list
             .select(app.proxyjump_first_host_index());
         app
     }
