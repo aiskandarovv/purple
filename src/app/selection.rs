@@ -37,7 +37,7 @@ impl App {
         } else {
             // In normal mode, list_state indexes into display_list
             let sel = self.ui.list_state.selected()?;
-            match self.display_list.get(sel) {
+            match self.hosts_state.display_list.get(sel) {
                 Some(HostListItem::Host { index }) => Some(*index),
                 _ => None,
             }
@@ -46,7 +46,8 @@ impl App {
 
     /// Get the currently selected host entry.
     pub fn selected_host(&self) -> Option<&HostEntry> {
-        self.selected_host_index().and_then(|i| self.hosts.get(i))
+        self.selected_host_index()
+            .and_then(|i| self.hosts_state.list.get(i))
     }
 
     /// Get the currently selected pattern entry (if a pattern is selected).
@@ -60,13 +61,13 @@ impl App {
                     .search
                     .filtered_pattern_indices
                     .get(pattern_idx)
-                    .and_then(|&i| self.patterns.get(i));
+                    .and_then(|&i| self.hosts_state.patterns.get(i));
             }
             return None;
         }
         let sel = self.ui.list_state.selected()?;
-        match self.display_list.get(sel) {
-            Some(HostListItem::Pattern { index }) => self.patterns.get(*index),
+        match self.hosts_state.display_list.get(sel) {
+            Some(HostListItem::Pattern { index }) => self.hosts_state.patterns.get(*index),
             _ => None,
         }
     }
@@ -85,7 +86,7 @@ impl App {
             return false;
         };
         matches!(
-            self.display_list.get(sel),
+            self.hosts_state.display_list.get(sel),
             Some(HostListItem::Pattern { .. })
         )
     }
@@ -115,16 +116,16 @@ impl App {
     }
 
     fn select_next_in_display_list(&mut self) {
-        if self.display_list.is_empty() {
+        if self.hosts_state.display_list.is_empty() {
             return;
         }
-        let len = self.display_list.len();
+        let len = self.hosts_state.display_list.len();
         let current = self.ui.list_state.selected().unwrap_or(0);
         // Find next selectable item after current (always skip headers)
         for offset in 1..=len {
             let idx = (current + offset) % len;
             if matches!(
-                &self.display_list[idx],
+                &self.hosts_state.display_list[idx],
                 HostListItem::Host { .. } | HostListItem::Pattern { .. }
             ) {
                 self.ui.list_state.select(Some(idx));
@@ -134,16 +135,16 @@ impl App {
     }
 
     fn select_prev_in_display_list(&mut self) {
-        if self.display_list.is_empty() {
+        if self.hosts_state.display_list.is_empty() {
             return;
         }
-        let len = self.display_list.len();
+        let len = self.hosts_state.display_list.len();
         let current = self.ui.list_state.selected().unwrap_or(0);
         // Find prev selectable item before current (always skip headers)
         for offset in 1..=len {
             let idx = (current + len - offset) % len;
             if matches!(
-                &self.display_list[idx],
+                &self.hosts_state.display_list[idx],
                 HostListItem::Host { .. } | HostListItem::Pattern { .. }
             ) {
                 self.ui.list_state.select(Some(idx));
@@ -166,10 +167,10 @@ impl App {
             let current = self.ui.list_state.selected().unwrap_or(0);
             let mut target = current;
             let mut items_skipped = 0;
-            let len = self.display_list.len();
+            let len = self.hosts_state.display_list.len();
             for i in (current + 1)..len {
                 if matches!(
-                    self.display_list[i],
+                    self.hosts_state.display_list[i],
                     HostListItem::Host { .. } | HostListItem::Pattern { .. }
                 ) {
                     target = i;
@@ -202,7 +203,7 @@ impl App {
             let mut items_skipped = 0;
             for i in (0..current).rev() {
                 if matches!(
-                    self.display_list[i],
+                    self.hosts_state.display_list[i],
                     HostListItem::Host { .. } | HostListItem::Pattern { .. }
                 ) {
                     target = i;
@@ -221,7 +222,7 @@ impl App {
     pub fn scan_keys(&mut self) {
         if let Some(home) = dirs::home_dir() {
             let ssh_dir = home.join(".ssh");
-            self.keys = ssh_keys::discover_keys(Path::new(&ssh_dir), &self.hosts);
+            self.keys = ssh_keys::discover_keys(Path::new(&ssh_dir), &self.hosts_state.list);
             if !self.keys.is_empty() && self.ui.key_list_state.selected().is_none() {
                 self.ui.key_list_state.select(Some(0));
             }
@@ -282,7 +283,8 @@ impl App {
         };
         let editing_hostname = match &self.screen {
             Screen::EditHost { alias, .. } => self
-                .hosts
+                .hosts_state
+                .list
                 .iter()
                 .find(|h| h.alias == *alias)
                 .map(|h| h.hostname.as_str()),
@@ -290,9 +292,9 @@ impl App {
         };
         let editing_suffix = editing_hostname.and_then(domain_suffix);
 
-        let usage_counts = proxyjump_usage_counts(&self.hosts, editing_alias);
+        let usage_counts = proxyjump_usage_counts(&self.hosts_state.list, editing_alias);
         let mut scored = score_proxyjump_candidates(
-            &self.hosts,
+            &self.hosts_state.list,
             editing_alias,
             editing_suffix.as_deref(),
             &usage_counts,
@@ -342,7 +344,7 @@ impl App {
     pub fn vault_role_candidates(&self) -> Vec<String> {
         let mut seen = std::collections::HashSet::new();
         let mut roles = Vec::new();
-        for host in &self.hosts {
+        for host in &self.hosts_state.list {
             if let Some(ref role) = host.vault_ssh {
                 if seen.insert(role.clone()) {
                     roles.push(role.clone());
@@ -350,7 +352,7 @@ impl App {
             }
         }
         // Also collect from provider configs.
-        for section in &self.provider_config.sections {
+        for section in &self.providers.config.sections {
             let role = section.vault_role.trim();
             if !role.is_empty() && seen.insert(role.to_string()) {
                 roles.push(role.to_string());
@@ -379,7 +381,7 @@ impl App {
         let mut has_stale = false;
         let mut has_vault_ssh = false;
         let mut has_vault_kv = false;
-        for host in &self.hosts {
+        for host in &self.hosts_state.list {
             for tag in host.provider_tags.iter().chain(host.tags.iter()) {
                 if seen.insert(tag.clone()) {
                     tags.push(tag.clone());
@@ -396,7 +398,7 @@ impl App {
             if crate::vault_ssh::resolve_vault_role(
                 host.vault_ssh.as_deref(),
                 host.provider.as_deref(),
-                &self.provider_config,
+                &self.providers.config,
             )
             .is_some()
             {
@@ -411,7 +413,7 @@ impl App {
                 has_vault_kv = true;
             }
         }
-        for pattern in &self.patterns {
+        for pattern in &self.hosts_state.patterns {
             for tag in &pattern.tags {
                 if seen.insert(tag.clone()) {
                     tags.push(tag.clone());
@@ -422,7 +424,7 @@ impl App {
             tags.push("stale".to_string());
         }
         if !has_vault_ssh {
-            for section in &self.provider_config.sections {
+            for section in &self.providers.config.sections {
                 if !section.vault_role.is_empty() {
                     has_vault_ssh = true;
                     break;
@@ -451,8 +453,8 @@ impl App {
         let mut aliases: Vec<String> = Vec::new();
         let mut skipped: Vec<String> = Vec::new();
         let mut alias_set: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for &idx in &self.multi_select {
-            if let Some(host) = self.hosts.get(idx) {
+        for &idx in &self.hosts_state.multi_select {
+            if let Some(host) = self.hosts_state.list.get(idx) {
                 if !alias_set.insert(host.alias.clone()) {
                     continue;
                 }
@@ -474,12 +476,12 @@ impl App {
         // case).
         let mut candidate_tags: std::collections::BTreeSet<String> =
             std::collections::BTreeSet::new();
-        for host in &self.hosts {
+        for host in &self.hosts_state.list {
             for tag in &host.tags {
                 candidate_tags.insert(tag.clone());
             }
         }
-        for pattern in &self.patterns {
+        for pattern in &self.hosts_state.patterns {
             for tag in &pattern.tags {
                 candidate_tags.insert(tag.clone());
             }
@@ -491,7 +493,8 @@ impl App {
             .into_iter()
             .map(|tag| {
                 let initial_count = self
-                    .hosts
+                    .hosts_state
+                    .list
                     .iter()
                     .filter(|h| selected_set.contains(h.alias.as_str()))
                     .filter(|h| h.tags.iter().any(|t| t == &tag))
@@ -508,7 +511,7 @@ impl App {
         // starts at `Leave`; the snapshot is the same length as `rows` so
         // `is_dirty` short-circuits before scanning when nothing has changed.
         let initial_actions: Vec<BulkTagAction> = rows.iter().map(|r| r.action).collect();
-        self.bulk_tag_editor = BulkTagEditorState {
+        self.forms.bulk_tag_editor = BulkTagEditorState {
             rows,
             aliases,
             skipped_included: skipped,
@@ -517,7 +520,7 @@ impl App {
             initial_actions,
         };
         self.ui.bulk_tag_editor_state = ListState::default();
-        if !self.bulk_tag_editor.rows.is_empty() {
+        if !self.forms.bulk_tag_editor.rows.is_empty() {
             self.ui.bulk_tag_editor_state.select(Some(0));
         }
         self.screen = Screen::BulkTagEditor;
@@ -528,7 +531,7 @@ impl App {
     pub fn bulk_tag_editor_next(&mut self) {
         super::cycle_selection(
             &mut self.ui.bulk_tag_editor_state,
-            self.bulk_tag_editor.rows.len(),
+            self.forms.bulk_tag_editor.rows.len(),
             true,
         );
     }
@@ -537,7 +540,7 @@ impl App {
     pub fn bulk_tag_editor_prev(&mut self) {
         super::cycle_selection(
             &mut self.ui.bulk_tag_editor_state,
-            self.bulk_tag_editor.rows.len(),
+            self.forms.bulk_tag_editor.rows.len(),
             false,
         );
     }
@@ -548,7 +551,7 @@ impl App {
         let Some(idx) = self.ui.bulk_tag_editor_state.selected() else {
             return;
         };
-        if let Some(row) = self.bulk_tag_editor.rows.get_mut(idx) {
+        if let Some(row) = self.forms.bulk_tag_editor.rows.get_mut(idx) {
             row.action = row.action.cycle();
         }
     }
@@ -558,18 +561,24 @@ impl App {
     /// hosts") is preserved without a second keystroke. No-op for empty
     /// input or duplicate tag names.
     pub fn bulk_tag_editor_commit_new_tag(&mut self) {
-        let Some(input) = self.bulk_tag_editor.new_tag_input.take() else {
+        let Some(input) = self.forms.bulk_tag_editor.new_tag_input.take() else {
             return;
         };
-        self.bulk_tag_editor.new_tag_cursor = 0;
+        self.forms.bulk_tag_editor.new_tag_cursor = 0;
         let tag = input.trim().to_string();
         if tag.is_empty() {
             return;
         }
         // Reuse an existing row when the tag already exists — simply flip
         // its action to AddToAll rather than create a duplicate.
-        if let Some(existing) = self.bulk_tag_editor.rows.iter().position(|r| r.tag == tag) {
-            self.bulk_tag_editor.rows[existing].action = BulkTagAction::AddToAll;
+        if let Some(existing) = self
+            .forms
+            .bulk_tag_editor
+            .rows
+            .iter()
+            .position(|r| r.tag == tag)
+        {
+            self.forms.bulk_tag_editor.rows[existing].action = BulkTagAction::AddToAll;
             self.ui.bulk_tag_editor_state.select(Some(existing));
             return;
         }
@@ -578,8 +587,8 @@ impl App {
             initial_count: 0,
             action: BulkTagAction::AddToAll,
         };
-        let insert_at = self.bulk_tag_editor.rows.len();
-        self.bulk_tag_editor.rows.push(row);
+        let insert_at = self.forms.bulk_tag_editor.rows.len();
+        self.forms.bulk_tag_editor.rows.push(row);
         self.ui.bulk_tag_editor_state.select(Some(insert_at));
     }
 
@@ -588,12 +597,13 @@ impl App {
     /// user can retry without losing state. On success, hosts are reloaded
     /// (which clears `multi_select`).
     pub fn bulk_tag_apply(&mut self) -> Result<BulkTagApplyResult, String> {
-        if self.bulk_tag_editor.aliases.is_empty() {
+        if self.forms.bulk_tag_editor.aliases.is_empty() {
             return Err("No hosts selected.".to_string());
         }
-        let aliases = self.bulk_tag_editor.aliases.clone();
-        let rows = self.bulk_tag_editor.rows.clone();
+        let aliases = self.forms.bulk_tag_editor.aliases.clone();
+        let rows = self.forms.bulk_tag_editor.rows.clone();
         let skipped_set: std::collections::HashSet<&str> = self
+            .forms
             .bulk_tag_editor
             .skipped_included
             .iter()
@@ -625,7 +635,7 @@ impl App {
                 skipped_included += 1;
                 continue;
             }
-            let Some(host) = self.hosts.iter().find(|h| &h.alias == alias) else {
+            let Some(host) = self.hosts_state.list.iter().find(|h| &h.alias == alias) else {
                 continue;
             };
             let original_tags = host.tags.clone();
@@ -652,7 +662,7 @@ impl App {
                 }
             }
             if host_changed {
-                self.config.set_host_tags(alias, &new_tags);
+                self.hosts_state.ssh_config.set_host_tags(alias, &new_tags);
                 changed_hosts.insert(alias.clone());
                 undo_snapshot.push((alias.clone(), original_tags));
             }
@@ -668,10 +678,10 @@ impl App {
         // Clone only when we actually need to write. Deferred from the top
         // of the function so no-op applies (all hosts already have the tag)
         // skip the allocation entirely.
-        let config_backup = self.config.clone();
-        if let Err(e) = self.config.write() {
+        let config_backup = self.hosts_state.ssh_config.clone();
+        if let Err(e) = self.hosts_state.ssh_config.write() {
             log::error!("[purple] bulk tag apply write failed: {e}");
-            self.config = config_backup;
+            self.hosts_state.ssh_config = config_backup;
             return Err(format!("Failed to save: {}", e));
         }
 
@@ -685,7 +695,7 @@ impl App {
         // Store the undo snapshot so `u` can restore previous tags. Cleared
         // by a successful undo or by the next config mutation.
         if !undo_snapshot.is_empty() {
-            self.bulk_tag_undo = Some(undo_snapshot);
+            self.forms.bulk_tag_undo = Some(undo_snapshot);
         }
         self.update_last_modified();
         self.reload_hosts();
@@ -721,28 +731,32 @@ impl App {
     /// Load tunnel directives for a host alias.
     /// Uses find_tunnel_directives for Include-aware, multi-pattern host lookup.
     pub fn refresh_tunnel_list(&mut self, alias: &str) {
-        self.tunnel_list = self.config.find_tunnel_directives(alias);
+        self.tunnels.list = self.hosts_state.ssh_config.find_tunnel_directives(alias);
     }
 
     /// Move tunnel list selection up.
     pub fn select_prev_tunnel(&mut self) {
         super::cycle_selection(
             &mut self.ui.tunnel_list_state,
-            self.tunnel_list.len(),
+            self.tunnels.list.len(),
             false,
         );
     }
 
     /// Move tunnel list selection down.
     pub fn select_next_tunnel(&mut self) {
-        super::cycle_selection(&mut self.ui.tunnel_list_state, self.tunnel_list.len(), true);
+        super::cycle_selection(
+            &mut self.ui.tunnel_list_state,
+            self.tunnels.list.len(),
+            true,
+        );
     }
 
     /// Move snippet picker selection up.
     pub fn select_prev_snippet(&mut self) {
         super::cycle_selection(
             &mut self.ui.snippet_picker_state,
-            self.snippet_store.snippets.len(),
+            self.snippets.store.snippets.len(),
             false,
         );
     }
@@ -751,7 +765,7 @@ impl App {
     pub fn select_next_snippet(&mut self) {
         super::cycle_selection(
             &mut self.ui.snippet_picker_state,
-            self.snippet_store.snippets.len(),
+            self.snippets.store.snippets.len(),
             true,
         );
     }
@@ -760,8 +774,11 @@ impl App {
     /// Move selection to the next non-header item.
     pub fn select_next_skipping_headers(&mut self) {
         let current = self.ui.list_state.selected().unwrap_or(0);
-        for i in (current + 1)..self.display_list.len() {
-            if !matches!(self.display_list[i], HostListItem::GroupHeader(_)) {
+        for i in (current + 1)..self.hosts_state.display_list.len() {
+            if !matches!(
+                self.hosts_state.display_list[i],
+                HostListItem::GroupHeader(_)
+            ) {
                 self.ui.list_state.select(Some(i));
                 self.update_group_tab_follow();
                 return;
@@ -773,7 +790,10 @@ impl App {
     pub fn select_prev_skipping_headers(&mut self) {
         let current = self.ui.list_state.selected().unwrap_or(0);
         for i in (0..current).rev() {
-            if !matches!(self.display_list[i], HostListItem::GroupHeader(_)) {
+            if !matches!(
+                self.hosts_state.display_list[i],
+                HostListItem::GroupHeader(_)
+            ) {
                 self.ui.list_state.select(Some(i));
                 self.update_group_tab_follow();
                 return;

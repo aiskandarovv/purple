@@ -1,12 +1,14 @@
 use super::types::DisplayTag;
 use super::*;
-use crate::ssh_config::model::SshConfigFile;
+use crate::ssh_config::model::{HostEntry, SshConfigFile};
 use crate::tunnel::TunnelType;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 fn make_app(content: &str) -> App {
     // Every test gets a unique tempdir so parallel `cargo test` threads
-    // cannot race on the same config path when `app.config.write()` runs.
+    // cannot race on the same config path when `app.hosts_state.ssh_config.write()` runs.
     // `into_path()` leaks cleanup to the OS — fine for test scratch files.
     let path = tempfile::tempdir()
         .expect("tempdir")
@@ -21,7 +23,7 @@ fn make_app(content: &str) -> App {
     let mut app = App::new(config);
     // Isolate from the real ~/.purple/providers so tests don't
     // pick up the user's vault_role / vault_addr config.
-    app.provider_config = crate::providers::config::ProviderConfig::default();
+    app.providers.config = crate::providers::config::ProviderConfig::default();
     app
 }
 
@@ -46,10 +48,10 @@ fn has_any_vault_role_false_when_host_only_has_vault_addr() {
         "Host a\n  HostName 1.2.3.4\n  # purple:vault-addr http://127.0.0.1:8200\n",
     ]);
     assert_eq!(
-        app.hosts[0].vault_addr.as_deref(),
+        app.hosts_state.list[0].vault_addr.as_deref(),
         Some("http://127.0.0.1:8200")
     );
-    assert!(app.hosts[0].vault_ssh.is_none());
+    assert!(app.hosts_state.list[0].vault_ssh.is_none());
     assert!(
         !app.has_any_vault_role(),
         "vault_addr without a role must not count as a vault-sign candidate"
@@ -62,7 +64,7 @@ fn has_any_vault_role_false_when_host_only_has_vault_addr() {
 fn refresh_cert_cache_noop_when_alias_not_in_hosts() {
     let mut app = test_app_with_hosts(&["Host a\n  HostName 1.2.3.4\n"]);
     // Plant a stale entry and verify refresh removes it when the alias
-    // is not in self.hosts (caller typed a bad alias).
+    // is not in self.hosts_state.list (caller typed a bad alias).
     app.vault.cert_cache.insert(
         "ghost".to_string(),
         (
@@ -99,11 +101,11 @@ fn host_form_is_dirty_detects_vault_addr_change() {
     // vault_addr so Esc with an unsaved address triggers the discard
     // confirm dialog.
     let mut app = make_app("Host a\n  HostName 1.2.3.4\n");
-    app.form.vault_ssh = "ssh-client-signer/sign/engineer".to_string();
-    app.form.vault_addr = String::new();
+    app.forms.host.vault_ssh = "ssh-client-signer/sign/engineer".to_string();
+    app.forms.host.vault_addr = String::new();
     app.capture_form_baseline();
     assert!(!app.host_form_is_dirty());
-    app.form.vault_addr = "http://127.0.0.1:8200".to_string();
+    app.forms.host.vault_addr = "http://127.0.0.1:8200".to_string();
     assert!(
         app.host_form_is_dirty(),
         "typing into vault_addr must mark the form dirty"
@@ -118,14 +120,14 @@ fn edit_host_from_form_does_not_write_vault_addr_for_pattern() {
     // form does NOT end up with a vault-addr comment in the config.
     let config_src = "Host web-* db-*\n  User debian\n";
     let mut app = make_app(config_src);
-    app.patterns = app.config.pattern_entries();
-    let pattern = app.patterns.first().cloned().unwrap();
+    app.hosts_state.patterns = app.hosts_state.ssh_config.pattern_entries();
+    let pattern = app.hosts_state.patterns.first().cloned().unwrap();
     let form = HostForm::from_pattern_entry(&pattern);
-    app.form = form;
-    app.form.vault_addr = "http://should-not-persist:8200".to_string();
+    app.forms.host = form;
+    app.forms.host.vault_addr = "http://should-not-persist:8200".to_string();
     let result = app.edit_host_from_form("web-* db-*");
     assert!(result.is_ok(), "edit failed: {:?}", result);
-    let serialized = app.config.serialize();
+    let serialized = app.hosts_state.ssh_config.serialize();
     assert!(
         !serialized.contains("vault-addr"),
         "pattern entry must never carry a vault-addr comment, got: {}",
@@ -138,14 +140,14 @@ fn add_host_from_form_writes_vault_addr_when_role_set() {
     // Positive case: a new host with both role and address persists
     // both comments via set_host_vault_ssh + set_host_vault_addr.
     let mut app = make_app("");
-    app.form = HostForm::new();
-    app.form.alias = "newhost".to_string();
-    app.form.hostname = "10.0.0.1".to_string();
-    app.form.vault_ssh = "ssh-client-signer/sign/engineer".to_string();
-    app.form.vault_addr = "http://127.0.0.1:8200".to_string();
+    app.forms.host = HostForm::new();
+    app.forms.host.alias = "newhost".to_string();
+    app.forms.host.hostname = "10.0.0.1".to_string();
+    app.forms.host.vault_ssh = "ssh-client-signer/sign/engineer".to_string();
+    app.forms.host.vault_addr = "http://127.0.0.1:8200".to_string();
     let result = app.add_host_from_form();
     assert!(result.is_ok(), "add failed: {:?}", result);
-    let serialized = app.config.serialize();
+    let serialized = app.hosts_state.ssh_config.serialize();
     assert!(serialized.contains("# purple:vault-ssh ssh-client-signer/sign/engineer"));
     assert!(serialized.contains("# purple:vault-addr http://127.0.0.1:8200"));
 }
@@ -181,7 +183,7 @@ fn has_any_vault_role_true_when_host_has_vault_ssh() {
 #[test]
 fn has_any_vault_role_true_when_provider_has_vault_role() {
     let mut app = test_app_with_hosts(&["Host a\n  HostName 1.2.3.4\n"]);
-    app.provider_config = crate::providers::config::ProviderConfig::parse(
+    app.providers.config = crate::providers::config::ProviderConfig::parse(
         "[aws]\ntoken=abc\nvault_role=ssh/sign/engineer\n",
     );
     assert!(app.has_any_vault_role());
@@ -199,7 +201,7 @@ fn collect_unique_tags_includes_vault_when_host_has_vault_ssh() {
 #[test]
 fn collect_unique_tags_includes_vault_when_provider_has_vault_role() {
     let mut app = test_app_with_hosts(&["Host a\n  HostName 1.2.3.4\n"]);
-    app.provider_config = crate::providers::config::ProviderConfig::parse(
+    app.providers.config = crate::providers::config::ProviderConfig::parse(
         "[aws]\ntoken=abc\nvault_role=ssh/sign/engineer\n",
     );
     let tags = app.collect_unique_tags();
@@ -267,7 +269,7 @@ fn flush_pending_vault_write_clears_flag_after_flush() {
     app.pending_vault_config_write = true;
     let tmpdir = std::env::temp_dir();
     let path = tmpdir.join("purple_test_flush_pending.ini");
-    app.config.path = path.clone();
+    app.hosts_state.ssh_config.path = path.clone();
     app.flush_pending_vault_write();
     assert!(!app.pending_vault_config_write);
     let _ = std::fs::remove_file(&path);
@@ -279,7 +281,7 @@ fn reload_hosts_clears_pending_vault_write_flag() {
     app.pending_vault_config_write = true;
     let tmpdir = std::env::temp_dir();
     let path = tmpdir.join("purple_test_reload_flush.ini");
-    app.config.path = path.clone();
+    app.hosts_state.ssh_config.path = path.clone();
     app.reload_hosts();
     assert!(!app.pending_vault_config_write);
     let _ = std::fs::remove_file(&path);
@@ -353,15 +355,19 @@ Host staging
   HostName staging.example.com
 ";
     let app = make_app(content);
-    assert_eq!(app.display_list.len(), 4);
-    assert!(matches!(&app.display_list[0], HostListItem::GroupHeader(s) if s == "Production"));
+    assert_eq!(app.hosts_state.display_list.len(), 4);
+    assert!(
+        matches!(&app.hosts_state.display_list[0], HostListItem::GroupHeader(s) if s == "Production")
+    );
     assert!(matches!(
-        &app.display_list[1],
+        &app.hosts_state.display_list[1],
         HostListItem::Host { index: 0 }
     ));
-    assert!(matches!(&app.display_list[2], HostListItem::GroupHeader(s) if s == "Staging"));
+    assert!(
+        matches!(&app.hosts_state.display_list[2], HostListItem::GroupHeader(s) if s == "Staging")
+    );
     assert!(matches!(
-        &app.display_list[3],
+        &app.hosts_state.display_list[3],
         HostListItem::Host { index: 1 }
     ));
 }
@@ -376,9 +382,9 @@ Host nogroup
 ";
     let app = make_app(content);
     // Blank line between comment and host means no group header
-    assert_eq!(app.display_list.len(), 1);
+    assert_eq!(app.hosts_state.display_list.len(), 1);
     assert!(matches!(
-        &app.display_list[0],
+        &app.hosts_state.display_list[0],
         HostListItem::Host { index: 0 }
     ));
 }
@@ -420,16 +426,29 @@ Host vultr-app
   # purple:provider vultr:789
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Provider;
+    app.hosts_state.group_by = GroupBy::Provider;
     app.apply_sort();
 
     // Should have: DigitalOcean header, 2 hosts, Vultr header, 1 host
-    assert_eq!(app.display_list.len(), 5);
-    assert!(matches!(&app.display_list[0], HostListItem::GroupHeader(s) if s == "DigitalOcean"));
-    assert!(matches!(&app.display_list[1], HostListItem::Host { .. }));
-    assert!(matches!(&app.display_list[2], HostListItem::Host { .. }));
-    assert!(matches!(&app.display_list[3], HostListItem::GroupHeader(s) if s == "Vultr"));
-    assert!(matches!(&app.display_list[4], HostListItem::Host { .. }));
+    assert_eq!(app.hosts_state.display_list.len(), 5);
+    assert!(
+        matches!(&app.hosts_state.display_list[0], HostListItem::GroupHeader(s) if s == "DigitalOcean")
+    );
+    assert!(matches!(
+        &app.hosts_state.display_list[1],
+        HostListItem::Host { .. }
+    ));
+    assert!(matches!(
+        &app.hosts_state.display_list[2],
+        HostListItem::Host { .. }
+    ));
+    assert!(
+        matches!(&app.hosts_state.display_list[3], HostListItem::GroupHeader(s) if s == "Vultr")
+    );
+    assert!(matches!(
+        &app.hosts_state.display_list[4],
+        HostListItem::Host { .. }
+    ));
 }
 
 #[test]
@@ -443,15 +462,23 @@ Host do-web
   # purple:provider digitalocean:123
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Provider;
+    app.hosts_state.group_by = GroupBy::Provider;
     app.apply_sort();
 
     // manual first (no header), then DigitalOcean header + do-web
-    assert_eq!(app.display_list.len(), 3);
+    assert_eq!(app.hosts_state.display_list.len(), 3);
     // No header before the manual host
-    assert!(matches!(&app.display_list[0], HostListItem::Host { .. }));
-    assert!(matches!(&app.display_list[1], HostListItem::GroupHeader(s) if s == "DigitalOcean"));
-    assert!(matches!(&app.display_list[2], HostListItem::Host { .. }));
+    assert!(matches!(
+        &app.hosts_state.display_list[0],
+        HostListItem::Host { .. }
+    ));
+    assert!(
+        matches!(&app.hosts_state.display_list[1], HostListItem::GroupHeader(s) if s == "DigitalOcean")
+    );
+    assert!(matches!(
+        &app.hosts_state.display_list[2],
+        HostListItem::Host { .. }
+    ));
 }
 
 #[test]
@@ -466,16 +493,18 @@ Host do-alpha
   # purple:provider digitalocean:2
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Provider;
-    app.sort_mode = SortMode::AlphaAlias;
+    app.hosts_state.group_by = GroupBy::Provider;
+    app.hosts_state.sort_mode = SortMode::AlphaAlias;
     app.apply_sort();
 
     // DigitalOcean header + sorted hosts
-    assert_eq!(app.display_list.len(), 3);
-    assert!(matches!(&app.display_list[0], HostListItem::GroupHeader(s) if s == "DigitalOcean"));
+    assert_eq!(app.hosts_state.display_list.len(), 3);
+    assert!(
+        matches!(&app.hosts_state.display_list[0], HostListItem::GroupHeader(s) if s == "DigitalOcean")
+    );
     // First host should be do-alpha (alphabetical)
-    if let HostListItem::Host { index } = &app.display_list[1] {
-        assert_eq!(app.hosts[*index].alias, "do-alpha");
+    if let HostListItem::Host { index } = &app.hosts_state.display_list[1] {
+        assert_eq!(app.hosts_state.list[*index].alias, "do-alpha");
     } else {
         panic!("Expected Host item");
     }
@@ -518,21 +547,22 @@ Host vultr-app
   # purple:provider vultr:456
 ";
     let mut app = make_app(content);
-    app.sort_mode = SortMode::AlphaAlias;
+    app.hosts_state.sort_mode = SortMode::AlphaAlias;
 
     // Enable grouping
-    app.group_by = GroupBy::Provider;
+    app.hosts_state.group_by = GroupBy::Provider;
     app.apply_sort();
-    let grouped_len = app.display_list.len();
+    let grouped_len = app.hosts_state.display_list.len();
     assert!(grouped_len > 2); // Has headers
 
     // Disable grouping
-    app.group_by = GroupBy::None;
+    app.hosts_state.group_by = GroupBy::None;
     app.apply_sort();
     // Should be flat: just hosts, no headers
-    assert_eq!(app.display_list.len(), 2);
+    assert_eq!(app.hosts_state.display_list.len(), 2);
     assert!(
-        app.display_list
+        app.hosts_state
+            .display_list
             .iter()
             .all(|item| matches!(item, HostListItem::Host { .. }))
     );
@@ -554,22 +584,33 @@ Host dev1
   # purple:tags staging
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("production".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("production".to_string());
     app.apply_sort();
     // dev1 ungrouped first, then production header + 2 hosts
-    assert_eq!(app.display_list.len(), 4);
-    assert!(matches!(&app.display_list[0], HostListItem::Host { .. }));
-    assert!(matches!(&app.display_list[1], HostListItem::GroupHeader(s) if s == "production"));
-    assert!(matches!(&app.display_list[2], HostListItem::Host { .. }));
-    assert!(matches!(&app.display_list[3], HostListItem::Host { .. }));
+    assert_eq!(app.hosts_state.display_list.len(), 4);
+    assert!(matches!(
+        &app.hosts_state.display_list[0],
+        HostListItem::Host { .. }
+    ));
+    assert!(
+        matches!(&app.hosts_state.display_list[1], HostListItem::GroupHeader(s) if s == "production")
+    );
+    assert!(matches!(
+        &app.hosts_state.display_list[2],
+        HostListItem::Host { .. }
+    ));
+    assert!(matches!(
+        &app.hosts_state.display_list[3],
+        HostListItem::Host { .. }
+    ));
     // Verify config order preserved within group
-    if let HostListItem::Host { index } = &app.display_list[2] {
-        assert_eq!(app.hosts[*index].alias, "web1");
+    if let HostListItem::Host { index } = &app.hosts_state.display_list[2] {
+        assert_eq!(app.hosts_state.list[*index].alias, "web1");
     } else {
         panic!("Expected Host item at position 2");
     }
-    if let HostListItem::Host { index } = &app.display_list[3] {
-        assert_eq!(app.hosts[*index].alias, "web2");
+    if let HostListItem::Host { index } = &app.hosts_state.display_list[3] {
+        assert_eq!(app.hosts_state.list[*index].alias, "web2");
     } else {
         panic!("Expected Host item at position 3");
     }
@@ -586,11 +627,12 @@ Host web2
   HostName 2.2.2.2
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("production".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("production".to_string());
     app.apply_sort();
-    assert_eq!(app.display_list.len(), 2);
+    assert_eq!(app.hosts_state.display_list.len(), 2);
     assert!(
-        app.display_list
+        app.hosts_state
+            .display_list
             .iter()
             .all(|item| matches!(item, HostListItem::Host { .. }))
     );
@@ -608,10 +650,12 @@ Host web2
   # purple:tags production
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("production".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("production".to_string());
     app.apply_sort();
-    assert_eq!(app.display_list.len(), 3);
-    assert!(matches!(&app.display_list[0], HostListItem::GroupHeader(s) if s == "production"));
+    assert_eq!(app.hosts_state.display_list.len(), 3);
+    assert!(
+        matches!(&app.hosts_state.display_list[0], HostListItem::GroupHeader(s) if s == "production")
+    );
 }
 
 #[test]
@@ -626,20 +670,25 @@ Host dev1
   # purple:tags staging
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("production".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("production".to_string());
     app.apply_sort();
-    assert_eq!(app.display_list.len(), 3);
-    assert!(matches!(&app.display_list[0], HostListItem::Host { .. }));
-    assert!(matches!(&app.display_list[1], HostListItem::GroupHeader(s) if s == "production"));
+    assert_eq!(app.hosts_state.display_list.len(), 3);
+    assert!(matches!(
+        &app.hosts_state.display_list[0],
+        HostListItem::Host { .. }
+    ));
+    assert!(
+        matches!(&app.hosts_state.display_list[1], HostListItem::GroupHeader(s) if s == "production")
+    );
 }
 
 #[test]
 fn group_by_tag_empty_host_list() {
     let content = "";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("production".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("production".to_string());
     app.apply_sort();
-    assert!(app.display_list.is_empty());
+    assert!(app.hosts_state.display_list.is_empty());
 }
 
 #[test]
@@ -654,13 +703,18 @@ Host web2
   # purple:tags production
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("production".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("production".to_string());
     app.apply_sort();
-    assert_eq!(app.display_list.len(), 3);
-    assert!(matches!(&app.display_list[0], HostListItem::Host { .. }));
-    assert!(matches!(&app.display_list[1], HostListItem::GroupHeader(s) if s == "production"));
-    if let HostListItem::Host { index } = &app.display_list[2] {
-        assert_eq!(app.hosts[*index].alias, "web2");
+    assert_eq!(app.hosts_state.display_list.len(), 3);
+    assert!(matches!(
+        &app.hosts_state.display_list[0],
+        HostListItem::Host { .. }
+    ));
+    assert!(
+        matches!(&app.hosts_state.display_list[1], HostListItem::GroupHeader(s) if s == "production")
+    );
+    if let HostListItem::Host { index } = &app.hosts_state.display_list[2] {
+        assert_eq!(app.hosts_state.list[*index].alias, "web2");
     } else {
         panic!("Expected Host item");
     }
@@ -678,13 +732,15 @@ Host alpha
   # purple:tags production
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("production".to_string());
-    app.sort_mode = SortMode::AlphaAlias;
+    app.hosts_state.group_by = GroupBy::Tag("production".to_string());
+    app.hosts_state.sort_mode = SortMode::AlphaAlias;
     app.apply_sort();
-    assert_eq!(app.display_list.len(), 3);
-    assert!(matches!(&app.display_list[0], HostListItem::GroupHeader(s) if s == "production"));
-    if let HostListItem::Host { index } = &app.display_list[1] {
-        assert_eq!(app.hosts[*index].alias, "alpha");
+    assert_eq!(app.hosts_state.display_list.len(), 3);
+    assert!(
+        matches!(&app.hosts_state.display_list[0], HostListItem::GroupHeader(s) if s == "production")
+    );
+    if let HostListItem::Host { index } = &app.hosts_state.display_list[1] {
+        assert_eq!(app.hosts_state.list[*index].alias, "alpha");
     } else {
         panic!("Expected Host item");
     }
@@ -704,21 +760,23 @@ Host bravo
   # purple:tags production
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("production".to_string());
-    app.sort_mode = SortMode::AlphaAlias;
+    app.hosts_state.group_by = GroupBy::Tag("production".to_string());
+    app.hosts_state.sort_mode = SortMode::AlphaAlias;
     app.apply_sort();
-    assert_eq!(app.display_list.len(), 4);
-    if let HostListItem::Host { index } = &app.display_list[0] {
-        assert_eq!(app.hosts[*index].alias, "alpha");
+    assert_eq!(app.hosts_state.display_list.len(), 4);
+    if let HostListItem::Host { index } = &app.hosts_state.display_list[0] {
+        assert_eq!(app.hosts_state.list[*index].alias, "alpha");
     } else {
         panic!("Expected Host item");
     }
-    if let HostListItem::Host { index } = &app.display_list[1] {
-        assert_eq!(app.hosts[*index].alias, "charlie");
+    if let HostListItem::Host { index } = &app.hosts_state.display_list[1] {
+        assert_eq!(app.hosts_state.list[*index].alias, "charlie");
     } else {
         panic!("Expected Host item");
     }
-    assert!(matches!(&app.display_list[2], HostListItem::GroupHeader(s) if s == "production"));
+    assert!(
+        matches!(&app.hosts_state.display_list[2], HostListItem::GroupHeader(s) if s == "production")
+    );
 }
 
 #[test]
@@ -735,15 +793,18 @@ Host web2
   # purple:provider digitalocean:123
 ";
     let app = make_app(content);
-    let original_len = app.config.elements.len();
+    let original_len = app.hosts_state.ssh_config.elements.len();
 
     let mut app2 = make_app(content);
-    app2.group_by = GroupBy::Tag("production".to_string());
+    app2.hosts_state.group_by = GroupBy::Tag("production".to_string());
     app2.apply_sort();
 
     // Config elements must be identical — grouping is display-only
-    assert_eq!(app.config.elements.len(), app2.config.elements.len());
-    assert_eq!(original_len, app2.config.elements.len());
+    assert_eq!(
+        app.hosts_state.ssh_config.elements.len(),
+        app2.hosts_state.ssh_config.elements.len()
+    );
+    assert_eq!(original_len, app2.hosts_state.ssh_config.elements.len());
 }
 
 #[test]
@@ -759,16 +820,16 @@ Host dev1
   # purple:tags staging
 ";
     let mut app = make_app(content);
-    let original_len = app.config.elements.len();
+    let original_len = app.hosts_state.ssh_config.elements.len();
 
-    app.group_by = GroupBy::Tag("production".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("production".to_string());
     app.apply_sort();
-    app.group_by = GroupBy::Provider;
+    app.hosts_state.group_by = GroupBy::Provider;
     app.apply_sort();
-    app.group_by = GroupBy::None;
+    app.hosts_state.group_by = GroupBy::None;
     app.apply_sort();
 
-    assert_eq!(app.config.elements.len(), original_len);
+    assert_eq!(app.hosts_state.ssh_config.elements.len(), original_len);
 }
 
 #[test]
@@ -786,15 +847,28 @@ Host vultr-app
   # purple:provider vultr:789
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Provider;
+    app.hosts_state.group_by = GroupBy::Provider;
     app.apply_sort();
 
-    assert_eq!(app.display_list.len(), 5);
-    assert!(matches!(&app.display_list[0], HostListItem::Host { .. }));
-    assert!(matches!(&app.display_list[1], HostListItem::GroupHeader(s) if s == "DigitalOcean"));
-    assert!(matches!(&app.display_list[2], HostListItem::Host { .. }));
-    assert!(matches!(&app.display_list[3], HostListItem::GroupHeader(s) if s == "Vultr"));
-    assert!(matches!(&app.display_list[4], HostListItem::Host { .. }));
+    assert_eq!(app.hosts_state.display_list.len(), 5);
+    assert!(matches!(
+        &app.hosts_state.display_list[0],
+        HostListItem::Host { .. }
+    ));
+    assert!(
+        matches!(&app.hosts_state.display_list[1], HostListItem::GroupHeader(s) if s == "DigitalOcean")
+    );
+    assert!(matches!(
+        &app.hosts_state.display_list[2],
+        HostListItem::Host { .. }
+    ));
+    assert!(
+        matches!(&app.hosts_state.display_list[3], HostListItem::GroupHeader(s) if s == "Vultr")
+    );
+    assert!(matches!(
+        &app.hosts_state.display_list[4],
+        HostListItem::Host { .. }
+    ));
 }
 
 #[test]
@@ -809,14 +883,16 @@ Host do-alpha
   # purple:provider digitalocean:2
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Provider;
-    app.sort_mode = SortMode::AlphaAlias;
+    app.hosts_state.group_by = GroupBy::Provider;
+    app.hosts_state.sort_mode = SortMode::AlphaAlias;
     app.apply_sort();
 
-    assert_eq!(app.display_list.len(), 3);
-    assert!(matches!(&app.display_list[0], HostListItem::GroupHeader(s) if s == "DigitalOcean"));
-    if let HostListItem::Host { index } = &app.display_list[1] {
-        assert_eq!(app.hosts[*index].alias, "do-alpha");
+    assert_eq!(app.hosts_state.display_list.len(), 3);
+    assert!(
+        matches!(&app.hosts_state.display_list[0], HostListItem::GroupHeader(s) if s == "DigitalOcean")
+    );
+    if let HostListItem::Host { index } = &app.hosts_state.display_list[1] {
+        assert_eq!(app.hosts_state.list[*index].alias, "do-alpha");
     } else {
         panic!("Expected Host item");
     }
@@ -1592,8 +1668,9 @@ fn select_host_by_alias_search_mode_not_in_results() {
 
 fn make_provider_app() -> App {
     let mut app = make_app("Host test\n  HostName test.com\n");
-    app.provider_config = crate::providers::config::ProviderConfig::default();
-    app.provider_config
+    app.providers.config = crate::providers::config::ProviderConfig::default();
+    app.providers
+        .config
         .set_section(crate::providers::config::ProviderSection {
             provider: "digitalocean".to_string(),
             token: "test-token".to_string(),
@@ -1616,7 +1693,7 @@ fn make_provider_app() -> App {
 #[test]
 fn test_apply_sync_result_no_config() {
     let mut app = make_app("Host test\n  HostName test.com\n");
-    app.provider_config = crate::providers::config::ProviderConfig::default();
+    app.providers.config = crate::providers::config::ProviderConfig::default();
     let (msg, is_err, total, _, _, _) = app.apply_sync_result("digitalocean", vec![], false);
     assert!(is_err);
     assert_eq!(total, 0);
@@ -1662,7 +1739,7 @@ fn test_apply_sync_result_with_hosts_returns_total() {
 fn test_apply_sync_result_write_failure_preserves_total() {
     let mut app = make_provider_app();
     // Point config to a non-writable path so write() fails
-    app.config.path = PathBuf::from("/dev/null/impossible");
+    app.hosts_state.ssh_config.path = PathBuf::from("/dev/null/impossible");
     let hosts = vec![
         crate::providers::ProviderHost::new(
             "s1".to_string(),
@@ -1688,7 +1765,8 @@ fn test_apply_sync_result_unknown_provider() {
     let mut app = make_provider_app();
     // Configure a section for the unknown provider name so it passes
     // the config check but fails on get_provider()
-    app.provider_config
+    app.providers
+        .config
         .set_section(crate::providers::config::ProviderSection {
             provider: "nonexistent".to_string(),
             token: "tok".to_string(),
@@ -1715,7 +1793,7 @@ fn test_apply_sync_result_unknown_provider() {
 fn test_sync_history_cleared_on_provider_remove() {
     let mut app = make_provider_app();
     // Simulate a completed sync
-    app.sync_history.insert(
+    app.providers.sync_history.insert(
         "digitalocean".to_string(),
         SyncRecord {
             timestamp: 100,
@@ -1723,20 +1801,20 @@ fn test_sync_history_cleared_on_provider_remove() {
             is_error: false,
         },
     );
-    assert!(app.sync_history.contains_key("digitalocean"));
+    assert!(app.providers.sync_history.contains_key("digitalocean"));
 
     // Simulate provider remove (same as handler.rs 'd' key path)
-    app.provider_config.remove_section("digitalocean");
-    app.sync_history.remove("digitalocean");
+    app.providers.config.remove_section("digitalocean");
+    app.providers.sync_history.remove("digitalocean");
 
-    assert!(!app.sync_history.contains_key("digitalocean"));
+    assert!(!app.providers.sync_history.contains_key("digitalocean"));
 }
 
 #[test]
 fn test_sync_history_overwrite_replaces_error_with_success() {
     let mut app = make_app("Host test\n  HostName test.com\n");
     // First sync fails
-    app.sync_history.insert(
+    app.providers.sync_history.insert(
         "hetzner".to_string(),
         SyncRecord {
             timestamp: 100,
@@ -1745,7 +1823,7 @@ fn test_sync_history_overwrite_replaces_error_with_success() {
         },
     );
     // Second sync succeeds
-    app.sync_history.insert(
+    app.providers.sync_history.insert(
         "hetzner".to_string(),
         SyncRecord {
             timestamp: 200,
@@ -1753,7 +1831,7 @@ fn test_sync_history_overwrite_replaces_error_with_success() {
             is_error: false,
         },
     );
-    let record = app.sync_history.get("hetzner").unwrap();
+    let record = app.providers.sync_history.get("hetzner").unwrap();
     assert_eq!(record.timestamp, 200);
     assert!(!record.is_error);
     assert_eq!(record.message, "5 servers");
@@ -2405,7 +2483,10 @@ fn provider_form_visible_fields_vault_addr_follows_role_across_providers() {
 #[test]
 fn test_host_entries_include_askpass() {
     let app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
-    assert_eq!(app.hosts[0].askpass, Some("keychain".to_string()));
+    assert_eq!(
+        app.hosts_state.list[0].askpass,
+        Some("keychain".to_string())
+    );
 }
 
 #[test]
@@ -2413,7 +2494,7 @@ fn test_host_entries_vault_askpass() {
     let app =
         make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass vault:secret/ssh#pass\n");
     assert_eq!(
-        app.hosts[0].askpass,
+        app.hosts_state.list[0].askpass,
         Some("vault:secret/ssh#pass".to_string())
     );
 }
@@ -2421,7 +2502,7 @@ fn test_host_entries_vault_askpass() {
 #[test]
 fn test_host_entries_no_askpass() {
     let app = make_app("Host myserver\n  HostName 10.0.0.1\n");
-    assert_eq!(app.hosts[0].askpass, None);
+    assert_eq!(app.hosts_state.list[0].askpass, None);
 }
 
 // --- Validate with askpass ---
@@ -2472,11 +2553,13 @@ fn test_add_host_config_mutation_with_askpass() {
         askpass: Some("keychain".to_string()),
         ..Default::default()
     };
-    app.config.add_host(&entry);
-    app.config.set_host_askpass("newhost", "keychain");
-    let serialized = app.config.serialize();
+    app.hosts_state.ssh_config.add_host(&entry);
+    app.hosts_state
+        .ssh_config
+        .set_host_askpass("newhost", "keychain");
+    let serialized = app.hosts_state.ssh_config.serialize();
     assert!(serialized.contains("purple:askpass keychain"));
-    let entries = app.config.host_entries();
+    let entries = app.hosts_state.ssh_config.host_entries();
     let found = entries.iter().find(|e| e.alias == "newhost").unwrap();
     assert_eq!(found.askpass, Some("keychain".to_string()));
 }
@@ -2490,10 +2573,11 @@ fn test_add_host_config_mutation_with_vault() {
         askpass: Some("vault:secret/ssh#pass".to_string()),
         ..Default::default()
     };
-    app.config.add_host(&entry);
-    app.config
+    app.hosts_state.ssh_config.add_host(&entry);
+    app.hosts_state
+        .ssh_config
         .set_host_askpass("vaulthost", "vault:secret/ssh#pass");
-    let serialized = app.config.serialize();
+    let serialized = app.hosts_state.ssh_config.serialize();
     assert!(serialized.contains("purple:askpass vault:secret/ssh#pass"));
 }
 
@@ -2505,9 +2589,9 @@ fn test_add_host_config_mutation_without_askpass() {
         hostname: "1.2.3.4".to_string(),
         ..Default::default()
     };
-    app.config.add_host(&entry);
+    app.hosts_state.ssh_config.add_host(&entry);
     // Don't call set_host_askpass when None — mirrors add_host_from_form logic
-    let serialized = app.config.serialize();
+    let serialized = app.hosts_state.ssh_config.serialize();
     assert!(
         !serialized.contains("purple:askpass"),
         "No askpass comment when None"
@@ -2641,15 +2725,15 @@ fn test_add_host_from_form_sets_vault_ssh_and_certificate_file() {
         bom: false,
     };
     let mut app = App::new(config);
-    app.form.alias = "vaulthost".to_string();
-    app.form.hostname = "10.0.0.1".to_string();
-    app.form.vault_ssh = "ssh/sign/engineer".to_string();
+    app.forms.host.alias = "vaulthost".to_string();
+    app.forms.host.hostname = "10.0.0.1".to_string();
+    app.forms.host.vault_ssh = "ssh/sign/engineer".to_string();
     let result = app.add_host_from_form();
     assert!(result.is_ok(), "add_host_from_form failed: {:?}", result);
-    let entries = app.config.host_entries();
+    let entries = app.hosts_state.ssh_config.host_entries();
     let host = entries.iter().find(|e| e.alias == "vaulthost").unwrap();
     assert_eq!(host.vault_ssh.as_deref(), Some("ssh/sign/engineer"));
-    let serialized = app.config.serialize();
+    let serialized = app.hosts_state.ssh_config.serialize();
     assert!(
         serialized.contains("CertificateFile"),
         "should have CertificateFile: {}",
@@ -2668,18 +2752,22 @@ fn test_add_host_from_form_sets_vault_ssh_and_certificate_file() {
 #[test]
 fn test_config_set_host_askpass_adds() {
     let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n");
-    app.config.set_host_askpass("myserver", "bw:my-item");
-    let serialized = app.config.serialize();
+    app.hosts_state
+        .ssh_config
+        .set_host_askpass("myserver", "bw:my-item");
+    let serialized = app.hosts_state.ssh_config.serialize();
     assert!(serialized.contains("purple:askpass bw:my-item"));
-    let entries = app.config.host_entries();
+    let entries = app.hosts_state.ssh_config.host_entries();
     assert_eq!(entries[0].askpass, Some("bw:my-item".to_string()));
 }
 
 #[test]
 fn test_config_set_host_askpass_changes() {
     let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
-    app.config.set_host_askpass("myserver", "pass:ssh/myserver");
-    let serialized = app.config.serialize();
+    app.hosts_state
+        .ssh_config
+        .set_host_askpass("myserver", "pass:ssh/myserver");
+    let serialized = app.hosts_state.ssh_config.serialize();
     assert!(!serialized.contains("keychain"));
     assert!(serialized.contains("purple:askpass pass:ssh/myserver"));
 }
@@ -2687,10 +2775,10 @@ fn test_config_set_host_askpass_changes() {
 #[test]
 fn test_config_set_host_askpass_removes() {
     let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
-    app.config.set_host_askpass("myserver", "");
-    let serialized = app.config.serialize();
+    app.hosts_state.ssh_config.set_host_askpass("myserver", "");
+    let serialized = app.hosts_state.ssh_config.serialize();
     assert!(!serialized.contains("purple:askpass"));
-    let entries = app.config.host_entries();
+    let entries = app.hosts_state.ssh_config.host_entries();
     assert_eq!(entries[0].askpass, None);
 }
 
@@ -2706,10 +2794,11 @@ fn test_edit_host_from_form_sets_askpass_in_config() {
         askpass: Some("vault:secret/ssh#pass".to_string()),
         ..Default::default()
     };
-    app.config.update_host("myserver", &entry);
-    app.config
+    app.hosts_state.ssh_config.update_host("myserver", &entry);
+    app.hosts_state
+        .ssh_config
         .set_host_askpass("myserver", entry.askpass.as_deref().unwrap_or(""));
-    let serialized = app.config.serialize();
+    let serialized = app.hosts_state.ssh_config.serialize();
     assert!(serialized.contains("purple:askpass vault:secret/ssh#pass"));
 }
 
@@ -2727,13 +2816,13 @@ fn test_edit_host_sets_vault_ssh_and_certificate_file() {
         bom: false,
     };
     let mut app = App::new(config);
-    let host = app.hosts[0].clone();
-    app.form = HostForm::from_entry(&host, Default::default());
-    app.form.vault_ssh = "ssh/sign/engineer".to_string();
+    let host = app.hosts_state.list[0].clone();
+    app.forms.host = HostForm::from_entry(&host, Default::default());
+    app.forms.host.vault_ssh = "ssh/sign/engineer".to_string();
 
     let result = app.edit_host_from_form("myserver");
     assert!(result.is_ok(), "edit_host_from_form failed: {:?}", result);
-    let serialized = app.config.serialize();
+    let serialized = app.hosts_state.ssh_config.serialize();
     assert!(
         serialized.contains("purple:vault-ssh ssh/sign/engineer"),
         "should have vault-ssh: {}",
@@ -2769,14 +2858,14 @@ fn test_edit_host_preserves_custom_certificate_file_with_vault_role() {
         bom: false,
     };
     let mut app = App::new(config);
-    let host = app.hosts[0].clone();
-    app.form = HostForm::from_entry(&host, Default::default());
+    let host = app.hosts_state.list[0].clone();
+    app.forms.host = HostForm::from_entry(&host, Default::default());
     // Change something unrelated so the form actually mutates.
-    app.form.user = "admin".to_string();
+    app.forms.host.user = "admin".to_string();
 
     let result = app.edit_host_from_form("myserver");
     assert!(result.is_ok(), "edit_host_from_form failed: {:?}", result);
-    let serialized = app.config.serialize();
+    let serialized = app.hosts_state.ssh_config.serialize();
     assert!(
         serialized.contains("CertificateFile /etc/ssh/my-custom-cert.pub"),
         "custom CertificateFile must be preserved across edit: {}",
@@ -2804,13 +2893,13 @@ fn test_edit_host_clears_vault_ssh_removes_certificate_file() {
         bom: false,
     };
     let mut app = App::new(config);
-    let host = app.hosts[0].clone();
-    app.form = HostForm::from_entry(&host, Default::default());
-    app.form.vault_ssh = String::new();
+    let host = app.hosts_state.list[0].clone();
+    app.forms.host = HostForm::from_entry(&host, Default::default());
+    app.forms.host.vault_ssh = String::new();
 
     let result = app.edit_host_from_form("myserver");
     assert!(result.is_ok(), "edit_host_from_form failed: {:?}", result);
-    let serialized = app.config.serialize();
+    let serialized = app.hosts_state.ssh_config.serialize();
     assert!(
         !serialized.contains("vault-ssh"),
         "vault-ssh should be removed: {}",
@@ -2829,12 +2918,12 @@ fn test_edit_pattern_from_form_finds_multi_host_pattern() {
     // Multi-host patterns like "Host web-* db-*" have spaces in the pattern.
     // edit_host_from_form must find them via has_host_block, not has_host.
     let mut app = make_app("Host web-* db-*\n  User deploy\n");
-    assert_eq!(app.patterns.len(), 1);
-    assert_eq!(app.patterns[0].pattern, "web-* db-*");
+    assert_eq!(app.hosts_state.patterns.len(), 1);
+    assert_eq!(app.hosts_state.patterns[0].pattern, "web-* db-*");
 
-    app.form = HostForm::from_pattern_entry(&app.patterns[0]);
-    assert!(app.form.is_pattern);
-    app.form.user = "admin".to_string();
+    app.forms.host = HostForm::from_pattern_entry(&app.hosts_state.patterns[0]);
+    assert!(app.forms.host.is_pattern);
+    app.forms.host.user = "admin".to_string();
 
     let result = app.edit_host_from_form("web-* db-*");
     assert!(result.is_ok(), "expected success, got: {:?}", result);
@@ -2843,9 +2932,9 @@ fn test_edit_pattern_from_form_finds_multi_host_pattern() {
 #[test]
 fn test_edit_single_pattern_from_form() {
     let mut app = make_app("Host *.example.com\n  User deploy\n");
-    assert_eq!(app.patterns.len(), 1);
-    app.form = HostForm::from_pattern_entry(&app.patterns[0]);
-    app.form.user = "admin".to_string();
+    assert_eq!(app.hosts_state.patterns.len(), 1);
+    app.forms.host = HostForm::from_pattern_entry(&app.hosts_state.patterns[0]);
+    app.forms.host.user = "admin".to_string();
 
     let result = app.edit_host_from_form("*.example.com");
     assert!(result.is_ok(), "expected success, got: {:?}", result);
@@ -2855,13 +2944,14 @@ fn test_edit_single_pattern_from_form() {
 fn test_edit_pattern_duplicate_detection() {
     let mut app = make_app("Host web-* db-*\n  User deploy\nHost cache-*\n  User cache\n");
     let pat = app
+        .hosts_state
         .patterns
         .iter()
         .find(|p| p.pattern == "web-* db-*")
         .unwrap()
         .clone();
-    app.form = HostForm::from_pattern_entry(&pat);
-    app.form.alias = "cache-*".to_string();
+    app.forms.host = HostForm::from_pattern_entry(&pat);
+    app.forms.host.alias = "cache-*".to_string();
     let result = app.edit_host_from_form("web-* db-*");
     assert_eq!(result, Err("Pattern 'cache-*' already exists.".to_string()));
 }
@@ -2869,9 +2959,9 @@ fn test_edit_pattern_duplicate_detection() {
 #[test]
 fn test_add_pattern_duplicate_detection() {
     let mut app = make_app("Host web-* db-*\n  User deploy\n");
-    app.form = HostForm::new_pattern();
-    app.form.alias = "web-* db-*".to_string();
-    app.form.user = "admin".to_string();
+    app.forms.host = HostForm::new_pattern();
+    app.forms.host.alias = "web-* db-*".to_string();
+    app.forms.host.user = "admin".to_string();
     let result = app.add_host_from_form();
     assert_eq!(
         result,
@@ -2884,7 +2974,7 @@ fn test_add_pattern_duplicate_detection() {
 #[test]
 fn test_pending_connect_with_askpass() {
     let app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
-    let host = &app.hosts[0];
+    let host = &app.hosts_state.list[0];
     assert_eq!(host.askpass, Some("keychain".to_string()));
     // Simulating what handle_host_list does
     let pending = (host.alias.clone(), host.askpass.clone());
@@ -2895,7 +2985,7 @@ fn test_pending_connect_with_askpass() {
 #[test]
 fn test_pending_connect_without_askpass() {
     let app = make_app("Host myserver\n  HostName 10.0.0.1\n");
-    let host = &app.hosts[0];
+    let host = &app.hosts_state.list[0];
     let pending = (host.alias.clone(), host.askpass.clone());
     assert_eq!(pending.0, "myserver");
     assert_eq!(pending.1, None);
@@ -2968,22 +3058,24 @@ fn test_to_entry_askpass_long_value() {
 fn test_edit_askpass_rollback_restores_old_source() {
     // Simulate the rollback logic from edit_host_from_form
     let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n  # purple:askpass keychain\n");
-    let old_entry = app.hosts[0].clone();
+    let old_entry = app.hosts_state.list[0].clone();
     assert_eq!(old_entry.askpass, Some("keychain".to_string()));
 
     // Apply new askpass
-    app.config
+    app.hosts_state
+        .ssh_config
         .set_host_askpass("myserver", "vault:secret/ssh#pw");
     assert_eq!(
-        app.config.host_entries()[0].askpass,
+        app.hosts_state.ssh_config.host_entries()[0].askpass,
         Some("vault:secret/ssh#pw".to_string())
     );
 
     // Simulate rollback (write failed)
-    app.config
+    app.hosts_state
+        .ssh_config
         .set_host_askpass(&old_entry.alias, old_entry.askpass.as_deref().unwrap_or(""));
     assert_eq!(
-        app.config.host_entries()[0].askpass,
+        app.hosts_state.ssh_config.host_entries()[0].askpass,
         Some("keychain".to_string())
     );
 }
@@ -2996,27 +3088,32 @@ fn test_edit_vault_addr_rollback_restores_old_value() {
     let mut app = make_app(
         "Host myserver\n  HostName 10.0.0.1\n  # purple:vault-ssh ssh-client-signer/sign/engineer\n  # purple:vault-addr http://old:8200\n",
     );
-    let old_entry = app.hosts[0].clone();
+    let old_entry = app.hosts_state.list[0].clone();
     assert_eq!(old_entry.vault_addr.as_deref(), Some("http://old:8200"));
 
     // Apply a new vault_addr (successful in-memory mutation).
     assert!(
-        app.config
+        app.hosts_state
+            .ssh_config
             .set_host_vault_addr("myserver", "http://new:8200")
     );
     assert_eq!(
-        app.config.host_entries()[0].vault_addr.as_deref(),
+        app.hosts_state.ssh_config.host_entries()[0]
+            .vault_addr
+            .as_deref(),
         Some("http://new:8200")
     );
 
     // Simulate rollback (write failed). This is the exact call the
     // edit_host_from_form rollback block makes.
-    let _ = app.config.set_host_vault_addr(
+    let _ = app.hosts_state.ssh_config.set_host_vault_addr(
         &old_entry.alias,
         old_entry.vault_addr.as_deref().unwrap_or(""),
     );
     assert_eq!(
-        app.config.host_entries()[0].vault_addr.as_deref(),
+        app.hosts_state.ssh_config.host_entries()[0]
+            .vault_addr
+            .as_deref(),
         Some("http://old:8200")
     );
 }
@@ -3027,42 +3124,52 @@ fn test_edit_vault_addr_rollback_restores_none() {
     let mut app = make_app(
         "Host myserver\n  HostName 10.0.0.1\n  # purple:vault-ssh ssh-client-signer/sign/engineer\n",
     );
-    let old_entry = app.hosts[0].clone();
+    let old_entry = app.hosts_state.list[0].clone();
     assert!(old_entry.vault_addr.is_none());
 
     assert!(
-        app.config
+        app.hosts_state
+            .ssh_config
             .set_host_vault_addr("myserver", "http://new:8200")
     );
     assert_eq!(
-        app.config.host_entries()[0].vault_addr.as_deref(),
+        app.hosts_state.ssh_config.host_entries()[0]
+            .vault_addr
+            .as_deref(),
         Some("http://new:8200")
     );
 
-    let _ = app.config.set_host_vault_addr(
+    let _ = app.hosts_state.ssh_config.set_host_vault_addr(
         &old_entry.alias,
         old_entry.vault_addr.as_deref().unwrap_or(""),
     );
-    assert!(app.config.host_entries()[0].vault_addr.is_none());
+    assert!(
+        app.hosts_state.ssh_config.host_entries()[0]
+            .vault_addr
+            .is_none()
+    );
 }
 
 #[test]
 fn test_edit_askpass_rollback_restores_none() {
     let mut app = make_app("Host myserver\n  HostName 10.0.0.1\n");
-    let old_entry = app.hosts[0].clone();
+    let old_entry = app.hosts_state.list[0].clone();
     assert_eq!(old_entry.askpass, None);
 
     // Apply new askpass
-    app.config.set_host_askpass("myserver", "bw:my-item");
+    app.hosts_state
+        .ssh_config
+        .set_host_askpass("myserver", "bw:my-item");
     assert_eq!(
-        app.config.host_entries()[0].askpass,
+        app.hosts_state.ssh_config.host_entries()[0].askpass,
         Some("bw:my-item".to_string())
     );
 
     // Simulate rollback (write failed)
-    app.config
+    app.hosts_state
+        .ssh_config
         .set_host_askpass(&old_entry.alias, old_entry.askpass.as_deref().unwrap_or(""));
-    assert_eq!(app.config.host_entries()[0].askpass, None);
+    assert_eq!(app.hosts_state.ssh_config.host_entries()[0].askpass, None);
 }
 
 // --- password picker state edge cases ---
@@ -3081,8 +3188,11 @@ fn test_pending_connect_askpass_from_host() {
     let app = make_app(
         "Host s1\n  HostName 1.1.1.1\n  # purple:askpass bw:item1\n\nHost s2\n  HostName 2.2.2.2\n",
     );
-    assert_eq!(app.hosts[0].askpass, Some("bw:item1".to_string()));
-    assert_eq!(app.hosts[1].askpass, None);
+    assert_eq!(
+        app.hosts_state.list[0].askpass,
+        Some("bw:item1".to_string())
+    );
+    assert_eq!(app.hosts_state.list[1].askpass, None);
 }
 
 // --- form field cycling includes askpass ---
@@ -3319,23 +3429,23 @@ Host gamma
   # purple:stale 1711900000
 ";
     let mut app = make_app(config_str);
-    app.sort_mode = SortMode::AlphaAlias;
+    app.hosts_state.sort_mode = SortMode::AlphaAlias;
     app.apply_sort();
 
     // beta (non-stale) should come first, then alpha and gamma (stale, sorted alphabetically)
-    assert_eq!(app.display_list.len(), 3);
-    if let HostListItem::Host { index } = &app.display_list[0] {
-        assert_eq!(app.hosts[*index].alias, "beta");
+    assert_eq!(app.hosts_state.display_list.len(), 3);
+    if let HostListItem::Host { index } = &app.hosts_state.display_list[0] {
+        assert_eq!(app.hosts_state.list[*index].alias, "beta");
     } else {
         panic!("Expected Host item at position 0");
     }
-    if let HostListItem::Host { index } = &app.display_list[1] {
-        assert_eq!(app.hosts[*index].alias, "alpha");
+    if let HostListItem::Host { index } = &app.hosts_state.display_list[1] {
+        assert_eq!(app.hosts_state.list[*index].alias, "alpha");
     } else {
         panic!("Expected Host item at position 1");
     }
-    if let HostListItem::Host { index } = &app.display_list[2] {
-        assert_eq!(app.hosts[*index].alias, "gamma");
+    if let HostListItem::Host { index } = &app.hosts_state.display_list[2] {
+        assert_eq!(app.hosts_state.list[*index].alias, "gamma");
     } else {
         panic!("Expected Host item at position 2");
     }
@@ -3351,7 +3461,7 @@ fn test_apply_sort_selects_first_in_sorted_order() {
     assert_eq!(app.selected_host().unwrap().alias, "charlie");
 
     // Sort alphabetically and reset selection to first sorted
-    app.sort_mode = SortMode::AlphaAlias;
+    app.hosts_state.sort_mode = SortMode::AlphaAlias;
     app.apply_sort();
     app.select_first_host();
 
@@ -3367,7 +3477,7 @@ fn test_apply_sort_preserves_selection_without_reset() {
     );
     assert_eq!(app.selected_host().unwrap().alias, "charlie");
 
-    app.sort_mode = SortMode::AlphaAlias;
+    app.hosts_state.sort_mode = SortMode::AlphaAlias;
     app.apply_sort();
 
     // apply_sort preserves the previously selected host (charlie)
@@ -3386,13 +3496,16 @@ Host do-alpha
   # purple:provider digitalocean:1
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Provider;
-    app.sort_mode = SortMode::AlphaAlias;
+    app.hosts_state.group_by = GroupBy::Provider;
+    app.hosts_state.sort_mode = SortMode::AlphaAlias;
     app.apply_sort();
     app.select_first_host();
 
     // Headers are never selectable; first host is selected instead
-    assert!(matches!(&app.display_list[0], HostListItem::GroupHeader(_)));
+    assert!(matches!(
+        &app.hosts_state.display_list[0],
+        HostListItem::GroupHeader(_)
+    ));
     assert_eq!(app.ui.list_state.selected(), Some(1));
     assert!(app.selected_host().is_some());
 }
@@ -3410,8 +3523,8 @@ Host do-alpha
 ";
     let mut app = make_app(content);
     // GroupBy::None means headers should be skipped
-    app.group_by = GroupBy::None;
-    app.sort_mode = SortMode::AlphaAlias;
+    app.hosts_state.group_by = GroupBy::None;
+    app.hosts_state.sort_mode = SortMode::AlphaAlias;
     app.apply_sort();
     app.select_first_host();
 
@@ -3425,7 +3538,7 @@ fn test_select_first_host_with_hostname_sort() {
     let mut app = make_app(
         "Host srv-a\n  HostName z.com\n\nHost srv-b\n  HostName a.com\n\nHost srv-c\n  HostName m.com\n",
     );
-    app.sort_mode = SortMode::AlphaHostname;
+    app.hosts_state.sort_mode = SortMode::AlphaHostname;
     app.apply_sort();
     app.select_first_host();
 
@@ -3454,8 +3567,14 @@ Host gamma
 
     // Only stale hosts (alpha and gamma) should match
     assert_eq!(app.search.filtered_indices.len(), 2);
-    assert_eq!(app.hosts[app.search.filtered_indices[0]].alias, "alpha");
-    assert_eq!(app.hosts[app.search.filtered_indices[1]].alias, "gamma");
+    assert_eq!(
+        app.hosts_state.list[app.search.filtered_indices[0]].alias,
+        "alpha"
+    );
+    assert_eq!(
+        app.hosts_state.list[app.search.filtered_indices[1]].alias,
+        "gamma"
+    );
 }
 
 #[test]
@@ -3479,8 +3598,14 @@ Host gamma
 
     // Fuzzy match on "stal" should match stale hosts
     assert_eq!(app.search.filtered_indices.len(), 2);
-    assert_eq!(app.hosts[app.search.filtered_indices[0]].alias, "alpha");
-    assert_eq!(app.hosts[app.search.filtered_indices[1]].alias, "gamma");
+    assert_eq!(
+        app.hosts_state.list[app.search.filtered_indices[0]].alias,
+        "alpha"
+    );
+    assert_eq!(
+        app.hosts_state.list[app.search.filtered_indices[1]].alias,
+        "gamma"
+    );
 }
 
 #[test]
@@ -3506,8 +3631,9 @@ Host do-db
         bom: false,
     };
     let mut app = App::new(config);
-    app.provider_config = crate::providers::config::ProviderConfig::default();
-    app.provider_config
+    app.providers.config = crate::providers::config::ProviderConfig::default();
+    app.providers
+        .config
         .set_section(crate::providers::config::ProviderSection {
             provider: "digitalocean".to_string(),
             token: "test-token".to_string(),
@@ -3602,7 +3728,7 @@ Host 10.30.0.*
   User debian
 ";
     let mut app = make_app(config_str);
-    assert_eq!(app.patterns.len(), 1);
+    assert_eq!(app.hosts_state.patterns.len(), 1);
     // Start a search that matches the pattern
     app.start_search();
     app.search.query = Some("10.30".to_string());
@@ -3662,7 +3788,7 @@ Host 10.30.0.*
     // Pattern should match
     assert_eq!(app.search.filtered_pattern_indices.len(), 1);
     assert_eq!(
-        app.patterns[app.search.filtered_pattern_indices[0]].pattern,
+        app.hosts_state.patterns[app.search.filtered_pattern_indices[0]].pattern,
         "10.30.0.*"
     );
 }
@@ -3726,7 +3852,7 @@ Host 10.30.0.*
         "pattern with matching tag should appear in general search"
     );
     assert_eq!(
-        app.patterns[app.search.filtered_pattern_indices[0]].pattern,
+        app.hosts_state.patterns[app.search.filtered_pattern_indices[0]].pattern,
         "10.30.0.*"
     );
 }
@@ -3828,12 +3954,14 @@ Host web2
   # purple:tags production
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("production".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("production".to_string());
     app.apply_sort();
 
     // Both hosts have the tag, stale or not — both in group
-    assert_eq!(app.display_list.len(), 3);
-    assert!(matches!(&app.display_list[0], HostListItem::GroupHeader(s) if s == "production"));
+    assert_eq!(app.hosts_state.display_list.len(), 3);
+    assert!(
+        matches!(&app.hosts_state.display_list[0], HostListItem::GroupHeader(s) if s == "production")
+    );
 }
 
 #[test]
@@ -3850,12 +3978,14 @@ Host manual
   # purple:tags production
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("production".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("production".to_string());
     app.apply_sort();
 
     // Both hosts have user tag "production" — both grouped
-    assert_eq!(app.display_list.len(), 3);
-    assert!(matches!(&app.display_list[0], HostListItem::GroupHeader(s) if s == "production"));
+    assert_eq!(app.hosts_state.display_list.len(), 3);
+    assert!(
+        matches!(&app.hosts_state.display_list[0], HostListItem::GroupHeader(s) if s == "production")
+    );
 }
 
 #[test]
@@ -3870,13 +4000,14 @@ Host manual
   HostName 2.2.2.2
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("production".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("production".to_string());
     app.apply_sort();
 
     // "production" is a provider_tag, not a user tag — no grouping
-    assert_eq!(app.display_list.len(), 2);
+    assert_eq!(app.hosts_state.display_list.len(), 2);
     assert!(
-        app.display_list
+        app.hosts_state
+            .display_list
             .iter()
             .all(|item| matches!(item, HostListItem::Host { .. }))
     );
@@ -3899,22 +4030,27 @@ Host manual
   HostName 3.3.3.3
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("production".to_string());
-    app.sort_mode = SortMode::Original;
+    app.hosts_state.group_by = GroupBy::Tag("production".to_string());
+    app.hosts_state.sort_mode = SortMode::Original;
     app.apply_sort();
 
     // manual ungrouped, then production header + zeta + alpha (config order)
-    assert_eq!(app.display_list.len(), 4);
-    assert!(matches!(&app.display_list[0], HostListItem::Host { .. }));
-    assert!(matches!(&app.display_list[1], HostListItem::GroupHeader(s) if s == "production"));
+    assert_eq!(app.hosts_state.display_list.len(), 4);
+    assert!(matches!(
+        &app.hosts_state.display_list[0],
+        HostListItem::Host { .. }
+    ));
+    assert!(
+        matches!(&app.hosts_state.display_list[1], HostListItem::GroupHeader(s) if s == "production")
+    );
     // Verify config order preserved within group
-    if let HostListItem::Host { index } = &app.display_list[2] {
-        assert_eq!(app.hosts[*index].alias, "zeta");
+    if let HostListItem::Host { index } = &app.hosts_state.display_list[2] {
+        assert_eq!(app.hosts_state.list[*index].alias, "zeta");
     } else {
         panic!("Expected Host item at position 2");
     }
-    if let HostListItem::Host { index } = &app.display_list[3] {
-        assert_eq!(app.hosts[*index].alias, "alpha");
+    if let HostListItem::Host { index } = &app.hosts_state.display_list[3] {
+        assert_eq!(app.hosts_state.list[*index].alias, "alpha");
     } else {
         panic!("Expected Host item at position 3");
     }
@@ -3932,14 +4068,16 @@ Host web2
   # purple:tags production
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("production".to_string());
-    app.sort_mode = SortMode::AlphaHostname;
+    app.hosts_state.group_by = GroupBy::Tag("production".to_string());
+    app.hosts_state.sort_mode = SortMode::AlphaHostname;
     app.apply_sort();
 
-    assert_eq!(app.display_list.len(), 3);
-    assert!(matches!(&app.display_list[0], HostListItem::GroupHeader(s) if s == "production"));
-    if let HostListItem::Host { index } = &app.display_list[1] {
-        assert_eq!(app.hosts[*index].hostname, "alpha.example.com");
+    assert_eq!(app.hosts_state.display_list.len(), 3);
+    assert!(
+        matches!(&app.hosts_state.display_list[0], HostListItem::GroupHeader(s) if s == "production")
+    );
+    if let HostListItem::Host { index } = &app.hosts_state.display_list[1] {
+        assert_eq!(app.hosts_state.list[*index].hostname, "alpha.example.com");
     } else {
         panic!("Expected Host item");
     }
@@ -3957,14 +4095,16 @@ Host do-alpha
   # purple:provider digitalocean:2
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Provider;
-    app.sort_mode = SortMode::AlphaHostname;
+    app.hosts_state.group_by = GroupBy::Provider;
+    app.hosts_state.sort_mode = SortMode::AlphaHostname;
     app.apply_sort();
 
-    assert_eq!(app.display_list.len(), 3);
-    assert!(matches!(&app.display_list[0], HostListItem::GroupHeader(s) if s == "DigitalOcean"));
-    if let HostListItem::Host { index } = &app.display_list[1] {
-        assert_eq!(app.hosts[*index].hostname, "alpha.example.com");
+    assert_eq!(app.hosts_state.display_list.len(), 3);
+    assert!(
+        matches!(&app.hosts_state.display_list[0], HostListItem::GroupHeader(s) if s == "DigitalOcean")
+    );
+    if let HostListItem::Host { index } = &app.hosts_state.display_list[1] {
+        assert_eq!(app.hosts_state.list[*index].hostname, "alpha.example.com");
     } else {
         panic!("Expected Host item");
     }
@@ -3981,19 +4121,20 @@ Host alpha
 ";
     for mode in [SortMode::AlphaAlias, SortMode::AlphaHostname] {
         let mut app = make_app(content);
-        app.group_by = GroupBy::None;
-        app.sort_mode = mode;
+        app.hosts_state.group_by = GroupBy::None;
+        app.hosts_state.sort_mode = mode;
         app.apply_sort();
 
         // No headers, just sorted hosts
-        assert_eq!(app.display_list.len(), 2);
+        assert_eq!(app.hosts_state.display_list.len(), 2);
         assert!(
-            app.display_list
+            app.hosts_state
+                .display_list
                 .iter()
                 .all(|item| matches!(item, HostListItem::Host { .. }))
         );
-        if let HostListItem::Host { index } = &app.display_list[0] {
-            assert_eq!(app.hosts[*index].alias, "alpha");
+        if let HostListItem::Host { index } = &app.hosts_state.display_list[0] {
+            assert_eq!(app.hosts_state.list[*index].alias, "alpha");
         }
     }
 }
@@ -4016,11 +4157,11 @@ Host db-prod
   # purple:tags production
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("production".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("production".to_string());
     app.apply_sort();
 
     // Before search: 1 ungrouped + 1 header + 2 grouped = 4
-    assert_eq!(app.display_list.len(), 4);
+    assert_eq!(app.hosts_state.display_list.len(), 4);
 
     // Start search and filter for "web"
     app.start_search();
@@ -4044,14 +4185,14 @@ Host web2
   HostName 2.2.2.2
 ";
     let mut app = make_app(content);
-    app.multi_select.insert(0);
-    app.multi_select.insert(1);
-    assert_eq!(app.multi_select.len(), 2);
+    app.hosts_state.multi_select.insert(0);
+    app.hosts_state.multi_select.insert(1);
+    assert_eq!(app.hosts_state.multi_select.len(), 2);
 
-    app.group_by = GroupBy::Tag("production".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("production".to_string());
     app.apply_sort();
 
-    assert!(app.multi_select.is_empty());
+    assert!(app.hosts_state.multi_select.is_empty());
 }
 
 // --- Pattern entries with tag grouping ---
@@ -4068,12 +4209,13 @@ Host 10.0.0.*
   # purple:tags internal
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("production".to_string());
-    app.sort_mode = SortMode::AlphaAlias;
+    app.hosts_state.group_by = GroupBy::Tag("production".to_string());
+    app.hosts_state.sort_mode = SortMode::AlphaAlias;
     app.apply_sort();
 
     // Should have: production header + web1, then Patterns header + pattern
     let has_patterns_header = app
+        .hosts_state
         .display_list
         .iter()
         .any(|item| matches!(item, HostListItem::GroupHeader(s) if s == "Patterns"));
@@ -4084,11 +4226,13 @@ Host 10.0.0.*
 
     // Patterns header should be after all hosts
     let patterns_pos = app
+        .hosts_state
         .display_list
         .iter()
         .position(|item| matches!(item, HostListItem::GroupHeader(s) if s == "Patterns"))
         .unwrap();
     let last_host_pos = app
+        .hosts_state
         .display_list
         .iter()
         .rposition(|item| matches!(item, HostListItem::Host { .. }));
@@ -4119,7 +4263,7 @@ proptest! {
     #![proptest_config(proptest::test_runner::Config::with_cases(200))]
 
     /// GroupBy::Tag display_list is consistent:
-    /// - Total host items == app.hosts.len()
+    /// - Total host items == app.hosts_state.list.len()
     /// - No duplicate host indices
     /// - At most one GroupHeader per apply_sort call
     /// - All indices are in-bounds
@@ -4162,11 +4306,11 @@ proptest! {
             all_tags[tag_index % all_tags.len()].clone()
         };
 
-        app.group_by = GroupBy::Tag(chosen_tag.clone());
+        app.hosts_state.group_by = GroupBy::Tag(chosen_tag.clone());
         app.apply_sort();
 
-        let host_count = app.hosts.len();
-        let display_host_count = app.display_list.iter()
+        let host_count = app.hosts_state.list.len();
+        let display_host_count = app.hosts_state.display_list.iter()
             .filter(|item| matches!(item, HostListItem::Host { .. }))
             .count();
 
@@ -4180,7 +4324,7 @@ proptest! {
         );
 
         // No duplicate host indices
-        let indices: Vec<usize> = app.display_list.iter()
+        let indices: Vec<usize> = app.hosts_state.display_list.iter()
             .filter_map(|item| {
                 if let HostListItem::Host { index } = item {
                     Some(*index)
@@ -4206,7 +4350,7 @@ proptest! {
         }
 
         // At most one GroupHeader with the chosen tag name
-        let header_count = app.display_list.iter()
+        let header_count = app.hosts_state.display_list.iter()
             .filter(|item| matches!(item, HostListItem::GroupHeader(s) if s == &chosen_tag))
             .count();
         prop_assert!(
@@ -4218,12 +4362,12 @@ proptest! {
 
         // If header is present, all tagged hosts appear after it
         if header_count == 1 {
-            let header_pos = app.display_list.iter()
+            let header_pos = app.hosts_state.display_list.iter()
                 .position(|item| matches!(item, HostListItem::GroupHeader(s) if s == &chosen_tag))
                 .unwrap();
-            for (pos, item) in app.display_list.iter().enumerate() {
+            for (pos, item) in app.hosts_state.display_list.iter().enumerate() {
                 if let HostListItem::Host { index } = item {
-                    let has_tag = app.hosts[*index].tags.iter().any(|t| t == &chosen_tag);
+                    let has_tag = app.hosts_state.list[*index].tags.iter().any(|t| t == &chosen_tag);
                     if has_tag {
                         prop_assert!(
                             pos > header_pos,
@@ -4255,15 +4399,15 @@ proptest! {
         let content = blocks.join("\n\n") + "\n";
         let mut app = make_app(&content);
 
-        app.group_by = GroupBy::None;
-        app.sort_mode = SortMode::AlphaAlias;
+        app.hosts_state.group_by = GroupBy::None;
+        app.hosts_state.sort_mode = SortMode::AlphaAlias;
         app.apply_sort();
 
-        let host_count = app.hosts.len();
+        let host_count = app.hosts_state.list.len();
 
         // No group headers from GroupBy::None (comment-based headers possible;
         // but no tag/provider headers)
-        let display_host_count = app.display_list.iter()
+        let display_host_count = app.hosts_state.display_list.iter()
             .filter(|item| matches!(item, HostListItem::Host { .. }))
             .count();
 
@@ -4289,16 +4433,16 @@ proptest! {
         let mut app = make_app(&content);
 
         // Apply tag grouping
-        app.group_by = GroupBy::Tag(tag.clone());
+        app.hosts_state.group_by = GroupBy::Tag(tag.clone());
         app.apply_sort();
-        let has_header_grouped = app.display_list.iter()
+        let has_header_grouped = app.hosts_state.display_list.iter()
             .any(|item| matches!(item, HostListItem::GroupHeader(s) if s == &tag));
         prop_assert!(has_header_grouped, "expected GroupHeader for tag '{}'", tag);
 
         // Switch to None
-        app.group_by = GroupBy::None;
+        app.hosts_state.group_by = GroupBy::None;
         app.apply_sort();
-        let has_header_none = app.display_list.iter()
+        let has_header_none = app.hosts_state.display_list.iter()
             .any(|item| matches!(item, HostListItem::GroupHeader(s) if s == &tag));
         prop_assert!(!has_header_none, "GroupHeader should be gone after GroupBy::None");
     }
@@ -4316,13 +4460,14 @@ Host web2
 ";
     let mut app = make_app(content);
     // Group by a tag that no host has
-    app.group_by = GroupBy::Tag("production".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("production".to_string());
     app.apply_sort();
 
     // All hosts ungrouped, no header, no panic
-    assert_eq!(app.display_list.len(), 2);
+    assert_eq!(app.hosts_state.display_list.len(), 2);
     assert!(
-        app.display_list
+        app.hosts_state
+            .display_list
             .iter()
             .all(|item| matches!(item, HostListItem::Host { .. }))
     );
@@ -4343,15 +4488,17 @@ Host healthy-second
   # purple:tags production
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("production".to_string());
-    app.sort_mode = SortMode::Original;
+    app.hosts_state.group_by = GroupBy::Tag("production".to_string());
+    app.hosts_state.sort_mode = SortMode::Original;
     app.apply_sort();
 
     // Original order preserved: stale host first within group
-    assert_eq!(app.display_list.len(), 3);
-    assert!(matches!(&app.display_list[0], HostListItem::GroupHeader(s) if s == "production"));
-    if let HostListItem::Host { index } = &app.display_list[1] {
-        assert_eq!(app.hosts[*index].alias, "stale-first");
+    assert_eq!(app.hosts_state.display_list.len(), 3);
+    assert!(
+        matches!(&app.hosts_state.display_list[0], HostListItem::GroupHeader(s) if s == "production")
+    );
+    if let HostListItem::Host { index } = &app.hosts_state.display_list[1] {
+        assert_eq!(app.hosts_state.list[*index].alias, "stale-first");
     } else {
         panic!("Expected Host item");
     }
@@ -4371,20 +4518,22 @@ Host beta-healthy
   # purple:tags production
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("production".to_string());
-    app.sort_mode = SortMode::AlphaAlias;
+    app.hosts_state.group_by = GroupBy::Tag("production".to_string());
+    app.hosts_state.sort_mode = SortMode::AlphaAlias;
     app.apply_sort();
 
     // Alpha sort: stale host pushed to bottom of group
-    assert_eq!(app.display_list.len(), 3);
-    assert!(matches!(&app.display_list[0], HostListItem::GroupHeader(s) if s == "production"));
-    if let HostListItem::Host { index } = &app.display_list[1] {
-        assert_eq!(app.hosts[*index].alias, "beta-healthy");
+    assert_eq!(app.hosts_state.display_list.len(), 3);
+    assert!(
+        matches!(&app.hosts_state.display_list[0], HostListItem::GroupHeader(s) if s == "production")
+    );
+    if let HostListItem::Host { index } = &app.hosts_state.display_list[1] {
+        assert_eq!(app.hosts_state.list[*index].alias, "beta-healthy");
     } else {
         panic!("Expected Host item");
     }
-    if let HostListItem::Host { index } = &app.display_list[2] {
-        assert_eq!(app.hosts[*index].alias, "alpha-stale");
+    if let HostListItem::Host { index } = &app.hosts_state.display_list[2] {
+        assert_eq!(app.hosts_state.list[*index].alias, "alpha-stale");
     } else {
         panic!("Expected Host item");
     }
@@ -4398,12 +4547,12 @@ Host web1
   # purple:tags staging
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("production".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("production".to_string());
 
     let cleared = app.clear_stale_group_tag();
 
     assert!(cleared);
-    assert_eq!(app.group_by, GroupBy::None);
+    assert_eq!(app.hosts_state.group_by, GroupBy::None);
 }
 
 #[test]
@@ -4414,12 +4563,15 @@ Host web1
   # purple:tags production
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("production".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("production".to_string());
 
     let cleared = app.clear_stale_group_tag();
 
     assert!(!cleared);
-    assert_eq!(app.group_by, GroupBy::Tag("production".to_string()));
+    assert_eq!(
+        app.hosts_state.group_by,
+        GroupBy::Tag("production".to_string())
+    );
 }
 
 #[test]
@@ -4429,12 +4581,12 @@ Host web1
   HostName 1.1.1.1
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Provider;
+    app.hosts_state.group_by = GroupBy::Provider;
 
     let cleared = app.clear_stale_group_tag();
 
     assert!(!cleared);
-    assert_eq!(app.group_by, GroupBy::Provider);
+    assert_eq!(app.hosts_state.group_by, GroupBy::Provider);
 }
 
 #[test]
@@ -4444,24 +4596,24 @@ Host web1
   HostName 1.1.1.1
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::None;
+    app.hosts_state.group_by = GroupBy::None;
 
     let cleared = app.clear_stale_group_tag();
 
     assert!(!cleared);
-    assert_eq!(app.group_by, GroupBy::None);
+    assert_eq!(app.hosts_state.group_by, GroupBy::None);
 }
 
 #[test]
 fn clear_stale_group_tag_empty_hosts() {
     let content = "";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("production".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("production".to_string());
 
     let cleared = app.clear_stale_group_tag();
 
     assert!(cleared);
-    assert_eq!(app.group_by, GroupBy::None);
+    assert_eq!(app.hosts_state.group_by, GroupBy::None);
 }
 
 #[test]
@@ -4472,12 +4624,12 @@ Host web1
   # purple:tags production
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag(String::new());
+    app.hosts_state.group_by = GroupBy::Tag(String::new());
 
     let cleared = app.clear_stale_group_tag();
 
     assert!(!cleared, "empty tag sentinel should not be cleared");
-    assert_eq!(app.group_by, GroupBy::Tag(String::new()));
+    assert_eq!(app.hosts_state.group_by, GroupBy::Tag(String::new()));
 }
 
 #[test]
@@ -4492,7 +4644,7 @@ Host 10.0.0.*
   # purple:tags production
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("production".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("production".to_string());
 
     let cleared = app.clear_stale_group_tag();
 
@@ -4500,7 +4652,10 @@ Host 10.0.0.*
         !cleared,
         "tag existing only on a pattern should not be cleared"
     );
-    assert_eq!(app.group_by, GroupBy::Tag("production".to_string()));
+    assert_eq!(
+        app.hosts_state.group_by,
+        GroupBy::Tag("production".to_string())
+    );
 }
 
 // --- Group filter (tab navigation) ---
@@ -4521,11 +4676,12 @@ Host db-prod
   # purple:tags production
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("production".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("production".to_string());
     app.apply_sort();
 
     // Without filter: header + all 3 hosts visible
     let hosts_before: Vec<_> = app
+        .hosts_state
         .display_list
         .iter()
         .filter(|item| matches!(item, HostListItem::Host { .. }))
@@ -4534,17 +4690,18 @@ Host db-prod
 
     // group_host_counts should show 2 for production
     assert_eq!(
-        app.group_host_counts.get("production"),
+        app.hosts_state.group_host_counts.get("production"),
         Some(&2),
         "production group should have 2 hosts"
     );
 
     // Filter to production group only
-    app.group_filter = Some("production".to_string());
+    app.hosts_state.group_filter = Some("production".to_string());
     app.apply_sort();
 
     // Only production hosts should be visible (no header, no staging host)
     let hosts_after: Vec<_> = app
+        .hosts_state
         .display_list
         .iter()
         .filter(|item| matches!(item, HostListItem::Host { .. }))
@@ -4557,7 +4714,7 @@ Host db-prod
 
     // group_host_counts should still show the correct count
     assert_eq!(
-        app.group_host_counts.get("production"),
+        app.hosts_state.group_host_counts.get("production"),
         Some(&2),
         "count should still be 2 with filter active"
     );
@@ -4579,13 +4736,14 @@ Host db-prod
   # purple:tags production
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("production".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("production".to_string());
 
     // Filter
-    app.group_filter = Some("production".to_string());
+    app.hosts_state.group_filter = Some("production".to_string());
     app.apply_sort();
 
     let hosts_filtered: Vec<_> = app
+        .hosts_state
         .display_list
         .iter()
         .filter(|item| matches!(item, HostListItem::Host { .. }))
@@ -4593,10 +4751,11 @@ Host db-prod
     assert_eq!(hosts_filtered.len(), 2);
 
     // Clear filter
-    app.group_filter = None;
+    app.hosts_state.group_filter = None;
     app.apply_sort();
 
     let hosts_unfiltered: Vec<_> = app
+        .hosts_state
         .display_list
         .iter()
         .filter(|item| matches!(item, HostListItem::Host { .. }))
@@ -4621,16 +4780,16 @@ Host web2
   # purple:tags staging
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Provider;
-    app.group_filter = Some("aws".to_string());
+    app.hosts_state.group_by = GroupBy::Provider;
+    app.hosts_state.group_filter = Some("aws".to_string());
 
     // Change group_by to Tag, which triggers clear_stale_group_tag
-    app.group_by = GroupBy::Tag("nonexistent".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("nonexistent".to_string());
     let cleared = app.clear_stale_group_tag();
 
     assert!(cleared);
     assert!(
-        app.group_filter.is_none(),
+        app.hosts_state.group_filter.is_none(),
         "group_filter should be cleared when group_by tag is stale"
     );
 }
@@ -4647,12 +4806,14 @@ Host web-staging
   # purple:tags staging
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("production".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("production".to_string());
     app.apply_sort();
 
     // group_tab_order should contain "production"
     assert!(
-        app.group_tab_order.contains(&"production".to_string()),
+        app.hosts_state
+            .group_tab_order
+            .contains(&"production".to_string()),
         "group_tab_order should include production group"
     );
 }
@@ -4669,12 +4830,12 @@ Host h2
   # purple:tags alpha
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("alpha".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("alpha".to_string());
     app.apply_sort();
 
-    assert_eq!(app.group_tab_order.len(), 2);
-    assert_eq!(app.group_tab_order[0], "alpha");
-    assert_eq!(app.group_tab_order[1], "beta");
+    assert_eq!(app.hosts_state.group_tab_order.len(), 2);
+    assert_eq!(app.hosts_state.group_tab_order[0], "alpha");
+    assert_eq!(app.hosts_state.group_tab_order[1], "beta");
 }
 
 #[test]
@@ -4693,13 +4854,14 @@ Host web-staging
   # purple:tags staging
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("production".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("production".to_string());
     // Filter to staging: only web-staging visible (it's the ungrouped host)
-    app.group_filter = Some("production".to_string());
+    app.hosts_state.group_filter = Some("production".to_string());
     app.apply_sort();
 
     // Simulate Ctrl+A: select all visible Host items
     let visible_indices: Vec<usize> = app
+        .hosts_state
         .display_list
         .iter()
         .filter_map(|item| match item {
@@ -4708,13 +4870,13 @@ Host web-staging
         })
         .collect();
     for idx in &visible_indices {
-        app.multi_select.insert(*idx);
+        app.hosts_state.multi_select.insert(*idx);
     }
 
     // Only production hosts should be selected when filter is active
-    assert_eq!(app.multi_select.len(), 2);
-    for idx in &app.multi_select {
-        let host = &app.hosts[*idx];
+    assert_eq!(app.hosts_state.multi_select.len(), 2);
+    for idx in &app.hosts_state.multi_select {
+        let host = &app.hosts_state.list[*idx];
         assert!(
             host.tags.contains(&"production".to_string()),
             "only production hosts should be selected"
@@ -4744,6 +4906,7 @@ Host web3
 
     // Simulate Ctrl+A: collect all Host indices from display_list
     let host_indices: Vec<usize> = app
+        .hosts_state
         .display_list
         .iter()
         .filter_map(|item| match item {
@@ -4752,10 +4915,10 @@ Host web3
         })
         .collect();
     for idx in &host_indices {
-        app.multi_select.insert(*idx);
+        app.hosts_state.multi_select.insert(*idx);
     }
 
-    assert_eq!(app.multi_select.len(), 3);
+    assert_eq!(app.hosts_state.multi_select.len(), 3);
 }
 
 #[test]
@@ -4775,6 +4938,7 @@ Host web3
 
     // Select all
     let host_indices: Vec<usize> = app
+        .hosts_state
         .display_list
         .iter()
         .filter_map(|item| match item {
@@ -4783,18 +4947,18 @@ Host web3
         })
         .collect();
     for idx in &host_indices {
-        app.multi_select.insert(*idx);
+        app.hosts_state.multi_select.insert(*idx);
     }
-    assert_eq!(app.multi_select.len(), 3);
+    assert_eq!(app.hosts_state.multi_select.len(), 3);
 
     // Check all_selected condition and clear
     let all_selected = host_indices
         .iter()
-        .all(|idx| app.multi_select.contains(idx));
+        .all(|idx| app.hosts_state.multi_select.contains(idx));
     assert!(all_selected);
-    app.multi_select.clear();
+    app.hosts_state.multi_select.clear();
 
-    assert!(app.multi_select.is_empty());
+    assert!(app.hosts_state.multi_select.is_empty());
 }
 
 // --- next_group_tab ---
@@ -4811,17 +4975,17 @@ Host aws-db
   # purple:provider aws:2
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Provider;
+    app.hosts_state.group_by = GroupBy::Provider;
     app.apply_sort();
-    assert!(app.group_filter.is_none());
-    assert_eq!(app.group_tab_index, 0);
-    assert!(!app.group_tab_order.is_empty());
+    assert!(app.hosts_state.group_filter.is_none());
+    assert_eq!(app.hosts_state.group_tab_index, 0);
+    assert!(!app.hosts_state.group_tab_order.is_empty());
 
-    let first_group = app.group_tab_order[0].clone();
+    let first_group = app.hosts_state.group_tab_order[0].clone();
     app.next_group_tab();
 
-    assert_eq!(app.group_filter, Some(first_group));
-    assert_eq!(app.group_tab_index, 1);
+    assert_eq!(app.hosts_state.group_filter, Some(first_group));
+    assert_eq!(app.hosts_state.group_tab_index, 1);
 }
 
 #[test]
@@ -4836,25 +5000,25 @@ Host aws-db
   # purple:provider aws:2
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Provider;
+    app.hosts_state.group_by = GroupBy::Provider;
     app.apply_sort();
     // Ensure exactly 2 groups
-    assert_eq!(app.group_tab_order.len(), 2);
+    assert_eq!(app.hosts_state.group_tab_order.len(), 2);
 
     // First call: All -> group1
     app.next_group_tab();
-    assert!(app.group_filter.is_some());
-    assert_eq!(app.group_tab_index, 1);
+    assert!(app.hosts_state.group_filter.is_some());
+    assert_eq!(app.hosts_state.group_tab_index, 1);
 
     // Second call: group1 -> group2
     app.next_group_tab();
-    assert!(app.group_filter.is_some());
-    assert_eq!(app.group_tab_index, 2);
+    assert!(app.hosts_state.group_filter.is_some());
+    assert_eq!(app.hosts_state.group_tab_index, 2);
 
     // Third call: group2 -> All
     app.next_group_tab();
-    assert_eq!(app.group_filter, None);
-    assert_eq!(app.group_tab_index, 0);
+    assert_eq!(app.hosts_state.group_filter, None);
+    assert_eq!(app.hosts_state.group_tab_index, 0);
 }
 
 #[test]
@@ -4865,14 +5029,14 @@ Host web1
 ";
     let mut app = make_app(content);
     // No grouping, so group_tab_order is empty
-    app.group_by = GroupBy::None;
+    app.hosts_state.group_by = GroupBy::None;
     app.apply_sort();
-    assert!(app.group_tab_order.is_empty());
+    assert!(app.hosts_state.group_tab_order.is_empty());
 
     app.next_group_tab();
 
-    assert_eq!(app.group_filter, None);
-    assert_eq!(app.group_tab_index, 0);
+    assert_eq!(app.hosts_state.group_filter, None);
+    assert_eq!(app.hosts_state.group_tab_index, 0);
 }
 
 #[test]
@@ -4883,20 +5047,20 @@ Host do-web
   # purple:provider digitalocean:1
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Provider;
+    app.hosts_state.group_by = GroupBy::Provider;
     app.apply_sort();
-    assert_eq!(app.group_tab_order.len(), 1);
+    assert_eq!(app.hosts_state.group_tab_order.len(), 1);
 
-    let only_group = app.group_tab_order[0].clone();
+    let only_group = app.hosts_state.group_tab_order[0].clone();
 
     // First call: All -> the one group
     app.next_group_tab();
-    assert_eq!(app.group_filter, Some(only_group));
+    assert_eq!(app.hosts_state.group_filter, Some(only_group));
 
     // Second call: the one group -> All
     app.next_group_tab();
-    assert_eq!(app.group_filter, None);
-    assert_eq!(app.group_tab_index, 0);
+    assert_eq!(app.hosts_state.group_filter, None);
+    assert_eq!(app.hosts_state.group_tab_index, 0);
 }
 
 // --- prev_group_tab ---
@@ -4913,14 +5077,14 @@ Host aws-db
   # purple:provider aws:2
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Provider;
+    app.hosts_state.group_by = GroupBy::Provider;
     app.apply_sort();
-    assert_eq!(app.group_tab_order.len(), 2);
+    assert_eq!(app.hosts_state.group_tab_order.len(), 2);
 
-    let last_group = app.group_tab_order.last().unwrap().clone();
+    let last_group = app.hosts_state.group_tab_order.last().unwrap().clone();
     app.prev_group_tab();
 
-    assert_eq!(app.group_filter, Some(last_group));
+    assert_eq!(app.hosts_state.group_filter, Some(last_group));
 }
 
 #[test]
@@ -4935,18 +5099,18 @@ Host aws-db
   # purple:provider aws:2
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Provider;
+    app.hosts_state.group_by = GroupBy::Provider;
     app.apply_sort();
 
     // Navigate to the first group using next_group_tab (reliable, deterministic)
     app.next_group_tab();
-    assert!(app.group_filter.is_some());
-    assert_eq!(app.group_tab_index, 1);
+    assert!(app.hosts_state.group_filter.is_some());
+    assert_eq!(app.hosts_state.group_tab_index, 1);
 
     // prev from first group should go back to All
     app.prev_group_tab();
-    assert_eq!(app.group_filter, None);
-    assert_eq!(app.group_tab_index, 0);
+    assert_eq!(app.hosts_state.group_filter, None);
+    assert_eq!(app.hosts_state.group_tab_index, 0);
 }
 
 // --- clear_group_filter ---
@@ -4963,31 +5127,31 @@ Host db1
   # purple:provider digitalocean:2
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Provider;
+    app.hosts_state.group_by = GroupBy::Provider;
     app.apply_sort();
 
     // Navigate into a group
     app.next_group_tab();
-    assert!(app.group_filter.is_some());
+    assert!(app.hosts_state.group_filter.is_some());
 
     app.clear_group_filter();
 
-    assert_eq!(app.group_filter, None);
-    assert_eq!(app.group_tab_index, 0);
+    assert_eq!(app.hosts_state.group_filter, None);
+    assert_eq!(app.hosts_state.group_tab_index, 0);
 }
 
 #[test]
 fn clear_group_filter_noop_when_already_none() {
     let content = "Host web1\n  HostName 1.1.1.1\n";
     let mut app = make_app(content);
-    assert_eq!(app.group_filter, None);
-    assert_eq!(app.group_tab_index, 0);
+    assert_eq!(app.hosts_state.group_filter, None);
+    assert_eq!(app.hosts_state.group_tab_index, 0);
 
     // Should not panic or change state
     app.clear_group_filter();
 
-    assert_eq!(app.group_filter, None);
-    assert_eq!(app.group_tab_index, 0);
+    assert_eq!(app.hosts_state.group_filter, None);
+    assert_eq!(app.hosts_state.group_tab_index, 0);
 }
 
 // --- select_next_skipping_headers / select_prev_skipping_headers ---
@@ -5004,12 +5168,13 @@ Host web2
   # purple:provider aws:2
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Provider;
+    app.hosts_state.group_by = GroupBy::Provider;
     app.apply_sort();
 
     // display_list: [GroupHeader(DO), Host(idx), GroupHeader(AWS), Host(idx)]
     // Find the first Host item index in display_list
     let first_host_pos = app
+        .hosts_state
         .display_list
         .iter()
         .position(|item| matches!(item, HostListItem::Host { .. }))
@@ -5020,7 +5185,10 @@ Host web2
 
     let selected = app.ui.list_state.selected().unwrap();
     assert!(
-        matches!(app.display_list[selected], HostListItem::Host { .. }),
+        matches!(
+            app.hosts_state.display_list[selected],
+            HostListItem::Host { .. }
+        ),
         "selection should land on a Host, not a GroupHeader"
     );
     assert!(
@@ -5041,11 +5209,12 @@ Host web2
   # purple:provider aws:2
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Provider;
+    app.hosts_state.group_by = GroupBy::Provider;
     app.apply_sort();
 
     // Find the last Host item in display_list
     let last_host_pos = app
+        .hosts_state
         .display_list
         .iter()
         .rposition(|item| matches!(item, HostListItem::Host { .. }))
@@ -5056,7 +5225,10 @@ Host web2
 
     let selected = app.ui.list_state.selected().unwrap();
     assert!(
-        matches!(app.display_list[selected], HostListItem::Host { .. }),
+        matches!(
+            app.hosts_state.display_list[selected],
+            HostListItem::Host { .. }
+        ),
         "selection should land on a Host, not a GroupHeader"
     );
     assert!(selected < last_host_pos, "selection should have moved back");
@@ -5070,11 +5242,12 @@ Host web1
   # purple:provider digitalocean:1
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Provider;
+    app.hosts_state.group_by = GroupBy::Provider;
     app.apply_sort();
 
     // Put selection on the only Host item
     let host_pos = app
+        .hosts_state
         .display_list
         .iter()
         .position(|item| matches!(item, HostListItem::Host { .. }))
@@ -5104,13 +5277,13 @@ Host web3
   HostName 3.3.3.3
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("production".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("production".to_string());
     app.apply_sort();
 
     // Find a host with "staging" tag and select it
-    for (i, item) in app.display_list.iter().enumerate() {
+    for (i, item) in app.hosts_state.display_list.iter().enumerate() {
         if let HostListItem::Host { index } = item {
-            if app.hosts[*index].alias == "web2" {
+            if app.hosts_state.list[*index].alias == "web2" {
                 app.ui.list_state.select(Some(i));
                 break;
             }
@@ -5118,11 +5291,12 @@ Host web3
     }
     app.update_group_tab_follow();
     let staging_pos = app
+        .hosts_state
         .group_tab_order
         .iter()
         .position(|t| t == "staging")
         .unwrap();
-    assert_eq!(app.group_tab_index, staging_pos + 1);
+    assert_eq!(app.hosts_state.group_tab_index, staging_pos + 1);
 }
 
 #[test]
@@ -5137,13 +5311,13 @@ Host web2
   # purple:tags staging
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("production".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("production".to_string());
     app.apply_sort();
 
     // Select the "production" host
-    for (i, item) in app.display_list.iter().enumerate() {
+    for (i, item) in app.hosts_state.display_list.iter().enumerate() {
         if let HostListItem::Host { index } = item {
-            if app.hosts[*index].alias == "web1" {
+            if app.hosts_state.list[*index].alias == "web1" {
                 app.ui.list_state.select(Some(i));
                 break;
             }
@@ -5151,11 +5325,12 @@ Host web2
     }
     app.update_group_tab_follow();
     let prod_pos = app
+        .hosts_state
         .group_tab_order
         .iter()
         .position(|t| t == "production")
         .unwrap();
-    assert_eq!(app.group_tab_index, prod_pos + 1);
+    assert_eq!(app.hosts_state.group_tab_index, prod_pos + 1);
 }
 
 #[test]
@@ -5169,20 +5344,20 @@ Host web2
   HostName 2.2.2.2
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("production".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("production".to_string());
     app.apply_sort();
 
     // Select the untagged host
-    for (i, item) in app.display_list.iter().enumerate() {
+    for (i, item) in app.hosts_state.display_list.iter().enumerate() {
         if let HostListItem::Host { index } = item {
-            if app.hosts[*index].alias == "web2" {
+            if app.hosts_state.list[*index].alias == "web2" {
                 app.ui.list_state.select(Some(i));
                 break;
             }
         }
     }
     app.update_group_tab_follow();
-    assert_eq!(app.group_tab_index, 0);
+    assert_eq!(app.hosts_state.group_tab_index, 0);
 }
 
 #[test]
@@ -5198,20 +5373,24 @@ Host manual
   # purple:tags cloud
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("cloud".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("cloud".to_string());
     app.apply_sort();
 
     // "cloud" should only appear once in tab order (from manual's user tag)
     assert_eq!(
-        app.group_host_counts.get("cloud").copied().unwrap_or(0),
+        app.hosts_state
+            .group_host_counts
+            .get("cloud")
+            .copied()
+            .unwrap_or(0),
         1,
         "provider_tags should not count toward group tab"
     );
 
     // Select the provider-tagged host (do-web has no user tags)
-    for (i, item) in app.display_list.iter().enumerate() {
+    for (i, item) in app.hosts_state.display_list.iter().enumerate() {
         if let HostListItem::Host { index } = item {
-            if app.hosts[*index].alias == "do-web" {
+            if app.hosts_state.list[*index].alias == "do-web" {
                 app.ui.list_state.select(Some(i));
                 break;
             }
@@ -5219,7 +5398,7 @@ Host manual
     }
     app.update_group_tab_follow();
     // do-web has no user tags matching the tab bar, should fall back to All
-    assert_eq!(app.group_tab_index, 0);
+    assert_eq!(app.hosts_state.group_tab_index, 0);
 }
 
 #[test]
@@ -5234,11 +5413,12 @@ Host aws-web
   # purple:provider aws:2
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Provider;
+    app.hosts_state.group_by = GroupBy::Provider;
     app.apply_sort();
 
     // Navigate to the last host
     let last_host = app
+        .hosts_state
         .display_list
         .iter()
         .enumerate()
@@ -5249,10 +5429,11 @@ Host aws-web
     app.update_group_tab_follow();
 
     // Should be on the group that contains the last host (non-zero)
-    assert_ne!(app.group_tab_index, 0);
+    assert_ne!(app.hosts_state.group_tab_index, 0);
 
     // Navigate to the first host
     let first_host = app
+        .hosts_state
         .display_list
         .iter()
         .enumerate()
@@ -5264,8 +5445,8 @@ Host aws-web
 
     // First host has no provider header before it (non-provider hosts first)
     // or is in the first provider group
-    let first_idx = app.group_tab_index;
-    assert_ne!(first_idx, app.group_tab_order.len() + 1);
+    let first_idx = app.hosts_state.group_tab_index;
+    assert_ne!(first_idx, app.hosts_state.group_tab_order.len() + 1);
 }
 
 #[test]
@@ -5280,15 +5461,15 @@ Host web2
   # purple:tags staging
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("production".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("production".to_string());
     app.apply_sort();
 
     // Set a filter and record the tab index
     app.next_group_tab();
-    let fixed_index = app.group_tab_index;
+    let fixed_index = app.hosts_state.group_tab_index;
 
     // Navigate to a different host
-    for (i, item) in app.display_list.iter().enumerate() {
+    for (i, item) in app.hosts_state.display_list.iter().enumerate() {
         if matches!(item, HostListItem::Host { .. }) {
             app.ui.list_state.select(Some(i));
             break;
@@ -5297,7 +5478,7 @@ Host web2
     app.update_group_tab_follow();
 
     // Tab index should not change when filter is active
-    assert_eq!(app.group_tab_index, fixed_index);
+    assert_eq!(app.hosts_state.group_tab_index, fixed_index);
 }
 
 #[test]
@@ -5310,12 +5491,12 @@ Host web2
   HostName 2.2.2.2
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::None;
+    app.hosts_state.group_by = GroupBy::None;
     app.apply_sort();
 
     app.ui.list_state.select(Some(1));
     app.update_group_tab_follow();
-    assert_eq!(app.group_tab_index, 0);
+    assert_eq!(app.hosts_state.group_tab_index, 0);
 }
 
 // --- Scoped search ---
@@ -5336,17 +5517,18 @@ Host web-aws
   # purple:provider aws:3
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Provider;
+    app.hosts_state.group_by = GroupBy::Provider;
     app.apply_sort();
 
     // Navigate into the DigitalOcean group
     let do_group = app
+        .hosts_state
         .group_tab_order
         .iter()
         .find(|g| g.to_lowercase().contains("digital"))
         .cloned()
-        .unwrap_or_else(|| app.group_tab_order[0].clone());
-    app.group_filter = Some(do_group.clone());
+        .unwrap_or_else(|| app.hosts_state.group_tab_order[0].clone());
+    app.hosts_state.group_filter = Some(do_group.clone());
     app.apply_sort();
 
     // Start search with "web" - matches hosts in both providers
@@ -5362,7 +5544,7 @@ Host web-aws
     );
     let matched_idx = app.search.filtered_indices[0];
     assert_eq!(
-        app.hosts[matched_idx].provider.as_deref(),
+        app.hosts_state.list[matched_idx].provider.as_deref(),
         Some("digitalocean")
     );
 }
@@ -5379,7 +5561,7 @@ Host web-aws
   # purple:provider aws:2
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Provider;
+    app.hosts_state.group_by = GroupBy::Provider;
     // No group_filter
     app.apply_sort();
 
@@ -5417,14 +5599,14 @@ Host cache1
 ";
     let mut app = make_app(content);
     // Use "common" as the active groupBy tag; group_tab_order is computed from all host tags
-    app.group_by = GroupBy::Tag("common".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("common".to_string());
     app.apply_sort();
 
     // group_tab_order should be sorted by frequency descending
     // "common" appears 3 times, "rare" once
-    assert!(!app.group_tab_order.is_empty());
-    assert_eq!(app.group_tab_order[0], "common");
-    assert_eq!(app.group_tab_order[1], "rare");
+    assert!(!app.hosts_state.group_tab_order.is_empty());
+    assert_eq!(app.hosts_state.group_tab_order[0], "common");
+    assert_eq!(app.hosts_state.group_tab_order[1], "rare");
 }
 
 #[test]
@@ -5439,15 +5621,19 @@ Host 10.0.0.*
   # purple:tags internal
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("prod".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("prod".to_string());
     app.apply_sort();
 
     assert!(
-        app.group_tab_order.contains(&"internal".to_string()),
+        app.hosts_state
+            .group_tab_order
+            .contains(&"internal".to_string()),
         "pattern-only tag should appear in group_tab_order"
     );
     assert!(
-        app.group_tab_order.contains(&"prod".to_string()),
+        app.hosts_state
+            .group_tab_order
+            .contains(&"prod".to_string()),
         "host tag should also appear"
     );
 }
@@ -5464,12 +5650,12 @@ Host 10.0.0.*
   # purple:tags prod
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("prod".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("prod".to_string());
     app.apply_sort();
 
     // group_host_counts for "prod" should count both the host and the pattern
     assert_eq!(
-        app.group_host_counts.get("prod"),
+        app.hosts_state.group_host_counts.get("prod"),
         Some(&2),
         "prod group should count both hosts and patterns"
     );
@@ -5487,14 +5673,14 @@ fn group_tab_order_tag_mode_max_ten() {
     let content = blocks.join("\n\n") + "\n";
 
     let mut app = make_app(&content);
-    app.group_by = GroupBy::Tag("tag0".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("tag0".to_string());
     app.apply_sort();
 
     assert_eq!(
-        app.group_tab_order.len(),
+        app.hosts_state.group_tab_order.len(),
         10,
         "group_tab_order should be capped at exactly 10, got {}",
-        app.group_tab_order.len()
+        app.hosts_state.group_tab_order.len()
     );
 }
 
@@ -5510,13 +5696,14 @@ Host aws-db
   # purple:provider aws:2
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Provider;
+    app.hosts_state.group_by = GroupBy::Provider;
     app.apply_sort();
 
     // group_tab_order should reflect GroupHeader order
-    assert!(!app.group_tab_order.is_empty());
-    for name in &app.group_tab_order {
+    assert!(!app.hosts_state.group_tab_order.is_empty());
+    for name in &app.hosts_state.group_tab_order {
         let header_exists = app
+            .hosts_state
             .display_list
             .iter()
             .any(|item| matches!(item, HostListItem::GroupHeader(s) if s == name));
@@ -5541,21 +5728,24 @@ Host web-staging
   # purple:tags staging
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("prod".to_string());
-    app.group_filter = Some("prod".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("prod".to_string());
+    app.hosts_state.group_filter = Some("prod".to_string());
     app.apply_sort();
 
     // Only hosts with the prod tag should appear
-    for item in &app.display_list {
+    for item in &app.hosts_state.display_list {
         if let HostListItem::Host { index } = item {
             assert!(
-                app.hosts[*index].tags.contains(&"prod".to_string()),
+                app.hosts_state.list[*index]
+                    .tags
+                    .contains(&"prod".to_string()),
                 "only hosts with 'prod' tag should appear when filtered"
             );
         }
     }
 
     let host_count = app
+        .hosts_state
         .display_list
         .iter()
         .filter(|item| matches!(item, HostListItem::Host { .. }))
@@ -5575,11 +5765,12 @@ Host 10.0.0.*
   # purple:tags prod
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Tag("prod".to_string());
-    app.group_filter = Some("prod".to_string());
+    app.hosts_state.group_by = GroupBy::Tag("prod".to_string());
+    app.hosts_state.group_filter = Some("prod".to_string());
     app.apply_sort();
 
     let pattern_count = app
+        .hosts_state
         .display_list
         .iter()
         .filter(|item| matches!(item, HostListItem::Pattern { .. }))
@@ -5608,7 +5799,7 @@ Host aws1
   # purple:provider aws:3
 ";
     let mut app = make_app(content);
-    app.group_by = GroupBy::Provider;
+    app.hosts_state.group_by = GroupBy::Provider;
     app.apply_sort();
 
     // Start at the first item
@@ -5619,7 +5810,7 @@ Host aws1
     let selected = app.ui.list_state.selected().unwrap();
     assert!(
         matches!(
-            app.display_list[selected],
+            app.hosts_state.display_list[selected],
             HostListItem::Host { .. } | HostListItem::Pattern { .. }
         ),
         "page_down should not land on a GroupHeader"
@@ -5755,7 +5946,7 @@ fn filter_down_only_keeps_unreachable_hosts() {
     app.apply_filter();
     // Only web1 (Unreachable) should remain
     assert_eq!(app.search.filtered_indices.len(), 1);
-    let alias = &app.hosts[app.search.filtered_indices[0]].alias;
+    let alias = &app.hosts_state.list[app.search.filtered_indices[0]].alias;
     assert_eq!(alias, "web1");
     // Patterns should be cleared
     assert!(app.search.filtered_pattern_indices.is_empty());
@@ -5775,15 +5966,16 @@ fn sort_mode_status_orders_by_ping() {
     app.ping
         .status
         .insert("web3".to_string(), PingStatus::Slow { rtt_ms: 300 });
-    app.sort_mode = SortMode::Status;
-    app.group_by = GroupBy::None;
+    app.hosts_state.sort_mode = SortMode::Status;
+    app.hosts_state.group_by = GroupBy::None;
     app.apply_sort();
     let aliases: Vec<&str> = app
+        .hosts_state
         .display_list
         .iter()
         .filter_map(|item| {
             if let HostListItem::Host { index } = item {
-                Some(app.hosts[*index].alias.as_str())
+                Some(app.hosts_state.list[*index].alias.as_str())
             } else {
                 None
             }
@@ -5852,7 +6044,7 @@ fn status_glyph_none_differs_from_checking() {
 #[test]
 fn health_summary_empty_ping_status() {
     let app = make_app("Host web1\n  HostName 1.1.1.1\n");
-    let spans = health_summary_spans(&app.ping.status, &app.hosts);
+    let spans = health_summary_spans(&app.ping.status, &app.hosts_state.list);
     assert!(spans.is_empty());
 }
 
@@ -5871,7 +6063,7 @@ fn health_summary_mixed_statuses() {
         .status
         .insert("web3".to_string(), PingStatus::Unreachable);
     // web4 has no ping status -> unchecked
-    let spans = health_summary_spans(&app.ping.status, &app.hosts);
+    let spans = health_summary_spans(&app.ping.status, &app.hosts_state.list);
     // Layout: ●1 " " ▲1 " " ✖1 " " ○1 = 4 status + 3 separators = 7 spans
     assert_eq!(spans.len(), 7);
     let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
@@ -5887,7 +6079,7 @@ fn health_summary_suppresses_zero_count() {
     app.ping
         .status
         .insert("web1".to_string(), PingStatus::Reachable { rtt_ms: 10 });
-    let spans = health_summary_spans(&app.ping.status, &app.hosts);
+    let spans = health_summary_spans(&app.ping.status, &app.hosts_state.list);
     // Only online, no separators
     assert_eq!(spans.len(), 1);
     assert_eq!(spans[0].content.as_ref(), "\u{25CF}1");
@@ -5899,7 +6091,7 @@ fn health_summary_skipped_excluded() {
     app.ping
         .status
         .insert("proxy".to_string(), PingStatus::Skipped);
-    let spans = health_summary_spans(&app.ping.status, &app.hosts);
+    let spans = health_summary_spans(&app.ping.status, &app.hosts_state.list);
     // Skipped hosts produce no counts, so result is empty
     assert!(spans.is_empty());
 }
@@ -6138,7 +6330,7 @@ fn health_summary_skipped_excluded_with_other_hosts() {
     app.ping
         .status
         .insert("web".to_string(), PingStatus::Reachable { rtt_ms: 5 });
-    let spans = health_summary_spans(&app.ping.status, &app.hosts);
+    let spans = health_summary_spans(&app.ping.status, &app.hosts_state.list);
     // Only online count for web, skipped proxy excluded
     assert_eq!(spans.len(), 1);
     assert_eq!(spans[0].content.as_ref(), "●1");
@@ -6267,7 +6459,10 @@ fn tick_status_sticky_never_expires() {
     for _ in 0..50 {
         app.tick_status();
     }
-    assert!(app.status.is_some(), "sticky status must not expire");
+    assert!(
+        app.status_center.status.is_some(),
+        "sticky status must not expire"
+    );
 }
 
 #[test]
@@ -6276,13 +6471,16 @@ fn tick_toast_warning_expires_after_timeout_ms() {
     // "failed connection" = 2 words → max(4000, 1500) = 4000ms.
     let mut app = make_app("");
     app.notify_warning("failed connection");
-    assert!(app.toast.is_some(), "warning should route to toast");
-    if let Some(toast) = app.toast.as_mut() {
+    assert!(
+        app.status_center.toast.is_some(),
+        "warning should route to toast"
+    );
+    if let Some(toast) = app.status_center.toast.as_mut() {
         toast.created_at = Instant::now() - Duration::from_millis(4100);
     }
     app.tick_toast();
     assert!(
-        app.toast.is_none(),
+        app.status_center.toast.is_none(),
         "warning toast must expire after timeout_ms"
     );
 }
@@ -6293,13 +6491,16 @@ fn tick_toast_non_sticky_success_expires() {
     // "done" = 1 word → max(2500, 750) = 2500ms.
     let mut app = make_app("");
     app.notify("done");
-    assert!(app.toast.is_some(), "success should route to toast");
-    if let Some(toast) = app.toast.as_mut() {
+    assert!(
+        app.status_center.toast.is_some(),
+        "success should route to toast"
+    );
+    if let Some(toast) = app.status_center.toast.as_mut() {
         toast.created_at = Instant::now() - Duration::from_millis(2600);
     }
     app.tick_toast();
     assert!(
-        app.toast.is_none(),
+        app.status_center.toast.is_none(),
         "success toast must expire after timeout_ms"
     );
 }
@@ -6310,7 +6511,7 @@ fn notify_does_not_overwrite_sticky() {
     app.notify_progress("signing...");
     app.notify_background("ping expired");
     assert_eq!(
-        app.status.as_ref().unwrap().text,
+        app.status_center.status.as_ref().unwrap().text,
         "signing...",
         "notify_background must not overwrite sticky"
     );
@@ -6322,7 +6523,7 @@ fn notify_progress_replaces_sticky() {
     app.notify_progress("signing...");
     app.notify_sticky_error("done signing");
     assert_eq!(
-        app.status.as_ref().unwrap().text,
+        app.status_center.status.as_ref().unwrap().text,
         "done signing",
         "notify_sticky_error must replace sticky"
     );
@@ -6335,22 +6536,25 @@ fn notify_routes_confirmation_to_toast() {
     // notify (Confirmation) routes to toast, sticky footer stays
     app.notify("Signed 3 of 3 certificates.");
     assert_eq!(
-        app.toast.as_ref().unwrap().text,
+        app.status_center.toast.as_ref().unwrap().text,
         "Signed 3 of 3 certificates.",
         "notify must route to toast"
     );
     // Sticky footer is still there
-    assert!(app.status.as_ref().unwrap().sticky);
+    assert!(app.status_center.status.as_ref().unwrap().sticky);
 }
 
 // Gap 1: notify on a fresh app with no prior status at all.
 #[test]
 fn notify_routes_to_toast_when_none() {
     let mut app = make_app("");
-    assert!(app.toast.is_none(), "precondition: fresh app has no toast");
+    assert!(
+        app.status_center.toast.is_none(),
+        "precondition: fresh app has no toast"
+    );
     app.notify("connected");
     assert_eq!(
-        app.toast.as_ref().unwrap().text,
+        app.status_center.toast.as_ref().unwrap().text,
         "connected",
         "notify must route to toast"
     );
@@ -6365,7 +6569,7 @@ fn notify_background_blocked_after_sticky_replaced_by_sticky() {
     app.notify_progress("still signing...");
     app.notify_background("ping expired");
     assert_eq!(
-        app.status.as_ref().unwrap().text,
+        app.status_center.status.as_ref().unwrap().text,
         "still signing...",
         "notify_background must not overwrite the replacement sticky"
     );
@@ -6380,12 +6584,12 @@ fn tick_status_sticky_text_unchanged() {
         app.tick_status();
     }
     assert_eq!(
-        app.status.as_ref().unwrap().text,
+        app.status_center.status.as_ref().unwrap().text,
         "vault signing...",
         "tick_status must not alter sticky message text"
     );
     assert!(
-        app.status.as_ref().unwrap().sticky,
+        app.status_center.status.as_ref().unwrap().sticky,
         "tick_status must not clear the sticky flag"
     );
 }
@@ -6400,18 +6604,21 @@ fn notify_background_suppressed_during_vault_signing() {
     // Background event (ping, tunnel) must not clobber signing status
     app.notify_background("Ping expired.");
     assert_eq!(
-        app.status.as_ref().unwrap().text,
+        app.status_center.status.as_ref().unwrap().text,
         "Signing certificate...",
         "background status must be suppressed while sticky is active"
     );
-    assert!(app.status.as_ref().unwrap().sticky);
+    assert!(app.status_center.status.as_ref().unwrap().sticky);
 }
 
 #[test]
 fn notify_background_works_when_no_sticky() {
     let mut app = make_app("");
     app.notify_background("ping expired");
-    assert_eq!(app.status.as_ref().unwrap().text, "ping expired");
+    assert_eq!(
+        app.status_center.status.as_ref().unwrap().text,
+        "ping expired"
+    );
 }
 
 #[test]
@@ -6421,15 +6628,24 @@ fn notify_background_error_goes_to_toast_even_with_sticky_and_existing_toast() {
     app.notify_progress("Signing...");
     // First toast already active
     app.notify("Copied host");
-    assert!(app.toast.is_some());
+    assert!(app.status_center.toast.is_some());
     // Background error should queue to toast, not touch footer
     app.notify_background_error("Sync failed");
-    assert_eq!(app.status.as_ref().unwrap().text, "Signing...");
-    assert!(app.status.as_ref().unwrap().sticky);
-    assert_eq!(app.toast.as_ref().unwrap().text, "Copied host");
-    assert_eq!(app.toast_queue.len(), 1);
-    assert_eq!(app.toast_queue.front().unwrap().text, "Sync failed");
-    assert!(app.toast_queue.front().unwrap().is_error());
+    assert_eq!(
+        app.status_center.status.as_ref().unwrap().text,
+        "Signing..."
+    );
+    assert!(app.status_center.status.as_ref().unwrap().sticky);
+    assert_eq!(
+        app.status_center.toast.as_ref().unwrap().text,
+        "Copied host"
+    );
+    assert_eq!(app.status_center.toast_queue.len(), 1);
+    assert_eq!(
+        app.status_center.toast_queue.front().unwrap().text,
+        "Sync failed"
+    );
+    assert!(app.status_center.toast_queue.front().unwrap().is_error());
 }
 
 #[test]
@@ -6437,31 +6653,34 @@ fn vault_signing_lifecycle() {
     let mut app = make_app("");
     // 1. Signing starts: sticky progress in footer
     app.notify_progress("Signing certificate...");
-    assert!(app.status.as_ref().unwrap().sticky);
+    assert!(app.status_center.status.as_ref().unwrap().sticky);
 
     // 2. Background event must not clobber sticky footer
     app.notify_background("Ping expired.");
-    assert_eq!(app.status.as_ref().unwrap().text, "Signing certificate...");
+    assert_eq!(
+        app.status_center.status.as_ref().unwrap().text,
+        "Signing certificate..."
+    );
 
     // 3. Signing error routes to toast, sticky footer stays
     app.notify_error("Vault SSH: failed to sign host: timeout");
-    assert!(app.toast.as_ref().unwrap().is_error());
+    assert!(app.status_center.toast.as_ref().unwrap().is_error());
     assert_eq!(
-        app.toast.as_ref().unwrap().text,
+        app.status_center.toast.as_ref().unwrap().text,
         "Vault SSH: failed to sign host: timeout"
     );
     // Sticky footer is still there
-    assert!(app.status.as_ref().unwrap().sticky);
+    assert!(app.status_center.status.as_ref().unwrap().sticky);
 
     // 4. Final summary replaces sticky footer with sticky error
     app.notify_sticky_error("Signed 0 of 1 certificate. 1 failed: timeout");
-    assert!(app.status.as_ref().unwrap().sticky);
-    assert!(app.status.as_ref().unwrap().is_error());
+    assert!(app.status_center.status.as_ref().unwrap().sticky);
+    assert!(app.status_center.status.as_ref().unwrap().is_error());
 
     // 5. Background non-error cannot clobber sticky footer
     app.notify_background("Config reloaded. 5 hosts.");
     assert_eq!(
-        app.status.as_ref().unwrap().text,
+        app.status_center.status.as_ref().unwrap().text,
         "Signed 0 of 1 certificate. 1 failed: timeout"
     );
 }
@@ -6471,13 +6690,13 @@ fn vault_signing_success_clears_sticky_progress() {
     let mut app = make_app("");
     // Sticky progress during signing
     app.notify_progress("Signing 3/3: last-server (V to cancel)");
-    assert!(app.status.as_ref().unwrap().sticky);
+    assert!(app.status_center.status.as_ref().unwrap().sticky);
 
     // Success summary via notify_info replaces sticky footer
     app.notify_info("Signed 3 of 3 certificates.");
-    assert!(!app.status.as_ref().unwrap().sticky);
+    assert!(!app.status_center.status.as_ref().unwrap().sticky);
     assert_eq!(
-        app.status.as_ref().unwrap().text,
+        app.status_center.status.as_ref().unwrap().text,
         "Signed 3 of 3 certificates."
     );
 }
@@ -6489,8 +6708,8 @@ fn confirmation_replaces_previous_toast() {
     app.notify("second");
     app.notify("third");
     // Confirmations replace immediately, no queue
-    assert_eq!(app.toast.as_ref().unwrap().text, "third");
-    assert!(app.toast_queue.is_empty());
+    assert_eq!(app.status_center.toast.as_ref().unwrap().text, "third");
+    assert!(app.status_center.toast_queue.is_empty());
 }
 
 #[test]
@@ -6498,11 +6717,11 @@ fn confirmation_clears_alert_queue() {
     let mut app = make_app("");
     app.notify_error("err1");
     app.notify_error("err2");
-    assert_eq!(app.toast_queue.len(), 1);
+    assert_eq!(app.status_center.toast_queue.len(), 1);
     // Confirmation replaces active toast and clears queue
     app.notify("copied");
-    assert_eq!(app.toast.as_ref().unwrap().text, "copied");
-    assert!(app.toast_queue.is_empty());
+    assert_eq!(app.status_center.toast.as_ref().unwrap().text, "copied");
+    assert!(app.status_center.toast_queue.is_empty());
 }
 
 #[test]
@@ -6513,21 +6732,21 @@ fn error_toasts_are_sticky_and_queued_in_order() {
     app.notify_error("err3");
     // First error is shown; the rest queue up. Errors are sticky-by-default
     // so ticking does NOT advance the queue.
-    assert_eq!(app.toast.as_ref().unwrap().text, "err1");
+    assert_eq!(app.status_center.toast.as_ref().unwrap().text, "err1");
     assert!(
-        app.toast.as_ref().unwrap().sticky,
+        app.status_center.toast.as_ref().unwrap().sticky,
         "errors must be sticky by default"
     );
-    assert_eq!(app.toast_queue.len(), 2);
+    assert_eq!(app.status_center.toast_queue.len(), 2);
     for _ in 0..=100 {
         app.tick_toast();
     }
     assert_eq!(
-        app.toast.as_ref().unwrap().text,
+        app.status_center.toast.as_ref().unwrap().text,
         "err1",
         "sticky error must NOT auto-expire"
     );
-    assert_eq!(app.toast_queue.len(), 2);
+    assert_eq!(app.status_center.toast_queue.len(), 2);
 }
 
 #[test]
@@ -6542,10 +6761,10 @@ fn error_queue_caps_at_max() {
     // First push becomes active, the next `cap` queue, the rest evict the
     // oldest queue entry. Active toast stays "err0"; queue holds the most
     // recent `cap` errors.
-    assert_eq!(app.toast.as_ref().unwrap().text, "err0");
-    assert_eq!(app.toast_queue.len(), cap);
+    assert_eq!(app.status_center.toast.as_ref().unwrap().text, "err0");
+    assert_eq!(app.status_center.toast_queue.len(), cap);
     assert_eq!(
-        app.toast_queue.back().unwrap().text,
+        app.status_center.toast_queue.back().unwrap().text,
         format!("err{}", total - 1)
     );
 }
@@ -6558,11 +6777,11 @@ fn success_toast_dismisses_sticky_error() {
     let mut app = make_app("");
     app.notify_error("a");
     app.notify_error("b");
-    assert!(app.toast.is_some());
-    assert_eq!(app.toast_queue.len(), 1);
+    assert!(app.status_center.toast.is_some());
+    assert_eq!(app.status_center.toast_queue.len(), 1);
     app.notify("done");
-    assert_eq!(app.toast.as_ref().unwrap().text, "done");
-    assert!(app.toast_queue.is_empty());
+    assert_eq!(app.status_center.toast.as_ref().unwrap().text, "done");
+    assert!(app.status_center.toast_queue.is_empty());
 }
 
 #[test]
@@ -6573,12 +6792,15 @@ fn warning_toasts_queue_rather_than_replace() {
     app.notify_warning("third warning");
     // Warnings (like Errors) queue. Unlike Errors, they are NOT sticky
     // and will auto-expire via tick_toast.
-    assert_eq!(app.toast.as_ref().unwrap().text, "first warning");
+    assert_eq!(
+        app.status_center.toast.as_ref().unwrap().text,
+        "first warning"
+    );
     assert!(
-        !app.toast.as_ref().unwrap().sticky,
+        !app.status_center.toast.as_ref().unwrap().sticky,
         "warnings must NOT be sticky (only errors are)"
     );
-    assert_eq!(app.toast_queue.len(), 2);
+    assert_eq!(app.status_center.toast_queue.len(), 2);
 }
 
 #[test]
@@ -6589,19 +6811,25 @@ fn success_clears_warning_queue() {
     let mut app = make_app("");
     app.notify_warning("a");
     app.notify_warning("b");
-    assert_eq!(app.toast_queue.len(), 1);
+    assert_eq!(app.status_center.toast_queue.len(), 1);
     app.notify("done");
-    assert_eq!(app.toast.as_ref().unwrap().text, "done");
-    assert!(app.toast_queue.is_empty());
+    assert_eq!(app.status_center.toast.as_ref().unwrap().text, "done");
+    assert!(app.status_center.toast_queue.is_empty());
 }
 
 #[test]
 fn notify_info_goes_to_footer() {
     let mut app = make_app("");
     app.notify_info("Syncing...");
-    assert!(app.toast.is_none());
-    assert_eq!(app.status.as_ref().unwrap().text, "Syncing...");
-    assert_eq!(app.status.as_ref().unwrap().class, MessageClass::Info);
+    assert!(app.status_center.toast.is_none());
+    assert_eq!(
+        app.status_center.status.as_ref().unwrap().text,
+        "Syncing..."
+    );
+    assert_eq!(
+        app.status_center.status.as_ref().unwrap().class,
+        MessageClass::Info
+    );
 }
 
 #[test]
@@ -6610,11 +6838,11 @@ fn tick_status_info_expires() {
     // "done" = 1 word → max(TIMEOUT_MIN_MS=2500, 750) = 2500ms.
     let mut app = make_app("");
     app.notify_info("done");
-    if let Some(status) = app.status.as_mut() {
+    if let Some(status) = app.status_center.status.as_mut() {
         status.created_at = Instant::now() - Duration::from_millis(2600);
     }
     app.tick_status();
-    assert!(app.status.is_none());
+    assert!(app.status_center.status.is_none());
 }
 
 #[test]
@@ -6622,21 +6850,22 @@ fn tick_status_does_not_expire_while_syncing() {
     use std::time::{Duration, Instant};
     let mut app = make_app("");
     app.notify_info("syncing...");
-    app.syncing_providers
+    app.providers
+        .syncing
         .insert("aws".to_string(), Arc::new(AtomicBool::new(true)));
     // Backdate past timeout.
-    if let Some(status) = app.status.as_mut() {
+    if let Some(status) = app.status_center.status.as_mut() {
         status.created_at = Instant::now() - Duration::from_secs(30);
     }
     app.tick_status();
     assert!(
-        app.status.is_some(),
+        app.status_center.status.is_some(),
         "status must not expire while providers are syncing"
     );
-    app.syncing_providers.clear();
+    app.providers.syncing.clear();
     app.tick_status();
     assert!(
-        app.status.is_none(),
+        app.status_center.status.is_none(),
         "status must expire after syncing completes"
     );
 }
@@ -6646,14 +6875,14 @@ fn tick_toast_error_does_not_auto_expire() {
     use std::time::{Duration, Instant};
     let mut app = make_app("");
     app.notify_error("failed");
-    assert!(app.toast.is_some());
+    assert!(app.status_center.toast.is_some());
     // Backdate far into the past.
-    if let Some(toast) = app.toast.as_mut() {
+    if let Some(toast) = app.status_center.toast.as_mut() {
         toast.created_at = Instant::now() - Duration::from_secs(3600);
     }
     app.tick_toast();
     assert!(
-        app.toast.is_some(),
+        app.status_center.toast.is_some(),
         "sticky error toast must remain visible regardless of elapsed time"
     );
 }
@@ -6664,12 +6893,12 @@ fn tick_toast_success_expires_after_timeout_ms() {
     // "done" = 1 word → max(2500, 750) = 2500ms.
     let mut app = make_app("");
     app.notify("done");
-    assert!(app.toast.is_some());
-    if let Some(toast) = app.toast.as_mut() {
+    assert!(app.status_center.toast.is_some());
+    if let Some(toast) = app.status_center.toast.as_mut() {
         toast.created_at = Instant::now() - Duration::from_millis(2600);
     }
     app.tick_toast();
-    assert!(app.toast.is_none());
+    assert!(app.status_center.toast.is_none());
 }
 
 #[test]
@@ -6678,13 +6907,13 @@ fn tick_toast_success_still_visible_before_expiry() {
     // "done" = 1 word → timeout_ms = 2500. Backdate 2000ms (< 2500).
     let mut app = make_app("");
     app.notify("done");
-    assert!(app.toast.is_some());
-    if let Some(toast) = app.toast.as_mut() {
+    assert!(app.status_center.toast.is_some());
+    if let Some(toast) = app.status_center.toast.as_mut() {
         toast.created_at = Instant::now() - Duration::from_millis(2000);
     }
     app.tick_toast();
     assert!(
-        app.toast.is_some(),
+        app.status_center.toast.is_some(),
         "success toast must still be visible before timeout_ms"
     );
 }
@@ -7386,7 +7615,7 @@ fn proxyjump_candidates_rest_items_are_not_flagged_suggested() {
 #[test]
 fn proxyjump_candidates_does_not_panic_for_unknown_editing_alias() {
     // The edit screen references an alias that is not present in
-    // `self.hosts`. This can happen in tests and during transient
+    // `self.hosts_state.list`. This can happen in tests and during transient
     // states; the function must not panic and should still return
     // every existing host, excluding none.
     let mut app = test_app_with_hosts(&[
@@ -7461,7 +7690,7 @@ fn bulk_app() -> App {
     // satisfies clippy::transmute_ptr_to_int.
     static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let id = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    app.config.path = std::env::temp_dir().join(format!(
+    app.hosts_state.ssh_config.path = std::env::temp_dir().join(format!(
         "purple_bulk_test_{}_{}.cfg",
         std::process::id(),
         id
@@ -7480,16 +7709,17 @@ fn bulk_open_refuses_empty_selection() {
 fn bulk_open_seeds_rows_with_counts_and_sorts_aliases() {
     let mut app = bulk_app();
     // Select a, b, c (all 4 hosts share indices 0..3 sorted by config order).
-    app.multi_select.insert(0);
-    app.multi_select.insert(1);
-    app.multi_select.insert(2);
+    app.hosts_state.multi_select.insert(0);
+    app.hosts_state.multi_select.insert(1);
+    app.hosts_state.multi_select.insert(2);
     assert!(app.open_bulk_tag_editor());
     assert_eq!(app.screen, Screen::BulkTagEditor);
-    assert_eq!(app.bulk_tag_editor.aliases, vec!["a", "b", "c"]);
+    assert_eq!(app.forms.bulk_tag_editor.aliases, vec!["a", "b", "c"]);
     // Rows are the union of all user tags across the config. Each row's
     // count reflects how many of the selected hosts (a,b,c) have that
     // tag — 2 of 3 for prod, 2 of 3 for db.
     let by_tag: std::collections::HashMap<&str, usize> = app
+        .forms
         .bulk_tag_editor
         .rows
         .iter()
@@ -7499,7 +7729,8 @@ fn bulk_open_seeds_rows_with_counts_and_sorts_aliases() {
     assert_eq!(by_tag.get("db"), Some(&2));
     // Every row starts in Leave so Enter with no interaction is a no-op.
     assert!(
-        app.bulk_tag_editor
+        app.forms
+            .bulk_tag_editor
             .rows
             .iter()
             .all(|r| r.action == BulkTagAction::Leave)
@@ -7509,20 +7740,29 @@ fn bulk_open_seeds_rows_with_counts_and_sorts_aliases() {
 #[test]
 fn bulk_cycle_walks_three_states() {
     let mut app = bulk_app();
-    app.multi_select.insert(0);
+    app.hosts_state.multi_select.insert(0);
     assert!(app.open_bulk_tag_editor());
     // Select the first row (whatever it is).
     app.ui.bulk_tag_editor_state.select(Some(0));
-    assert_eq!(app.bulk_tag_editor.rows[0].action, BulkTagAction::Leave);
-    app.bulk_tag_editor_cycle_current();
-    assert_eq!(app.bulk_tag_editor.rows[0].action, BulkTagAction::AddToAll);
+    assert_eq!(
+        app.forms.bulk_tag_editor.rows[0].action,
+        BulkTagAction::Leave
+    );
     app.bulk_tag_editor_cycle_current();
     assert_eq!(
-        app.bulk_tag_editor.rows[0].action,
+        app.forms.bulk_tag_editor.rows[0].action,
+        BulkTagAction::AddToAll
+    );
+    app.bulk_tag_editor_cycle_current();
+    assert_eq!(
+        app.forms.bulk_tag_editor.rows[0].action,
         BulkTagAction::RemoveFromAll
     );
     app.bulk_tag_editor_cycle_current();
-    assert_eq!(app.bulk_tag_editor.rows[0].action, BulkTagAction::Leave);
+    assert_eq!(
+        app.forms.bulk_tag_editor.rows[0].action,
+        BulkTagAction::Leave
+    );
 }
 
 #[test]
@@ -7530,26 +7770,47 @@ fn bulk_apply_add_to_all_adds_missing_and_reports_delta() {
     let mut app = bulk_app();
     // Select a (has prod) + d (has nothing). Target: add `prod` to both;
     // only d should actually gain the tag.
-    let idx_a = app.hosts.iter().position(|h| h.alias == "a").unwrap();
-    let idx_d = app.hosts.iter().position(|h| h.alias == "d").unwrap();
-    app.multi_select.insert(idx_a);
-    app.multi_select.insert(idx_d);
+    let idx_a = app
+        .hosts_state
+        .list
+        .iter()
+        .position(|h| h.alias == "a")
+        .unwrap();
+    let idx_d = app
+        .hosts_state
+        .list
+        .iter()
+        .position(|h| h.alias == "d")
+        .unwrap();
+    app.hosts_state.multi_select.insert(idx_a);
+    app.hosts_state.multi_select.insert(idx_d);
     assert!(app.open_bulk_tag_editor());
     let prod_row = app
+        .forms
         .bulk_tag_editor
         .rows
         .iter()
         .position(|r| r.tag == "prod")
         .expect("prod row");
-    app.bulk_tag_editor.rows[prod_row].action = BulkTagAction::AddToAll;
+    app.forms.bulk_tag_editor.rows[prod_row].action = BulkTagAction::AddToAll;
     let result = app.bulk_tag_apply().expect("apply ok");
     assert_eq!(result.changed_hosts, 1, "only d should change");
     assert_eq!(result.added, 1);
     assert_eq!(result.removed, 0);
 
     // Both hosts now have prod.
-    let a = app.hosts.iter().find(|h| h.alias == "a").unwrap();
-    let d = app.hosts.iter().find(|h| h.alias == "d").unwrap();
+    let a = app
+        .hosts_state
+        .list
+        .iter()
+        .find(|h| h.alias == "a")
+        .unwrap();
+    let d = app
+        .hosts_state
+        .list
+        .iter()
+        .find(|h| h.alias == "d")
+        .unwrap();
     assert!(a.tags.contains(&"prod".to_string()));
     assert!(d.tags.contains(&"prod".to_string()));
 }
@@ -7558,24 +7819,45 @@ fn bulk_apply_add_to_all_adds_missing_and_reports_delta() {
 fn bulk_apply_remove_from_all_strips_tag_only_where_present() {
     let mut app = bulk_app();
     // Select b (prod, db) and c (db). Remove `db` from both.
-    let idx_b = app.hosts.iter().position(|h| h.alias == "b").unwrap();
-    let idx_c = app.hosts.iter().position(|h| h.alias == "c").unwrap();
-    app.multi_select.insert(idx_b);
-    app.multi_select.insert(idx_c);
+    let idx_b = app
+        .hosts_state
+        .list
+        .iter()
+        .position(|h| h.alias == "b")
+        .unwrap();
+    let idx_c = app
+        .hosts_state
+        .list
+        .iter()
+        .position(|h| h.alias == "c")
+        .unwrap();
+    app.hosts_state.multi_select.insert(idx_b);
+    app.hosts_state.multi_select.insert(idx_c);
     assert!(app.open_bulk_tag_editor());
     let db_row = app
+        .forms
         .bulk_tag_editor
         .rows
         .iter()
         .position(|r| r.tag == "db")
         .expect("db row");
-    app.bulk_tag_editor.rows[db_row].action = BulkTagAction::RemoveFromAll;
+    app.forms.bulk_tag_editor.rows[db_row].action = BulkTagAction::RemoveFromAll;
     let result = app.bulk_tag_apply().expect("apply ok");
     assert_eq!(result.changed_hosts, 2);
     assert_eq!(result.removed, 2);
     assert_eq!(result.added, 0);
-    let b = app.hosts.iter().find(|h| h.alias == "b").unwrap();
-    let c = app.hosts.iter().find(|h| h.alias == "c").unwrap();
+    let b = app
+        .hosts_state
+        .list
+        .iter()
+        .find(|h| h.alias == "b")
+        .unwrap();
+    let c = app
+        .hosts_state
+        .list
+        .iter()
+        .find(|h| h.alias == "c")
+        .unwrap();
     assert!(!b.tags.contains(&"db".to_string()));
     assert!(!c.tags.contains(&"db".to_string()));
     // `prod` on b is untouched — only `db` was targeted.
@@ -7585,8 +7867,8 @@ fn bulk_apply_remove_from_all_strips_tag_only_where_present() {
 #[test]
 fn bulk_apply_leave_is_noop_and_reports_zero_counts() {
     let mut app = bulk_app();
-    app.multi_select.insert(0);
-    app.multi_select.insert(1);
+    app.hosts_state.multi_select.insert(0);
+    app.hosts_state.multi_select.insert(1);
     assert!(app.open_bulk_tag_editor());
     let result = app.bulk_tag_apply().expect("apply ok");
     assert_eq!(result.changed_hosts, 0);
@@ -7598,29 +7880,50 @@ fn bulk_apply_leave_is_noop_and_reports_zero_counts() {
 fn bulk_apply_add_and_remove_in_one_pass() {
     let mut app = bulk_app();
     // Select b (prod, db) + d (nothing). Add `staging`, remove `db`.
-    let idx_b = app.hosts.iter().position(|h| h.alias == "b").unwrap();
-    let idx_d = app.hosts.iter().position(|h| h.alias == "d").unwrap();
-    app.multi_select.insert(idx_b);
-    app.multi_select.insert(idx_d);
+    let idx_b = app
+        .hosts_state
+        .list
+        .iter()
+        .position(|h| h.alias == "b")
+        .unwrap();
+    let idx_d = app
+        .hosts_state
+        .list
+        .iter()
+        .position(|h| h.alias == "d")
+        .unwrap();
+    app.hosts_state.multi_select.insert(idx_b);
+    app.hosts_state.multi_select.insert(idx_d);
     assert!(app.open_bulk_tag_editor());
     // `staging` doesn't exist yet — use the new-tag path.
-    app.bulk_tag_editor.new_tag_input = Some("staging".into());
-    app.bulk_tag_editor.new_tag_cursor = 7;
+    app.forms.bulk_tag_editor.new_tag_input = Some("staging".into());
+    app.forms.bulk_tag_editor.new_tag_cursor = 7;
     app.bulk_tag_editor_commit_new_tag();
     let db_row = app
+        .forms
         .bulk_tag_editor
         .rows
         .iter()
         .position(|r| r.tag == "db")
         .expect("db row");
-    app.bulk_tag_editor.rows[db_row].action = BulkTagAction::RemoveFromAll;
+    app.forms.bulk_tag_editor.rows[db_row].action = BulkTagAction::RemoveFromAll;
     let result = app.bulk_tag_apply().expect("apply ok");
     // Both hosts gained staging (2 adds). Only b had db (1 remove).
     assert_eq!(result.added, 2, "staging adds");
     assert_eq!(result.removed, 1, "db remove");
     assert_eq!(result.changed_hosts, 2);
-    let b = app.hosts.iter().find(|h| h.alias == "b").unwrap();
-    let d = app.hosts.iter().find(|h| h.alias == "d").unwrap();
+    let b = app
+        .hosts_state
+        .list
+        .iter()
+        .find(|h| h.alias == "b")
+        .unwrap();
+    let d = app
+        .hosts_state
+        .list
+        .iter()
+        .find(|h| h.alias == "d")
+        .unwrap();
     assert!(b.tags.contains(&"staging".to_string()));
     assert!(d.tags.contains(&"staging".to_string()));
     assert!(!b.tags.contains(&"db".to_string()));
@@ -7629,16 +7932,17 @@ fn bulk_apply_add_and_remove_in_one_pass() {
 #[test]
 fn bulk_new_tag_input_dedupes_existing_row() {
     let mut app = bulk_app();
-    app.multi_select.insert(0);
+    app.hosts_state.multi_select.insert(0);
     assert!(app.open_bulk_tag_editor());
-    let before_rows = app.bulk_tag_editor.rows.len();
+    let before_rows = app.forms.bulk_tag_editor.rows.len();
     // Typing a tag that already exists should flip its action to AddToAll
     // rather than add a duplicate row.
-    app.bulk_tag_editor.new_tag_input = Some("prod".into());
-    app.bulk_tag_editor.new_tag_cursor = 4;
+    app.forms.bulk_tag_editor.new_tag_input = Some("prod".into());
+    app.forms.bulk_tag_editor.new_tag_cursor = 4;
     app.bulk_tag_editor_commit_new_tag();
-    assert_eq!(app.bulk_tag_editor.rows.len(), before_rows);
+    assert_eq!(app.forms.bulk_tag_editor.rows.len(), before_rows);
     let prod = app
+        .forms
         .bulk_tag_editor
         .rows
         .iter()
@@ -7678,19 +7982,30 @@ fn bulk_apply_add_to_all_noop_when_all_hosts_already_have_tag() {
     // When every selected host already carries the tag, AddToAll should
     // NOT trigger a config write (changed_hosts == 0).
     let mut app = bulk_app();
-    let idx_a = app.hosts.iter().position(|h| h.alias == "a").unwrap();
-    let idx_b = app.hosts.iter().position(|h| h.alias == "b").unwrap();
-    app.multi_select.insert(idx_a);
-    app.multi_select.insert(idx_b);
+    let idx_a = app
+        .hosts_state
+        .list
+        .iter()
+        .position(|h| h.alias == "a")
+        .unwrap();
+    let idx_b = app
+        .hosts_state
+        .list
+        .iter()
+        .position(|h| h.alias == "b")
+        .unwrap();
+    app.hosts_state.multi_select.insert(idx_a);
+    app.hosts_state.multi_select.insert(idx_b);
     assert!(app.open_bulk_tag_editor());
     let prod_row = app
+        .forms
         .bulk_tag_editor
         .rows
         .iter()
         .position(|r| r.tag == "prod")
         .unwrap();
     // Both a and b already have "prod".
-    app.bulk_tag_editor.rows[prod_row].action = BulkTagAction::AddToAll;
+    app.forms.bulk_tag_editor.rows[prod_row].action = BulkTagAction::AddToAll;
     let result = app.bulk_tag_apply().expect("apply ok");
     assert_eq!(result.changed_hosts, 0);
     assert_eq!(result.added, 0);
@@ -7702,31 +8017,38 @@ fn bulk_open_with_include_file_host_records_skipped() {
     // Verify they show up in skipped_included and their tags stay intact.
     let mut app = bulk_app();
     // Simulate an Include-sourced host by setting source_file.
-    app.hosts[0].source_file = Some(PathBuf::from("/etc/ssh/extra.conf"));
+    app.hosts_state.list[0].source_file = Some(PathBuf::from("/etc/ssh/extra.conf"));
     let idx_0 = 0;
     let idx_1 = 1;
-    app.multi_select.insert(idx_0);
-    app.multi_select.insert(idx_1);
+    app.hosts_state.multi_select.insert(idx_0);
+    app.hosts_state.multi_select.insert(idx_1);
     assert!(app.open_bulk_tag_editor());
-    assert_eq!(app.bulk_tag_editor.skipped_included.len(), 1);
+    assert_eq!(app.forms.bulk_tag_editor.skipped_included.len(), 1);
     assert!(
-        app.bulk_tag_editor
+        app.forms
+            .bulk_tag_editor
             .skipped_included
-            .contains(&app.hosts[0].alias.clone())
+            .contains(&app.hosts_state.list[0].alias.clone())
     );
 
     // Force add a tag; the skipped host must NOT get it.
     let db_row = app
+        .forms
         .bulk_tag_editor
         .rows
         .iter()
         .position(|r| r.tag == "db")
         .unwrap();
-    app.bulk_tag_editor.rows[db_row].action = BulkTagAction::AddToAll;
+    app.forms.bulk_tag_editor.rows[db_row].action = BulkTagAction::AddToAll;
     let result = app.bulk_tag_apply().expect("apply ok");
     assert_eq!(result.skipped_included, 1);
     // Host 0 (alias "a") should be unchanged because it is in Include.
-    let a = app.hosts.iter().find(|h| h.alias == "a").unwrap();
+    let a = app
+        .hosts_state
+        .list
+        .iter()
+        .find(|h| h.alias == "a")
+        .unwrap();
     assert!(!a.tags.contains(&"db".to_string()));
 }
 
@@ -7734,62 +8056,74 @@ fn bulk_open_with_include_file_host_records_skipped() {
 fn bulk_apply_write_failure_rolls_back_and_keeps_undo_empty() {
     let mut app = bulk_app();
     // Point the config to an unwritable path.
-    app.config.path = PathBuf::from("/dev/null/impossible/path.cfg");
-    let idx = app.hosts.iter().position(|h| h.alias == "a").unwrap();
-    app.multi_select.insert(idx);
+    app.hosts_state.ssh_config.path = PathBuf::from("/dev/null/impossible/path.cfg");
+    let idx = app
+        .hosts_state
+        .list
+        .iter()
+        .position(|h| h.alias == "a")
+        .unwrap();
+    app.hosts_state.multi_select.insert(idx);
     assert!(app.open_bulk_tag_editor());
     let prod_row = app
+        .forms
         .bulk_tag_editor
         .rows
         .iter()
         .position(|r| r.tag == "prod")
         .unwrap();
-    app.bulk_tag_editor.rows[prod_row].action = BulkTagAction::RemoveFromAll;
+    app.forms.bulk_tag_editor.rows[prod_row].action = BulkTagAction::RemoveFromAll;
     let err = app.bulk_tag_apply();
     assert!(err.is_err(), "should fail on bad path");
     // Undo snapshot should NOT be set on failure.
-    assert!(app.bulk_tag_undo.is_none());
+    assert!(app.forms.bulk_tag_undo.is_none());
 }
 
 #[test]
 fn bulk_double_undo_falls_through_to_delete_stack() {
     let mut app = bulk_app();
-    let idx = app.hosts.iter().position(|h| h.alias == "a").unwrap();
-    app.multi_select.insert(idx);
+    let idx = app
+        .hosts_state
+        .list
+        .iter()
+        .position(|h| h.alias == "a")
+        .unwrap();
+    app.hosts_state.multi_select.insert(idx);
     assert!(app.open_bulk_tag_editor());
     let prod_row = app
+        .forms
         .bulk_tag_editor
         .rows
         .iter()
         .position(|r| r.tag == "prod")
         .unwrap();
-    app.bulk_tag_editor.rows[prod_row].action = BulkTagAction::RemoveFromAll;
+    app.forms.bulk_tag_editor.rows[prod_row].action = BulkTagAction::RemoveFromAll;
     app.bulk_tag_apply().expect("apply ok");
-    assert!(app.bulk_tag_undo.is_some());
+    assert!(app.forms.bulk_tag_undo.is_some());
 
     // First undo: restores tags. Simulate the undo handler inline.
-    let snapshot = app.bulk_tag_undo.take().unwrap();
+    let snapshot = app.forms.bulk_tag_undo.take().unwrap();
     for (alias, tags) in &snapshot {
-        app.config.set_host_tags(alias, tags);
+        app.hosts_state.ssh_config.set_host_tags(alias, tags);
     }
-    let _ = app.config.write(); // may fail in test env, that's ok
+    let _ = app.hosts_state.ssh_config.write(); // may fail in test env, that's ok
     // Second undo attempt: no bulk_tag_undo, no undo_stack → nothing.
-    assert!(app.bulk_tag_undo.is_none());
-    assert!(app.undo_stack.is_empty());
+    assert!(app.forms.bulk_tag_undo.is_none());
+    assert!(app.hosts_state.undo_stack.is_empty());
 }
 
 #[test]
 fn bulk_new_tag_empty_input_is_noop() {
     let mut app = bulk_app();
-    app.multi_select.insert(0);
+    app.hosts_state.multi_select.insert(0);
     assert!(app.open_bulk_tag_editor());
-    let before = app.bulk_tag_editor.rows.len();
+    let before = app.forms.bulk_tag_editor.rows.len();
     // Submit whitespace-only new tag.
-    app.bulk_tag_editor.new_tag_input = Some("   ".into());
-    app.bulk_tag_editor.new_tag_cursor = 3;
+    app.forms.bulk_tag_editor.new_tag_input = Some("   ".into());
+    app.forms.bulk_tag_editor.new_tag_cursor = 3;
     app.bulk_tag_editor_commit_new_tag();
-    assert_eq!(app.bulk_tag_editor.rows.len(), before);
-    assert!(app.bulk_tag_editor.new_tag_input.is_none());
+    assert_eq!(app.forms.bulk_tag_editor.rows.len(), before);
+    assert!(app.forms.bulk_tag_editor.new_tag_input.is_none());
 }
 
 #[test]
@@ -7798,22 +8132,22 @@ fn bulk_open_with_zero_tags_in_config_succeeds() {
         test_app_with_hosts(&["Host x\n  HostName 1.1.1.1", "Host y\n  HostName 2.2.2.2"]);
     static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let id = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    app.config.path = std::env::temp_dir().join(format!(
+    app.hosts_state.ssh_config.path = std::env::temp_dir().join(format!(
         "purple_zero_tags_test_{}_{}.cfg",
         std::process::id(),
         id
     ));
-    app.multi_select.insert(0);
-    app.multi_select.insert(1);
+    app.hosts_state.multi_select.insert(0);
+    app.hosts_state.multi_select.insert(1);
     assert!(app.open_bulk_tag_editor());
-    assert!(app.bulk_tag_editor.rows.is_empty());
+    assert!(app.forms.bulk_tag_editor.rows.is_empty());
     assert_eq!(app.screen, Screen::BulkTagEditor);
     // New-tag input should still work on empty list.
-    app.bulk_tag_editor.new_tag_input = Some("fresh".into());
-    app.bulk_tag_editor.new_tag_cursor = 5;
+    app.forms.bulk_tag_editor.new_tag_input = Some("fresh".into());
+    app.forms.bulk_tag_editor.new_tag_cursor = 5;
     app.bulk_tag_editor_commit_new_tag();
-    assert_eq!(app.bulk_tag_editor.rows.len(), 1);
-    assert_eq!(app.bulk_tag_editor.rows[0].tag, "fresh");
+    assert_eq!(app.forms.bulk_tag_editor.rows.len(), 1);
+    assert_eq!(app.forms.bulk_tag_editor.rows[0].tag, "fresh");
 }
 
 #[test]
@@ -7824,12 +8158,13 @@ fn post_init_enqueues_toast_when_version_advanced() {
         app.post_init();
         let fragment = crate::messages::whats_new_toast::INVITE_FRAGMENT;
         assert!(
-            app.toast
+            app.status_center
+                .toast
                 .as_ref()
                 .is_some_and(|t| t.text.contains(fragment)),
             "expected sticky upgrade toast"
         );
-        assert!(app.toast.as_ref().is_some_and(|t| t.sticky));
+        assert!(app.status_center.toast.as_ref().is_some_and(|t| t.sticky));
     });
 }
 
@@ -7841,7 +8176,8 @@ fn post_init_silent_when_versions_equal() {
         app.post_init();
         let fragment = crate::messages::whats_new_toast::INVITE_FRAGMENT;
         assert!(
-            !app.toast
+            !app.status_center
+                .toast
                 .as_ref()
                 .is_some_and(|t| t.text.contains(fragment)),
             "no toast when last_seen matches current"

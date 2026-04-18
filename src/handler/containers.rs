@@ -155,7 +155,7 @@ pub(super) fn handle_containers(
                     config_path: app.reload.config_path.clone(),
                     askpass: state.askpass.clone(),
                     bw_session: app.bw_session.clone(),
-                    has_tunnel: app.active_tunnels.contains_key(&alias),
+                    has_tunnel: app.tunnels.active.contains_key(&alias),
                 };
                 let tx = events_tx.clone();
                 crate::containers::spawn_container_listing(
@@ -214,7 +214,7 @@ fn container_action(
         config_path: app.reload.config_path.clone(),
         askpass: state.askpass.clone(),
         bw_session: app.bw_session.clone(),
-        has_tunnel: app.active_tunnels.contains_key(&alias),
+        has_tunnel: app.tunnels.active.contains_key(&alias),
     };
     let tx = events_tx.clone();
     crate::containers::spawn_container_action(

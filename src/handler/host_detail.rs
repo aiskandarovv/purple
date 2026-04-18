@@ -14,10 +14,10 @@ pub(super) fn handle_tag_input(app: &mut App, key: KeyEvent) {
                 if let Some(host) = app.selected_host() {
                     let alias = host.alias.clone();
                     let old_tags = host.tags.clone();
-                    app.config.set_host_tags(&alias, &tags);
-                    if let Err(e) = app.config.write() {
+                    app.hosts_state.ssh_config.set_host_tags(&alias, &tags);
+                    if let Err(e) = app.hosts_state.ssh_config.write() {
                         // Restore old tags on write failure
-                        app.config.set_host_tags(&alias, &old_tags);
+                        app.hosts_state.ssh_config.set_host_tags(&alias, &old_tags);
                         app.notify_error(crate::messages::failed_to_save(&e));
                     } else {
                         app.update_last_modified();
@@ -88,12 +88,12 @@ pub(super) fn handle_host_detail(app: &mut App, key: KeyEvent) {
             });
         }
         KeyCode::Char('e') => {
-            if let Some(host) = app.hosts.get(index).cloned() {
+            if let Some(host) = app.hosts_state.list.get(index).cloned() {
                 super::open_edit_form(app, host);
             }
         }
         KeyCode::Char('T') => {
-            if let Some(host) = app.hosts.get(index) {
+            if let Some(host) = app.hosts_state.list.get(index) {
                 let stale_hint = if host.stale.is_some() {
                     Some(super::stale_provider_hint(host))
                 } else {
@@ -105,14 +105,14 @@ pub(super) fn handle_host_detail(app: &mut App, key: KeyEvent) {
                 }
                 app.refresh_tunnel_list(&alias);
                 app.ui.tunnel_list_state = ratatui::widgets::ListState::default();
-                if !app.tunnel_list.is_empty() {
+                if !app.tunnels.list.is_empty() {
                     app.ui.tunnel_list_state.select(Some(0));
                 }
                 app.set_screen(Screen::TunnelList { alias });
             }
         }
         KeyCode::Char('r') => {
-            if let Some(host) = app.hosts.get(index) {
+            if let Some(host) = app.hosts_state.list.get(index) {
                 let stale_hint = if host.stale.is_some() {
                     Some(super::stale_provider_hint(host))
                 } else {

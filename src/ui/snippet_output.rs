@@ -16,7 +16,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         _ => return,
     };
 
-    let state = match &app.snippet_output {
+    let state = match &app.snippets.output {
         Some(s) => s,
         None => return,
     };

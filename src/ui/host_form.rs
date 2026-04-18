@@ -63,8 +63,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // it is only rendered when a Vault SSH Role is set on this form (the
     // address is meaningless without a role, and hiding it keeps the form
     // compact for the 99% of hosts that do not use Vault SSH).
-    let expanded = app.form.expanded;
-    let role_set = !app.form.vault_ssh.trim().is_empty();
+    let expanded = app.forms.host.expanded;
+    let role_set = !app.forms.host.vault_ssh.trim().is_empty();
     let base: &[(FormField, bool)] = if expanded {
         ALL_FIELDS
     } else {
@@ -82,7 +82,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     let form_area = design::overlay_area(frame, design::OVERLAY_W, design::OVERLAY_H, total_height);
 
-    let title = if app.form.is_pattern {
+    let title = if app.forms.host.is_pattern {
         match &app.screen {
             Screen::AddHost => "Add Pattern".to_string(),
             Screen::EditHost { alias } => {
@@ -121,12 +121,13 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // Compute provider vault role hint for the VaultSsh field placeholder
     let vault_provider_hint: Option<(String, String)> =
         if let Screen::EditHost { alias } = &app.screen {
-            app.hosts
+            app.hosts_state
+                .list
                 .iter()
                 .find(|h| h.alias == *alias)
                 .and_then(|h| h.provider.as_ref())
                 .and_then(|prov| {
-                    app.provider_config.section(prov).and_then(|s| {
+                    app.providers.config.section(prov).and_then(|s| {
                         if s.vault_role.is_empty() {
                             None
                         } else {
@@ -144,12 +145,13 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // and re-open the detail panel to find out.
     let vault_addr_provider_hint: Option<(String, String)> =
         if let Screen::EditHost { alias } = &app.screen {
-            app.hosts
+            app.hosts_state
+                .list
                 .iter()
                 .find(|h| h.alias == *alias)
                 .and_then(|h| h.provider.as_ref())
                 .and_then(|prov| {
-                    app.provider_config.section(prov).and_then(|s| {
+                    app.providers.config.section(prov).and_then(|s| {
                         if s.vault_addr.is_empty() {
                             None
                         } else {
@@ -165,18 +167,18 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         let divider_y = design::form_divider_y(inner, idx);
         let content_y = divider_y + 1;
 
-        let is_focused = app.form.focused_field == field;
+        let is_focused = app.forms.host.focused_field == field;
         let label_style = if is_focused {
             theme::accent_bold()
         } else {
             theme::muted()
         };
-        let field_label = if app.form.is_pattern && field == FormField::Alias {
+        let field_label = if app.forms.host.is_pattern && field == FormField::Alias {
             "Pattern"
         } else {
             field.label()
         };
-        let is_required = if app.form.is_pattern && field == FormField::Hostname {
+        let is_required = if app.forms.host.is_pattern && field == FormField::Hostname {
             false
         } else {
             field_required
@@ -200,7 +202,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             frame,
             content_area,
             field,
-            &app.form,
+            &app.forms.host,
             picker_open,
             vault_provider_hint.as_ref(),
             vault_addr_provider_hint.as_ref(),
@@ -212,16 +214,16 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // dynamic form-save footer reflects the focused field's kind (text /
     // toggle / picker) so users discover Space-pick on picker fields.
     let footer_area = design::render_overlay_footer(frame, block_area);
-    if app.pending_discard_confirm {
+    if app.forms.pending_discard_confirm {
         design::render_discard_prompt(frame, footer_area, app);
     } else {
         let mode = if !expanded {
             design::FormFooterMode::Collapsed
         } else {
-            design::FormFooterMode::Expanded(app.form.focused_field.kind())
+            design::FormFooterMode::Expanded(app.forms.host.focused_field.kind())
         };
         let mut footer_spans = design::form_save_footer(mode).into_spans();
-        if let Some(ref hint) = app.form.form_hint {
+        if let Some(ref hint) = app.forms.host.form_hint {
             let hint_width: usize = hint.width() + 4; // " ⚠ {hint} "
             let shortcuts_width: usize = footer_spans.iter().map(|s| s.width()).sum();
             let total = footer_area.width as usize;

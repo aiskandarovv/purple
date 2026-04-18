@@ -163,7 +163,7 @@ impl AnimationState {
         // Detail panel toggle
         if app.detail_toggle_pending {
             app.detail_toggle_pending = false;
-            let opening = app.view_mode == crate::app::ViewMode::Detailed;
+            let opening = app.hosts_state.view_mode == crate::app::ViewMode::Detailed;
             let start_progress =
                 self.detail_anim_progress()
                     .unwrap_or(if opening { 0.0 } else { 1.0 });
@@ -262,7 +262,7 @@ mod tests {
         let mut app = make_app();
         let mut anim = AnimationState::new();
         app.detail_toggle_pending = true;
-        app.view_mode = crate::app::ViewMode::Detailed;
+        app.hosts_state.view_mode = crate::app::ViewMode::Detailed;
         anim.detect_transitions(&mut app);
         assert!(anim.is_animating(&app));
     }
@@ -466,7 +466,7 @@ mod tests {
         let mut app = make_app();
         let mut anim = AnimationState::new();
         app.detail_toggle_pending = true;
-        app.view_mode = crate::app::ViewMode::Detailed;
+        app.hosts_state.view_mode = crate::app::ViewMode::Detailed;
         anim.detect_transitions(&mut app);
         assert!(!app.detail_toggle_pending);
         assert!(anim.detail_anim.is_some());
@@ -477,7 +477,7 @@ mod tests {
         let mut app = make_app();
         let mut anim = AnimationState::new();
         app.detail_toggle_pending = true;
-        app.view_mode = crate::app::ViewMode::Compact;
+        app.hosts_state.view_mode = crate::app::ViewMode::Compact;
         anim.detect_transitions(&mut app);
         assert!(anim.detail_anim.is_some());
     }
@@ -487,7 +487,7 @@ mod tests {
         let mut app = make_app();
         let mut anim = AnimationState::new();
         app.detail_toggle_pending = true;
-        app.view_mode = crate::app::ViewMode::Detailed;
+        app.hosts_state.view_mode = crate::app::ViewMode::Detailed;
         anim.detect_transitions(&mut app);
         let p = anim.detail_anim_progress();
         assert!(p.is_some());
@@ -505,7 +505,7 @@ mod tests {
         let mut app = make_app();
         let mut anim = AnimationState::new();
         app.detail_toggle_pending = true;
-        app.view_mode = crate::app::ViewMode::Detailed;
+        app.hosts_state.view_mode = crate::app::ViewMode::Detailed;
         anim.detect_transitions(&mut app);
         anim.detail_anim.as_mut().unwrap().start =
             Instant::now() - std::time::Duration::from_millis(300);
@@ -518,12 +518,12 @@ mod tests {
         let mut app = make_app();
         let mut anim = AnimationState::new();
         app.detail_toggle_pending = true;
-        app.view_mode = crate::app::ViewMode::Detailed;
+        app.hosts_state.view_mode = crate::app::ViewMode::Detailed;
         anim.detect_transitions(&mut app);
         let _ = anim.detail_anim_progress();
 
         app.detail_toggle_pending = true;
-        app.view_mode = crate::app::ViewMode::Compact;
+        app.hosts_state.view_mode = crate::app::ViewMode::Compact;
         anim.detect_transitions(&mut app);
         assert!(anim.detail_anim.is_some());
         assert!(!anim.detail_anim.as_ref().unwrap().opening);
@@ -534,7 +534,7 @@ mod tests {
         let mut app = make_app();
         let mut anim = AnimationState::new();
         app.detail_toggle_pending = true;
-        app.view_mode = crate::app::ViewMode::Detailed;
+        app.hosts_state.view_mode = crate::app::ViewMode::Detailed;
         app.screen = Screen::Help {
             return_screen: Box::new(Screen::HostList),
         };

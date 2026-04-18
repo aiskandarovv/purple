@@ -226,7 +226,7 @@ pub fn render(frame: &mut Frame, app: &mut App, spinner_tick: u64, detail_progre
     let is_tagging = app.tags.input.is_some();
     // Group bar: bordered block with tabs (top + content + bottom = 3 rows).
     // Only shown when grouping is active and there are groups to display.
-    let show_group_bar = !matches!(app.group_by, GroupBy::None);
+    let show_group_bar = !matches!(app.hosts_state.group_by, GroupBy::None);
     let group_bar_height: u16 = if show_group_bar { 3 } else { 0 };
 
     // Layout: optional group bar + host list + optional input bar + footer/status
@@ -253,7 +253,7 @@ pub fn render(frame: &mut Frame, app: &mut App, spinner_tick: u64, detail_progre
 
     let content_area = chunks[1];
     let target_detail =
-        app.view_mode == ViewMode::Detailed && content_area.width >= DETAIL_MIN_WIDTH;
+        app.hosts_state.view_mode == ViewMode::Detailed && content_area.width >= DETAIL_MIN_WIDTH;
     let full_detail_width = if content_area.width >= 140 {
         46u16
     } else {
@@ -302,7 +302,7 @@ pub fn render(frame: &mut Frame, app: &mut App, spinner_tick: u64, detail_progre
             footer_spans(
                 target_detail,
                 app.ping.filter_down_only,
-                !app.multi_select.is_empty(),
+                !app.hosts_state.multi_select.is_empty(),
             )
         };
         super::render_footer_with_help(frame, chunks[2], spans, app);
@@ -322,15 +322,16 @@ pub fn render(frame: &mut Frame, app: &mut App, spinner_tick: u64, detail_progre
 }
 
 fn render_group_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
-    let total = app.hosts.len() + app.patterns.len();
+    let total = app.hosts_state.list.len() + app.hosts_state.patterns.len();
 
-    let titles: Vec<Line> = match &app.group_by {
+    let titles: Vec<Line> = match &app.hosts_state.group_by {
         GroupBy::Tag(_) => std::iter::once(Line::from(vec![
             Span::styled(" All ", theme::bold()),
             Span::styled(format!("({})", total), theme::muted()),
         ]))
-        .chain(app.group_tab_order.iter().map(|tag| {
+        .chain(app.hosts_state.group_tab_order.iter().map(|tag| {
             let count = app
+                .hosts_state
                 .group_host_counts
                 .get(tag.as_str())
                 .copied()
@@ -342,8 +343,9 @@ fn render_group_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
         }))
         .collect(),
         _ => std::iter::once(("All".to_string(), total))
-            .chain(app.group_tab_order.iter().map(|name| {
+            .chain(app.hosts_state.group_tab_order.iter().map(|name| {
                 let count = app
+                    .hosts_state
                     .group_host_counts
                     .get(name.as_str())
                     .copied()
@@ -362,7 +364,7 @@ fn render_group_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     let block = design::main_block("purple");
 
     let tabs = Tabs::new(titles)
-        .select(app.group_tab_index)
+        .select(app.hosts_state.group_tab_index)
         .highlight_style(theme::brand_badge())
         .divider(Span::raw("  "))
         .block(block);
@@ -388,12 +390,13 @@ fn render_display_list(
     // Build multi-span title: hosts count + optional state badges.
     // Show "purple" branding when group bar is hidden, "hosts" otherwise.
     let visible_count = app
+        .hosts_state
         .display_list
         .iter()
         .filter(|i| matches!(i, HostListItem::Host { .. } | HostListItem::Pattern { .. }))
         .count();
-    let brand_label = brand_label_for_group(&app.group_by);
-    let brand_style = if matches!(app.group_by, GroupBy::None) {
+    let brand_label = brand_label_for_group(&app.hosts_state.group_by);
+    let brand_style = if matches!(app.hosts_state.group_by, GroupBy::None) {
         theme::brand_badge()
     } else {
         theme::brand()
@@ -406,22 +409,28 @@ fn render_display_list(
     if app.tags.input.is_some() {
         title_spans.push(Span::styled("── ", theme::muted()));
         title_spans.push(Span::styled(" TAGGING ", theme::brand_badge()));
-    } else if !app.multi_select.is_empty() {
+    } else if !app.hosts_state.multi_select.is_empty() {
         title_spans.push(Span::styled("── ", theme::muted()));
         title_spans.push(Span::styled(
-            format!(" {} SELECTED ", app.multi_select.len()),
+            format!(" {} SELECTED ", app.hosts_state.multi_select.len()),
             theme::brand_badge(),
         ));
     } else {
         // Health summary after count (scoped to visible hosts when group filter active)
-        let health = if app.group_filter.is_some() {
-            let visible_aliases = app.display_list.iter().filter_map(|item| match item {
-                HostListItem::Host { index } => app.hosts.get(*index).map(|h| h.alias.as_str()),
-                _ => None,
-            });
+        let health = if app.hosts_state.group_filter.is_some() {
+            let visible_aliases =
+                app.hosts_state
+                    .display_list
+                    .iter()
+                    .filter_map(|item| match item {
+                        HostListItem::Host { index } => {
+                            app.hosts_state.list.get(*index).map(|h| h.alias.as_str())
+                        }
+                        _ => None,
+                    });
             app::health_summary_spans_for(&app.ping.status, visible_aliases)
         } else {
-            app::health_summary_spans(&app.ping.status, &app.hosts)
+            app::health_summary_spans(&app.ping.status, &app.hosts_state.list)
         };
         if !health.is_empty() {
             title_spans.push(Span::styled("── ", theme::muted()));
@@ -429,7 +438,7 @@ fn render_display_list(
             title_spans.push(Span::raw(" "));
         }
         // Group filter label
-        if let Some(ref filter) = app.group_filter {
+        if let Some(ref filter) = app.hosts_state.group_filter {
             title_spans.push(Span::styled("── ", theme::muted()));
             title_spans.push(Span::styled(format!("{} ", filter), theme::muted()));
         }
@@ -448,7 +457,7 @@ fn render_display_list(
 
     let url_label = Line::from(Span::styled(" getpurple.sh ", theme::muted()));
 
-    if app.hosts.is_empty() {
+    if app.hosts_state.list.is_empty() {
         // Compound multi-span title: use `main_block_line` so the helper owns
         // the border style/type and we only supply the pre-built `Line`.
         let mut block =
@@ -478,28 +487,38 @@ fn render_display_list(
     // Compute column layout
     let content_width = (inner.width as usize).saturating_sub(2); // -1 right margin, -1 left margin
     // Detail mode: detail panel is visible when ViewMode::Detailed and terminal is wide enough.
-    let detail_mode = app.view_mode == ViewMode::Detailed && frame.area().width >= DETAIL_MIN_WIDTH;
-    let alias_w = app.hosts.iter().map(|h| h.alias.width()).max().unwrap_or(8);
+    let detail_mode =
+        app.hosts_state.view_mode == ViewMode::Detailed && frame.area().width >= DETAIL_MIN_WIDTH;
+    let alias_w = app
+        .hosts_state
+        .list
+        .iter()
+        .map(|h| h.alias.width())
+        .max()
+        .unwrap_or(8);
     let host_w = app
-        .hosts
+        .hosts_state
+        .list
         .iter()
         .map(composite_host_width)
         .max()
         .unwrap_or(12);
     let tags_w = app
-        .hosts
+        .hosts_state
+        .list
         .iter()
-        .map(|h| host_tags_width(h, &app.group_by, detail_mode))
+        .map(|h| host_tags_width(h, &app.hosts_state.group_by, detail_mode))
         .max()
         .unwrap_or(0);
     // history_w requires formatting a timestamp per host, which allocates a
     // String each call. The result only changes when `history` does, so cache
     // it and reuse across frames until invalidated.
-    let history_w = if let Some(w) = app.host_list_cache.history_width {
+    let history_w = if let Some(w) = app.hosts_state.render_cache.history_width {
         w
     } else {
         let w = app
-            .hosts
+            .hosts_state
+            .list
             .iter()
             .filter_map(|h| app.history.entries.get(&h.alias))
             .map(|e| crate::history::ConnectionHistory::format_time_ago(e.last_connected))
@@ -507,7 +526,7 @@ fn render_display_list(
             .map(|s| s.width())
             .max()
             .unwrap_or(0);
-        app.host_list_cache.history_width = Some(w);
+        app.hosts_state.render_cache.history_width = Some(w);
         w
     };
     let cols = Columns::compute(
@@ -527,7 +546,7 @@ fn render_display_list(
     ])
     .areas(inner);
 
-    render_header(frame, header_area, &cols, app.sort_mode);
+    render_header(frame, header_area, &cols, app.hosts_state.sort_mode);
     frame.render_widget(
         Paragraph::new(Span::styled(
             "─".repeat(underline_area.width as usize),
@@ -540,18 +559,18 @@ fn render_display_list(
     // Cached on App and reused across frames until the display list or hosts
     // change — rebuild cost is only paid once per mutation instead of every
     // render tick during animations.
-    if app.host_list_cache.group_alias_map.is_none() {
+    if app.hosts_state.render_cache.group_alias_map.is_none() {
         let mut map: std::collections::HashMap<String, Vec<String>> =
             std::collections::HashMap::new();
         let mut current_group: Option<String> = None;
-        for item in &app.display_list {
+        for item in &app.hosts_state.display_list {
             match item {
                 HostListItem::GroupHeader(text) => {
                     current_group = Some(text.clone());
                 }
                 HostListItem::Host { index } => {
                     if let (Some(group), Some(host)) =
-                        (current_group.as_ref(), app.hosts.get(*index))
+                        (current_group.as_ref(), app.hosts_state.list.get(*index))
                     {
                         map.entry(group.clone())
                             .or_default()
@@ -561,20 +580,22 @@ fn render_display_list(
                 _ => {}
             }
         }
-        app.host_list_cache.group_alias_map = Some(map);
+        app.hosts_state.render_cache.group_alias_map = Some(map);
     }
     let group_alias_map = app
-        .host_list_cache
+        .hosts_state
+        .render_cache
         .group_alias_map
         .as_ref()
         .expect("group_alias_map populated above");
 
-    let mut items: Vec<ListItem> = Vec::with_capacity(app.display_list.len());
-    for item in &app.display_list {
+    let mut items: Vec<ListItem> = Vec::with_capacity(app.hosts_state.display_list.len());
+    for item in &app.hosts_state.display_list {
         match item {
             HostListItem::GroupHeader(text) => {
                 let upper = text.to_uppercase();
                 let count = app
+                    .hosts_state
                     .group_host_counts
                     .get(text.as_str())
                     .copied()
@@ -623,16 +644,16 @@ fn render_display_list(
                 }
             }
             HostListItem::Host { index } => {
-                if let Some(host) = app.hosts.get(*index) {
-                    let tunnel_active = app.active_tunnels.contains_key(&host.alias);
+                if let Some(host) = app.hosts_state.list.get(*index) {
+                    let tunnel_active = app.tunnels.active.contains_key(&host.alias);
                     let item_ctx = HostItemContext {
                         ping_status: &app.ping.status,
                         history: &app.history,
                         tunnel_active,
                         query: None,
                         cols: &cols,
-                        multi_selected: app.multi_select.contains(index),
-                        group_by: &app.group_by,
+                        multi_selected: app.hosts_state.multi_select.contains(index),
+                        group_by: &app.hosts_state.group_by,
                         detail_mode,
                         spinner_tick,
                     };
@@ -643,7 +664,7 @@ fn render_display_list(
                 }
             }
             HostListItem::Pattern { index } => {
-                if let Some(pattern) = app.patterns.get(*index) {
+                if let Some(pattern) = app.hosts_state.patterns.get(*index) {
                     items.push(build_pattern_item(pattern, &cols));
                 } else {
                     items.push(ListItem::new(Line::from(Span::raw(""))));
@@ -667,7 +688,7 @@ fn render_search_list(
 ) {
     let total_results =
         app.search.filtered_indices.len() + app.search.filtered_pattern_indices.len();
-    let total = app.hosts.len() + app.patterns.len();
+    let total = app.hosts_state.list.len() + app.hosts_state.patterns.len();
     let title = Line::from(vec![
         Span::styled(" HOSTS ", theme::brand()),
         Span::styled("── ", theme::muted()),
@@ -715,7 +736,7 @@ fn render_search_list(
         app.search
             .filtered_indices
             .iter()
-            .filter_map(|&i| app.hosts.get(i))
+            .filter_map(|&i| app.hosts_state.list.get(i))
     };
     let alias_w = filtered_hosts().map(|h| h.alias.width()).max().unwrap_or(8);
     let host_w = filtered_hosts()
@@ -723,7 +744,7 @@ fn render_search_list(
         .max()
         .unwrap_or(12);
     let tags_w = filtered_hosts()
-        .map(|h| host_tags_width(h, &app.group_by, false))
+        .map(|h| host_tags_width(h, &app.hosts_state.group_by, false))
         .max()
         .unwrap_or(0);
     let history_w = filtered_hosts()
@@ -742,7 +763,7 @@ fn render_search_list(
     ])
     .areas(inner);
 
-    render_header(frame, header_area, &cols, app.sort_mode);
+    render_header(frame, header_area, &cols, app.hosts_state.sort_mode);
     frame.render_widget(
         Paragraph::new(Span::styled(
             "─".repeat(underline_area.width as usize),
@@ -756,16 +777,16 @@ fn render_search_list(
         app.search.filtered_indices.len() + app.search.filtered_pattern_indices.len(),
     );
     for &idx in app.search.filtered_indices.iter() {
-        if let Some(host) = app.hosts.get(idx) {
-            let tunnel_active = app.active_tunnels.contains_key(&host.alias);
+        if let Some(host) = app.hosts_state.list.get(idx) {
+            let tunnel_active = app.tunnels.active.contains_key(&host.alias);
             let item_ctx = HostItemContext {
                 ping_status: &app.ping.status,
                 history: &app.history,
                 tunnel_active,
                 query,
                 cols: &cols,
-                multi_selected: app.multi_select.contains(&idx),
-                group_by: &app.group_by,
+                multi_selected: app.hosts_state.multi_select.contains(&idx),
+                group_by: &app.hosts_state.group_by,
                 detail_mode: false,
                 spinner_tick,
             };
@@ -774,7 +795,7 @@ fn render_search_list(
         }
     }
     for &idx in app.search.filtered_pattern_indices.iter() {
-        if let Some(pattern) = app.patterns.get(idx) {
+        if let Some(pattern) = app.hosts_state.patterns.get(idx) {
             items.push(build_pattern_item(pattern, &cols));
         }
     }
@@ -1242,7 +1263,7 @@ fn render_search_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) 
     let total = if let Some(ref scope) = app.search.scope_indices {
         scope.len()
     } else {
-        app.hosts.len() + app.patterns.len()
+        app.hosts_state.list.len() + app.hosts_state.patterns.len()
     };
     let match_info = if query.is_empty() {
         String::new()
@@ -1250,7 +1271,7 @@ fn render_search_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) 
         let count = app.search.filtered_indices.len() + app.search.filtered_pattern_indices.len();
         format!(" ({} of {})", count, total)
     };
-    let scope_span = match &app.group_filter {
+    let scope_span = match &app.hosts_state.group_filter {
         Some(group) => Span::styled(format!(" {} ", group.to_uppercase()), theme::muted()),
         None => Span::raw(" "),
     };

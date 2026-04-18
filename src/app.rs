@@ -1,16 +1,12 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 use std::time::SystemTime;
 
 use ratatui::widgets::ListState;
 
 use crate::history::ConnectionHistory;
-use crate::providers::config::ProviderConfig;
-use crate::ssh_config::model::{HostEntry, PatternEntry, SshConfigFile};
+use crate::ssh_config::model::SshConfigFile;
 use crate::ssh_keys::SshKeyInfo;
-use crate::tunnel::TunnelRule;
 
 /// Case-insensitive substring check without allocation.
 /// Uses a byte-window approach for ASCII strings (the common case for SSH
@@ -45,22 +41,34 @@ pub(super) fn eq_ci(a: &str, b: &str) -> bool {
 
 mod baselines;
 mod display_list;
+mod form_state;
 mod forms;
 mod groups;
+mod host_state;
 mod hosts;
 mod ping;
+mod provider_state;
 mod search;
 mod selection;
+mod snippet_state;
+mod status_state;
+mod tunnel_state;
 mod types;
 mod update;
 mod vault;
 
+pub use form_state::FormState;
 pub(crate) use forms::char_to_byte_pos;
 pub use forms::{
     FormField, HostForm, ProviderFormField, ProviderFormFields, SnippetForm, SnippetFormField,
     SnippetHostOutput, SnippetOutputState, SnippetParamFormState, TunnelForm, TunnelFormField,
 };
+pub use host_state::HostState;
 pub use ping::PingState;
+pub use provider_state::ProviderState;
+pub use snippet_state::SnippetState;
+pub use status_state::StatusCenter;
+pub use tunnel_state::TunnelState;
 pub use types::{
     BulkTagAction, BulkTagApplyResult, BulkTagEditorState, BulkTagRow, ConflictState,
     ContainerState, DeletedHost, FormBaseline, GroupBy, HostListItem, HostListRenderCache,
@@ -76,7 +84,7 @@ pub use vault::VaultState;
 /// Kill active tunnel processes when App is dropped (e.g. on panic).
 impl Drop for App {
     fn drop(&mut self) {
-        for (alias, mut tunnel) in self.active_tunnels.drain() {
+        for (alias, mut tunnel) in self.tunnels.active.drain() {
             if let Err(e) = tunnel.child.kill() {
                 log::debug!("[external] Failed to kill tunnel for {alias} on shutdown: {e}");
             }
@@ -99,17 +107,11 @@ pub struct App {
     // Core
     pub screen: Screen,
     pub running: bool,
-    pub config: SshConfigFile,
-    pub hosts: Vec<HostEntry>,
-    pub patterns: Vec<PatternEntry>,
-    pub display_list: Vec<HostListItem>,
-    pub form: HostForm,
-    pub status: Option<StatusMessage>,
-    pub toast: Option<StatusMessage>,
-    pub toast_queue: VecDeque<StatusMessage>,
+    pub hosts_state: HostState,
     pub pending_connect: Option<(String, Option<String>)>,
 
     // Sub-structs
+    pub status_center: StatusCenter,
     pub ui: UiSelection,
     pub search: SearchState,
     pub reload: ReloadState,
@@ -120,37 +122,19 @@ pub struct App {
 
     // Tags
     pub tags: TagState,
-    pub bulk_tag_editor: BulkTagEditorState,
-    /// Snapshot of the last bulk tag apply, used by `u` to revert the
-    /// operation even though `undo_stack` only holds deleted hosts. Holds
-    /// `(alias, previous_tags)` pairs so restore is idempotent. Cleared
-    /// after a successful undo or on the next mutation.
-    pub bulk_tag_undo: Option<Vec<(String, Vec<String>)>>,
+
+    // Host form + bulk tag editor
+    pub forms: FormState,
 
     // History + preferences
     pub history: ConnectionHistory,
-    pub sort_mode: SortMode,
-    pub group_by: GroupBy,
-    pub view_mode: ViewMode,
 
     /// Signal for animation layer: detail panel toggle requested.
     /// Set by handler, consumed by AnimationState.detect_transitions().
     pub detail_toggle_pending: bool,
 
-    // Undo (multi-level, capped at 50)
-    pub undo_stack: Vec<DeletedHost>,
-
     // Providers
-    pub provider_config: ProviderConfig,
-    pub provider_form: ProviderFormFields,
-    pub syncing_providers: HashMap<String, Arc<AtomicBool>>,
-    /// Names of providers that completed during this sync batch.
-    pub sync_done: Vec<String>,
-    /// Whether any provider in the current batch had errors.
-    pub sync_had_errors: bool,
-    pub pending_provider_delete: Option<String>,
-    pub pending_snippet_delete: Option<usize>,
-    pub pending_tunnel_delete: Option<usize>,
+    pub providers: ProviderState,
 
     // Ping / health-check
     pub ping: PingState,
@@ -159,42 +143,13 @@ pub struct App {
     pub vault: VaultState,
 
     // Tunnels
-    pub tunnel_list: Vec<TunnelRule>,
-    pub tunnel_form: TunnelForm,
-    pub active_tunnels: HashMap<String, crate::tunnel::ActiveTunnel>,
+    pub tunnels: TunnelState,
 
     // Snippets
-    pub snippet_store: crate::snippet::SnippetStore,
-    pub snippet_form: SnippetForm,
-    pub pending_snippet: Option<(crate::snippet::Snippet, Vec<String>)>,
-    /// Host indices selected for multi-host snippet execution (space to toggle).
-    pub multi_select: HashSet<usize>,
-    /// Currently active group filter (tab navigation). None = show all groups.
-    pub group_filter: Option<String>,
-    /// Index into group_tab_order for tab navigation.
-    pub group_tab_index: usize,
-    /// Ordered list of group names from the current display list.
-    pub group_tab_order: Vec<String>,
-    /// Host/pattern counts per group (computed before group filtering).
-    pub group_host_counts: HashMap<String, usize>,
-    pub snippet_output: Option<SnippetOutputState>,
-    pub snippet_param_form: Option<SnippetParamFormState>,
-    /// When true, the snippet param form submits to terminal-exit mode (! key).
-    pub pending_snippet_terminal: bool,
+    pub snippets: SnippetState,
 
     // Update
     pub update: UpdateState,
-
-    // Cached tunnel summaries (invalidated on config reload)
-    pub tunnel_summaries_cache: HashMap<String, String>,
-
-    /// Lazily-built caches for the host-list renderer. Populated on first
-    /// render after invalidation; invalidated whenever `hosts`, `display_list`
-    /// or `history` change.
-    pub host_list_cache: HostListRenderCache,
-
-    // Sync history
-    pub sync_history: HashMap<String, SyncRecord>,
 
     // Bitwarden session
     pub bw_session: Option<String>,
@@ -213,14 +168,6 @@ pub struct App {
 
     /// Demo mode: all mutations are in-memory only, no disk writes.
     pub demo_mode: bool,
-
-    // Form dirty-check baselines
-    pub form_baseline: Option<FormBaseline>,
-    pub tunnel_form_baseline: Option<TunnelFormBaseline>,
-    pub snippet_form_baseline: Option<SnippetFormBaseline>,
-    pub provider_form_baseline: Option<ProviderFormBaseline>,
-    /// When true, the Esc key shows a "Discard changes?" dialog instead of closing.
-    pub pending_discard_confirm: bool,
 
     /// Deferred config write from VaultSignAllDone (guarded while forms are open).
     pub pending_vault_config_write: bool,
@@ -253,15 +200,24 @@ impl App {
         Self {
             screen: Screen::HostList,
             running: true,
-            config,
-            hosts,
-            patterns,
-            display_list,
-            form: HostForm::new(),
-            status: None,
-            toast: None,
-            toast_queue: VecDeque::new(),
+            hosts_state: HostState {
+                ssh_config: config,
+                list: hosts,
+                patterns,
+                display_list,
+                render_cache: HostListRenderCache::default(),
+                undo_stack: Vec::new(),
+                multi_select: HashSet::new(),
+                sort_mode: SortMode::Original,
+                group_by: GroupBy::None,
+                view_mode: ViewMode::Compact,
+                group_filter: None,
+                group_tab_index: 0,
+                group_tab_order: Vec::new(),
+                group_host_counts: HashMap::new(),
+            },
             pending_connect: None,
+            status_center: StatusCenter::default(),
             ui: UiSelection {
                 list_state,
                 key_list_state: ListState::default(),
@@ -310,49 +266,29 @@ impl App {
             },
             keys: Vec::new(),
             tags: TagState::default(),
-            bulk_tag_editor: BulkTagEditorState::default(),
-            bulk_tag_undo: None,
+            forms: FormState::default(),
             history: ConnectionHistory::load(),
-            sort_mode: SortMode::Original,
-            group_by: GroupBy::None,
-            view_mode: ViewMode::Compact,
             detail_toggle_pending: false,
-            undo_stack: Vec::new(),
-            provider_config: ProviderConfig::load(),
-            provider_form: ProviderFormFields::new(),
-            syncing_providers: HashMap::new(),
-            sync_done: Vec::new(),
-            sync_had_errors: false,
-            pending_provider_delete: None,
-            pending_snippet_delete: None,
-            pending_tunnel_delete: None,
+            providers: ProviderState {
+                config: crate::providers::config::ProviderConfig::load(),
+                sync_history: SyncRecord::load_all(),
+                ..ProviderState::default()
+            },
             ping: PingState {
                 slow_threshold_ms: crate::preferences::load_slow_threshold(),
                 auto_ping: crate::preferences::load_auto_ping(),
                 ..PingState::default()
             },
             vault: VaultState::default(),
-            tunnel_list: Vec::new(),
-            tunnel_form: TunnelForm::new(),
-            active_tunnels: HashMap::new(),
-            snippet_store: crate::snippet::SnippetStore::load(),
-            snippet_form: SnippetForm::new(),
-            pending_snippet: None,
-            multi_select: HashSet::new(),
-            group_filter: None,
-            group_tab_index: 0,
-            group_tab_order: Vec::new(),
-            group_host_counts: HashMap::new(),
-            snippet_output: None,
-            snippet_param_form: None,
-            pending_snippet_terminal: false,
-            tunnel_summaries_cache: HashMap::new(),
-            host_list_cache: HostListRenderCache::default(),
+            tunnels: TunnelState::default(),
+            snippets: SnippetState {
+                store: crate::snippet::SnippetStore::load(),
+                ..SnippetState::default()
+            },
             update: UpdateState {
                 hint: crate::update::update_hint(),
                 ..UpdateState::default()
             },
-            sync_history: SyncRecord::load_all(),
             bw_session: None,
             file_browser: None,
             file_browser_paths: HashMap::new(),
@@ -361,11 +297,6 @@ impl App {
             known_hosts_count: 0,
             welcome_opened: None,
             demo_mode: false,
-            form_baseline: None,
-            tunnel_form_baseline: None,
-            snippet_form_baseline: None,
-            provider_form_baseline: None,
-            pending_discard_confirm: false,
             pending_vault_config_write: false,
             palette: None,
         }
@@ -380,7 +311,7 @@ impl App {
         // call flush_pending_vault_write() itself to avoid recursion.
         let mut flushed_vault_write = false;
         if self.pending_vault_config_write && !self.is_form_open() {
-            match self.config.write() {
+            match self.hosts_state.ssh_config.write() {
                 Ok(()) => flushed_vault_write = true,
                 Err(e) => self.notify_error(crate::messages::vault_config_write_after_sign(&e)),
             }
@@ -397,23 +328,32 @@ impl App {
             .map(|h| h.alias.clone())
             .or_else(|| self.selected_pattern().map(|p| p.pattern.clone()));
 
-        self.tunnel_summaries_cache.clear();
-        self.host_list_cache.invalidate();
-        self.hosts = self.config.host_entries();
-        self.patterns = self.config.pattern_entries();
+        self.tunnels.summaries_cache.clear();
+        self.hosts_state.render_cache.invalidate();
+        self.hosts_state.list = self.hosts_state.ssh_config.host_entries();
+        self.hosts_state.patterns = self.hosts_state.ssh_config.pattern_entries();
         // Prune cert status cache and in-flight set: retain only entries whose
         // host alias still exists after the reload.
-        let valid_for_certs: std::collections::HashSet<&str> =
-            self.hosts.iter().map(|h| h.alias.as_str()).collect();
+        let valid_for_certs: std::collections::HashSet<&str> = self
+            .hosts_state
+            .list
+            .iter()
+            .map(|h| h.alias.as_str())
+            .collect();
         self.vault
             .cert_cache
             .retain(|alias, _| valid_for_certs.contains(alias.as_str()));
         self.vault
             .cert_checks_in_flight
             .retain(|alias| valid_for_certs.contains(alias.as_str()));
-        if self.sort_mode == SortMode::Original && matches!(self.group_by, GroupBy::None) {
-            self.display_list =
-                Self::build_display_list_from(&self.config, &self.hosts, &self.patterns);
+        if self.hosts_state.sort_mode == SortMode::Original
+            && matches!(self.hosts_state.group_by, GroupBy::None)
+        {
+            self.hosts_state.display_list = Self::build_display_list_from(
+                &self.hosts_state.ssh_config,
+                &self.hosts_state.list,
+                &self.hosts_state.patterns,
+            );
         } else {
             self.apply_sort();
         }
@@ -421,15 +361,19 @@ impl App {
         // Close tag pickers if open — tags.list is stale after reload
         if matches!(self.screen, Screen::TagPicker | Screen::BulkTagEditor) {
             self.screen = Screen::HostList;
-            self.bulk_tag_editor = BulkTagEditorState::default();
+            self.forms.bulk_tag_editor = BulkTagEditorState::default();
         }
 
         // Multi-select stores indices into hosts; clear to avoid stale refs
-        self.multi_select.clear();
+        self.hosts_state.multi_select.clear();
 
         // Prune ping status for hosts that no longer exist
-        let valid_aliases: std::collections::HashSet<&str> =
-            self.hosts.iter().map(|h| h.alias.as_str()).collect();
+        let valid_aliases: std::collections::HashSet<&str> = self
+            .hosts_state
+            .list
+            .iter()
+            .map(|h| h.alias.as_str())
+            .collect();
         self.ping
             .status
             .retain(|alias, _| valid_aliases.contains(alias.as_str()));
@@ -443,18 +387,18 @@ impl App {
             self.search.filtered_indices.clear();
             self.search.filtered_pattern_indices.clear();
             // Fix selection for display list mode
-            if self.hosts.is_empty() && self.patterns.is_empty() {
+            if self.hosts_state.list.is_empty() && self.hosts_state.patterns.is_empty() {
                 self.ui.list_state.select(None);
-            } else if let Some(pos) = self.display_list.iter().position(|item| {
+            } else if let Some(pos) = self.hosts_state.display_list.iter().position(|item| {
                 matches!(
                     item,
                     HostListItem::Host { .. } | HostListItem::Pattern { .. }
                 )
             }) {
                 let current = self.ui.list_state.selected().unwrap_or(0);
-                if current >= self.display_list.len()
+                if current >= self.hosts_state.display_list.len()
                     || !matches!(
-                        self.display_list.get(current),
+                        self.hosts_state.display_list.get(current),
                         Some(HostListItem::Host { .. } | HostListItem::Pattern { .. })
                     )
                 {
@@ -472,9 +416,9 @@ impl App {
 
         log::debug!(
             "[config] reload_hosts: hosts={} patterns={} display_items={}",
-            self.hosts.len(),
-            self.patterns.len(),
-            self.display_list.len(),
+            self.hosts_state.list.len(),
+            self.hosts_state.patterns.len(),
+            self.hosts_state.display_list.len(),
         );
     }
 
@@ -492,14 +436,14 @@ impl App {
         if crate::demo_flag::is_demo() {
             return;
         }
-        let Some(host) = self.hosts.iter().find(|h| h.alias == alias) else {
+        let Some(host) = self.hosts_state.list.iter().find(|h| h.alias == alias) else {
             self.vault.cert_cache.remove(alias);
             return;
         };
         let role_some = crate::vault_ssh::resolve_vault_role(
             host.vault_ssh.as_deref(),
             host.provider.as_deref(),
-            &self.provider_config,
+            &self.providers.config,
         )
         .is_some();
         if !role_some {
@@ -525,29 +469,9 @@ impl App {
 
     // --- Search methods ---
 
-    /// Provider names sorted by last sync (most recent first), then configured, then unconfigured.
-    /// Includes any unknown provider names found in the config file (e.g. typos or future providers).
+    /// Shim. Routes to `ProviderState::sorted_names`.
     pub fn sorted_provider_names(&self) -> Vec<String> {
-        use crate::providers;
-        let mut names: Vec<String> = providers::PROVIDER_NAMES
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        // Append configured providers not in the known list so they are visible and removable
-        for section in &self.provider_config.sections {
-            if !names.contains(&section.provider) {
-                names.push(section.provider.clone());
-            }
-        }
-        names.sort_by(|a, b| {
-            let conf_a = self.provider_config.section(a.as_str()).is_some();
-            let conf_b = self.provider_config.section(b.as_str()).is_some();
-            let ts_a = self.sync_history.get(a.as_str()).map_or(0, |r| r.timestamp);
-            let ts_b = self.sync_history.get(b.as_str()).map_or(0, |r| r.timestamp);
-            // Configured first (by most recent sync), then unconfigured alphabetically
-            conf_b.cmp(&conf_a).then(ts_b.cmp(&ts_a)).then(a.cmp(b))
-        });
-        names
+        self.providers.sorted_names()
     }
 
     /// Check whether a form screen is currently open (host or provider forms).
@@ -569,50 +493,12 @@ impl App {
         true
     }
 
+    /// Shim. Routes to `StatusCenter::set_status`. 174+ call-sites via
+    /// `notify_*` wrappers depend on this signature.
     #[deprecated(note = "use notify() / notify_error() instead")]
+    #[allow(deprecated)]
     pub fn set_status(&mut self, text: impl Into<String>, is_error: bool) {
-        let class = if is_error {
-            MessageClass::Error
-        } else {
-            MessageClass::Success
-        };
-        // Errors are sticky by default so the user cannot miss them.
-        let sticky = matches!(class, MessageClass::Error);
-        let msg = StatusMessage {
-            text: text.into(),
-            class,
-            tick_count: 0,
-            sticky,
-            created_at: std::time::Instant::now(),
-        };
-        if msg.is_toast() {
-            self.push_toast(msg);
-        } else {
-            log::debug!("footer <- {:?}: {}", msg.class, msg.text);
-            self.status = Some(msg);
-        }
-    }
-
-    /// Push a toast message. Success toasts replace the current toast
-    /// immediately (last-write-wins). Warning and Error toasts are queued
-    /// (max `TOAST_QUEUE_MAX`) so they are never lost.
-    fn push_toast(&mut self, msg: StatusMessage) {
-        log::debug!("toast <- {:?}: {}", msg.class, msg.text);
-        if msg.class == MessageClass::Success {
-            // Success replaces any active toast and clears the queue.
-            self.toast = Some(msg);
-            self.toast_queue.clear();
-        } else if self.toast.is_some() {
-            if self.toast_queue.len() >= crate::ui::design::TOAST_QUEUE_MAX {
-                if let Some(dropped) = self.toast_queue.front() {
-                    log::debug!("toast queue full, dropping: {}", dropped.text);
-                }
-                self.toast_queue.pop_front();
-            }
-            self.toast_queue.push_back(msg);
-        } else {
-            self.toast = Some(msg);
-        }
+        self.status_center.set_status(text, is_error);
     }
 
     /// Run once after App::new: queue the upgrade toast if the user just
@@ -634,67 +520,28 @@ impl App {
             sticky: true,
             created_at: std::time::Instant::now(),
         };
-        self.toast = Some(msg);
+        self.status_center.toast = Some(msg);
     }
 
-    /// Set an Info-class status message that displays in the footer only.
+    /// Shim. Routes to `StatusCenter::set_info_status`.
     #[deprecated(note = "use notify_info() instead")]
+    #[allow(deprecated)]
     pub fn set_info_status(&mut self, text: impl Into<String>) {
-        let text = text.into();
-        log::debug!("footer <- Info: {}", text);
-        self.status = Some(StatusMessage {
-            text,
-            class: MessageClass::Info,
-            tick_count: 0,
-            sticky: false,
-            created_at: std::time::Instant::now(),
-        });
+        self.status_center.set_info_status(text);
     }
 
-    /// Like `notify` but skips the write when a sticky message is active.
-    /// Use for background/timer events (ping expiry, sync ticks) that must
-    /// not clobber an in-progress or critical sticky message.
-    /// Routes to Info (footer) by default, Error toast if is_error.
+    /// Shim. Routes to `StatusCenter::set_background_status`.
     #[deprecated(note = "use notify_background() / notify_background_error() instead")]
+    #[allow(deprecated)]
     pub fn set_background_status(&mut self, text: impl Into<String>, is_error: bool) {
-        if is_error {
-            let msg = StatusMessage {
-                text: text.into(),
-                class: MessageClass::Error,
-                tick_count: 0,
-                sticky: true,
-                created_at: std::time::Instant::now(),
-            };
-            self.push_toast(msg);
-            return;
-        }
-        if self.status.as_ref().is_some_and(|s| s.sticky) {
-            log::debug!("background status suppressed (sticky active)");
-            return;
-        }
-        self.notify_info(text);
+        self.status_center.set_background_status(text, is_error);
     }
 
-    /// Sticky messages always go to the footer (`self.status`), even when the
-    /// class is Error. The `sticky` flag overrides the normal toast routing
-    /// because sticky messages (Vault SSH signing summaries, progress spinners)
-    /// must remain visible in the footer until explicitly replaced.
+    /// Shim. Routes to `StatusCenter::set_sticky_status`.
     #[deprecated(note = "use notify_progress() / notify_sticky_error() instead")]
+    #[allow(deprecated)]
     pub fn set_sticky_status(&mut self, text: impl Into<String>, is_error: bool) {
-        let text = text.into();
-        let class = if is_error {
-            MessageClass::Error
-        } else {
-            MessageClass::Progress
-        };
-        log::debug!("footer <- sticky {:?}: {}", class, text);
-        self.status = Some(StatusMessage {
-            text,
-            class,
-            tick_count: 0,
-            sticky: true,
-            created_at: std::time::Instant::now(),
-        });
+        self.status_center.set_sticky_status(text, is_error);
     }
 
     /// User action feedback → Success toast (length-proportional timeout,
@@ -747,7 +594,7 @@ impl App {
             created_at: std::time::Instant::now(),
         };
         log::debug!("toast <- Warning: {}", msg.text);
-        self.push_toast(msg);
+        self.status_center.push_toast(msg);
     }
 
     /// Long-running progress → footer sticky (never expires).
@@ -772,12 +619,16 @@ impl App {
 
     /// Tick the footer status message timer. Uses wall-clock time.
     /// Sticky/Progress messages never expire automatically.
+    ///
+    /// Stays on `App` (not moved to `StatusCenter`) because expiry is
+    /// suppressed while any provider sync is in flight, which requires
+    /// reading `self.providers.syncing`.
     pub fn tick_status(&mut self) {
         // Don't expire status while providers are still syncing
-        if !self.syncing_providers.is_empty() {
+        if !self.providers.syncing.is_empty() {
             return;
         }
-        if let Some(ref status) = self.status {
+        if let Some(ref status) = self.status_center.status {
             if status.sticky {
                 return;
             }
@@ -785,26 +636,14 @@ impl App {
             if timeout_ms != u64::MAX && status.created_at.elapsed().as_millis() as u64 > timeout_ms
             {
                 log::debug!("footer status expired: {}", status.text);
-                self.status = None;
+                self.status_center.status = None;
             }
         }
     }
 
-    /// Tick the toast message timer. Uses wall-clock time via `created_at`
-    /// so expiry is independent of the tick rate. Called every tick; the
-    /// actual check is `created_at.elapsed() > timeout_ms()`.
+    /// Shim. Routes to `StatusCenter::tick_toast`.
     pub fn tick_toast(&mut self) {
-        if let Some(ref toast) = self.toast {
-            if toast.sticky {
-                return;
-            }
-            let timeout_ms = toast.timeout_ms();
-            if timeout_ms != u64::MAX && toast.created_at.elapsed().as_millis() as u64 > timeout_ms
-            {
-                log::debug!("toast expired: {}", toast.text);
-                self.toast = self.toast_queue.pop_front();
-            }
-        }
+        self.status_center.tick_toast();
     }
 
     /// Get the modification time of a file.
@@ -857,18 +696,20 @@ impl App {
                 .any(|(path, old_mtime)| Self::get_mtime(path) != *old_mtime);
         if changed {
             if let Ok(new_config) = SshConfigFile::parse(&self.reload.config_path) {
-                self.config = new_config;
+                self.hosts_state.ssh_config = new_config;
                 // Invalidate undo state — config structure may have changed externally
-                self.undo_stack.clear();
+                self.hosts_state.undo_stack.clear();
                 // Clear stale ping status — hosts may have changed
                 self.ping.status.clear();
                 self.ping.filter_down_only = false;
                 self.ping.checked_at = None;
                 self.reload_hosts();
                 self.reload.last_modified = current_mtime;
-                self.reload.include_mtimes = Self::snapshot_include_mtimes(&self.config);
-                self.reload.include_dir_mtimes = Self::snapshot_include_dir_mtimes(&self.config);
-                let count = self.hosts.len();
+                self.reload.include_mtimes =
+                    Self::snapshot_include_mtimes(&self.hosts_state.ssh_config);
+                self.reload.include_dir_mtimes =
+                    Self::snapshot_include_dir_mtimes(&self.hosts_state.ssh_config);
+                let count = self.hosts_state.list.len();
                 self.notify_background(crate::messages::config_reloaded(count));
             }
         }
@@ -900,18 +741,19 @@ impl App {
     /// Update the last_modified timestamp (call after writing config).
     pub fn update_last_modified(&mut self) {
         self.reload.last_modified = Self::get_mtime(&self.reload.config_path);
-        self.reload.include_mtimes = Self::snapshot_include_mtimes(&self.config);
-        self.reload.include_dir_mtimes = Self::snapshot_include_dir_mtimes(&self.config);
+        self.reload.include_mtimes = Self::snapshot_include_mtimes(&self.hosts_state.ssh_config);
+        self.reload.include_dir_mtimes =
+            Self::snapshot_include_dir_mtimes(&self.hosts_state.ssh_config);
     }
 
     /// Returns true if any host or provider has a vault role configured.
     pub fn has_any_vault_role(&self) -> bool {
-        for host in &self.hosts {
+        for host in &self.hosts_state.list {
             if host.vault_ssh.is_some() {
                 return true;
             }
         }
-        for section in &self.provider_config.sections {
+        for section in &self.providers.config.sections {
             if !section.vault_role.is_empty() {
                 return true;
             }
@@ -921,67 +763,7 @@ impl App {
 
     /// Poll active tunnels for exit. Returns (alias, message, is_error) tuples.
     pub fn poll_tunnels(&mut self) -> Vec<(String, String, bool)> {
-        if self.active_tunnels.is_empty() {
-            return Vec::new();
-        }
-        let mut exited = Vec::new();
-        let mut to_remove = Vec::new();
-        for (alias, tunnel) in &mut self.active_tunnels {
-            match tunnel.child.try_wait() {
-                Ok(Some(status)) => {
-                    let stderr_msg = tunnel.child.stderr.take().and_then(|mut stderr| {
-                        use std::io::Read;
-                        let mut buf = vec![0u8; 1024];
-                        match stderr.read(&mut buf) {
-                            Ok(n) if n > 0 => {
-                                let s = String::from_utf8_lossy(&buf[..n]);
-                                let trimmed = s.trim();
-                                if trimmed.is_empty() {
-                                    None
-                                } else {
-                                    Some(trimmed.to_string())
-                                }
-                            }
-                            _ => None,
-                        }
-                    });
-                    let exit_code = status.code().unwrap_or(-1);
-                    if !status.success() {
-                        log::error!(
-                            "[external] Tunnel exited unexpectedly: alias={alias} exit={exit_code}"
-                        );
-                        if let Some(ref err) = stderr_msg {
-                            log::debug!("[external] Tunnel stderr: {}", err.trim());
-                        }
-                    }
-                    let (msg, is_error) = if status.success() {
-                        (format!("Tunnel for {} closed.", alias), false)
-                    } else if let Some(err) = stderr_msg {
-                        (format!("Tunnel for {}: {}", alias, err), true)
-                    } else {
-                        (
-                            format!("Tunnel for {} exited with code {}.", alias, exit_code),
-                            true,
-                        )
-                    };
-                    exited.push((alias.clone(), msg, is_error));
-                    to_remove.push(alias.clone());
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    exited.push((
-                        alias.clone(),
-                        format!("Tunnel for {} lost: {}", alias, e),
-                        true,
-                    ));
-                    to_remove.push(alias.clone());
-                }
-            }
-        }
-        for alias in to_remove {
-            self.active_tunnels.remove(&alias);
-        }
-        exited
+        self.tunnels.poll()
     }
 }
 

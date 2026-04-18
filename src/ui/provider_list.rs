@@ -32,7 +32,7 @@ pub fn render_provider_list(frame: &mut Frame, app: &mut App) {
         .iter()
         .map(|name| {
             let display_name = crate::providers::provider_display_name(name.as_str());
-            let configured = app.provider_config.section(name.as_str()).is_some();
+            let configured = app.providers.config.section(name.as_str()).is_some();
 
             let name_col = format!(" {:<16}", display_name);
             let mut spans = vec![Span::styled(name_col, theme::bold())];
@@ -40,6 +40,7 @@ pub fn render_provider_list(frame: &mut Frame, app: &mut App) {
 
             if configured {
                 let has_error = app
+                    .providers
                     .sync_history
                     .get(name.as_str())
                     .is_some_and(|r| r.is_error);
@@ -50,7 +51,7 @@ pub fn render_provider_list(frame: &mut Frame, app: &mut App) {
                 }
                 used += 1;
 
-                if let Some(section) = app.provider_config.section(name.as_str()) {
+                if let Some(section) = app.providers.config.section(name.as_str()) {
                     if !section.auto_sync {
                         spans.push(Span::styled(" (manual)", theme::muted()));
                         used += 9;
@@ -59,13 +60,14 @@ pub fn render_provider_list(frame: &mut Frame, app: &mut App) {
 
                 // Stale count for this provider
                 let stale_count = app
-                    .hosts
+                    .hosts_state
+                    .list
                     .iter()
                     .filter(|h| h.stale.is_some() && h.provider.as_deref() == Some(name.as_str()))
                     .count();
 
                 // Sync detail on same line
-                if app.syncing_providers.contains_key(name.as_str()) {
+                if app.providers.syncing.contains_key(name.as_str()) {
                     let max = content_width.saturating_sub(used + 2);
                     if max > 1 {
                         spans.push(Span::styled(
@@ -73,7 +75,7 @@ pub fn render_provider_list(frame: &mut Frame, app: &mut App) {
                             theme::muted(),
                         ));
                     }
-                } else if let Some(record) = app.sync_history.get(name.as_str()) {
+                } else if let Some(record) = app.providers.sync_history.get(name.as_str()) {
                     let ago = ConnectionHistory::format_time_ago(record.timestamp);
                     // Build segments: "N servers" [", N stale"] [", Xm ago"]
                     let prefix = format!("  {}", record.message);
@@ -120,8 +122,8 @@ pub fn render_provider_list(frame: &mut Frame, app: &mut App) {
 
     // Footer below the block
     let footer_area = design::render_overlay_footer(frame, area);
-    if app.pending_provider_delete.is_some() {
-        let name = app.pending_provider_delete.as_deref().unwrap_or("");
+    if app.providers.pending_delete.is_some() {
+        let name = app.providers.pending_delete.as_deref().unwrap_or("");
         let display = crate::providers::provider_display_name(name);
         let mut spans = vec![Span::styled(
             format!(" Remove {}? ", display),
@@ -139,7 +141,8 @@ pub fn render_provider_list(frame: &mut Frame, app: &mut App) {
             .selected()
             .and_then(|idx| sorted_names.get(idx))
             .map(|name| {
-                app.hosts
+                app.hosts_state
+                    .list
                     .iter()
                     .filter(|h| h.stale.is_some() && h.provider.as_deref() == Some(name.as_str()))
                     .count()
@@ -163,12 +166,12 @@ pub fn render_provider_form(frame: &mut Frame, app: &mut App, provider_name: &st
     let display_name = crate::providers::provider_display_name(provider_name);
     let title = format!("Providers > {}", display_name);
 
-    let expanded = app.provider_form.expanded;
+    let expanded = app.providers.form.expanded;
     // Progressive disclosure: when `vault_role` is empty, `VaultAddr` is
     // filtered out by `visible_fields(provider)` and therefore never
     // rendered or navigable. Re-enabling the role brings the field back
     // with whatever value the user had previously typed.
-    let filtered_all: Vec<ProviderFormField> = app.provider_form.visible_fields(provider_name);
+    let filtered_all: Vec<ProviderFormField> = app.providers.form.visible_fields(provider_name);
     let all_fields: &[ProviderFormField] = &filtered_all;
     let required_count = all_fields
         .iter()
@@ -205,7 +208,7 @@ pub fn render_provider_form(frame: &mut Frame, app: &mut App, provider_name: &st
         let content_y = divider_y + 1;
         y_offset += 2;
 
-        let is_focused = app.provider_form.focused_field == field;
+        let is_focused = app.providers.form.focused_field == field;
         let label_style = if is_focused {
             theme::accent_bold()
         } else {
@@ -241,7 +244,7 @@ pub fn render_provider_form(frame: &mut Frame, app: &mut App, provider_name: &st
             frame,
             content_area,
             field,
-            &app.provider_form,
+            &app.providers.form,
             provider_name,
         );
     }
@@ -250,13 +253,13 @@ pub fn render_provider_form(frame: &mut Frame, app: &mut App, provider_name: &st
     // dynamic save footer reflects the focused field's kind so users discover
     // Space-toggle (VerifyTls/AutoSync) and Space-pick (IdentityFile/Regions).
     let footer_area = design::render_overlay_footer(frame, block_area);
-    if app.pending_discard_confirm {
+    if app.forms.pending_discard_confirm {
         design::render_discard_prompt(frame, footer_area, app);
     } else {
         let mode = if !expanded && visible_fields.len() < all_fields.len() {
             design::FormFooterMode::Collapsed
         } else {
-            design::FormFooterMode::Expanded(app.provider_form.focused_field.kind(provider_name))
+            design::FormFooterMode::Expanded(app.providers.form.focused_field.kind(provider_name))
         };
         design::form_save_footer(mode).render_with_status(frame, footer_area, app);
     }
@@ -481,7 +484,8 @@ fn render_region_picker_overlay(frame: &mut Frame, app: &mut App) {
     };
     let rows = build_region_rows(provider_name);
     let selected: std::collections::HashSet<&str> = app
-        .provider_form
+        .providers
+        .form
         .regions
         .split(',')
         .map(|s| s.trim())

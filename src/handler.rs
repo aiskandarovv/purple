@@ -88,7 +88,7 @@ pub fn handle_key_event(
     // Global Ctrl+C handler — screen-conditional for SnippetOutput
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
         if matches!(app.screen, Screen::SnippetOutput { .. }) {
-            if let Some(ref state) = app.snippet_output {
+            if let Some(ref state) = app.snippets.output {
                 if !state.all_done {
                     if state.cancel.load(Ordering::Relaxed) {
                         // Second Ctrl+C: cancel already pending, force close
@@ -99,7 +99,7 @@ pub fn handle_key_event(
                     }
                 }
             }
-            app.snippet_output = None;
+            app.snippets.output = None;
             app.screen = Screen::HostList;
             return Ok(());
         }
@@ -202,12 +202,15 @@ pub fn handle_key_event(
 
 /// Run known_hosts import and set status. Used by both ConfirmImport and Welcome handlers.
 fn execute_known_hosts_import(app: &mut App) {
-    let config_backup = app.config.clone();
-    match crate::import::import_from_known_hosts(&mut app.config, Some("known_hosts")) {
+    let config_backup = app.hosts_state.ssh_config.clone();
+    match crate::import::import_from_known_hosts(
+        &mut app.hosts_state.ssh_config,
+        Some("known_hosts"),
+    ) {
         Ok((imported, skipped, _, _)) => {
             if imported > 0 {
-                if let Err(e) = app.config.write() {
-                    app.config = config_backup;
+                if let Err(e) = app.hosts_state.ssh_config.write() {
+                    app.hosts_state.ssh_config = config_backup;
                     app.notify_error(crate::messages::failed_to_save(&e));
                     return;
                 }
@@ -225,7 +228,7 @@ fn execute_known_hosts_import(app: &mut App) {
 }
 
 fn execute_purge_stale(app: &mut App, provider: Option<&str>) {
-    let stale = app.config.stale_hosts();
+    let stale = app.hosts_state.ssh_config.stale_hosts();
     if stale.is_empty() {
         return;
     }
@@ -234,7 +237,8 @@ fn execute_purge_stale(app: &mut App, provider: Option<&str>) {
         stale
             .into_iter()
             .filter(|(alias, _)| {
-                app.config
+                app.hosts_state
+                    .ssh_config
                     .host_entries()
                     .iter()
                     .any(|e| e.alias == *alias && e.provider.as_deref() == Some(prov))
@@ -246,24 +250,24 @@ fn execute_purge_stale(app: &mut App, provider: Option<&str>) {
     if targets.is_empty() {
         return;
     }
-    let config_backup = app.config.clone();
+    let config_backup = app.hosts_state.ssh_config.clone();
     let count = targets.len();
     for (alias, _) in &targets {
-        app.config.delete_host(alias);
+        app.hosts_state.ssh_config.delete_host(alias);
     }
-    if let Err(e) = app.config.write() {
-        app.config = config_backup;
+    if let Err(e) = app.hosts_state.ssh_config.write() {
+        app.hosts_state.ssh_config = config_backup;
         app.notify_error(crate::messages::failed_to_save(&e));
         return;
     }
     // Kill active tunnels only after successful write (no rollback needed)
     for (alias, _) in &targets {
-        if let Some(mut tunnel) = app.active_tunnels.remove(alias) {
+        if let Some(mut tunnel) = app.tunnels.active.remove(alias) {
             let _ = tunnel.child.kill();
             let _ = tunnel.child.wait();
         }
     }
-    app.undo_stack.clear();
+    app.hosts_state.undo_stack.clear();
     app.update_last_modified();
     app.reload_hosts();
     let msg = if let Some(prov) = provider {
@@ -305,15 +309,15 @@ pub(super) fn open_edit_form(app: &mut App, host: HostEntry) -> bool {
     let stale_hint = host.stale.is_some().then(|| stale_provider_hint(&host));
     // Load raw entry (without pattern inheritance) so inherited values are not
     // shown as editable own values. Compute inherited hints separately.
-    let raw = match app.config.raw_host_entry(&host.alias) {
+    let raw = match app.hosts_state.ssh_config.raw_host_entry(&host.alias) {
         Some(entry) => entry,
         None => {
             app.notify_warning(crate::messages::HOST_NOT_FOUND_IN_CONFIG);
             return false;
         }
     };
-    let inherited = app.config.inherited_hints(&host.alias);
-    app.form = HostForm::from_entry(&raw, inherited);
+    let inherited = app.hosts_state.ssh_config.inherited_hints(&host.alias);
+    app.forms.host = HostForm::from_entry(&raw, inherited);
     if let Some(hint) = stale_hint {
         app.notify_warning(crate::messages::stale_host(&hint));
     }
@@ -327,7 +331,7 @@ pub(super) fn open_edit_form(app: &mut App, host: HostEntry) -> bool {
 /// required fields are filled. Lives at the handler level so picker
 /// submodules do not need a reverse dependency on host_form.
 pub(super) fn try_auto_submit_after_picker(app: &mut App) {
-    if !app.form.alias.is_empty() && !app.form.hostname.is_empty() {
+    if !app.forms.host.alias.is_empty() && !app.forms.host.hostname.is_empty() {
         host_form::submit_form(app);
     }
 }

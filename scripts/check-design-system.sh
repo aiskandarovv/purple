@@ -31,18 +31,30 @@ if grep -rn 'super::footer_action\|super::footer_key_span' src/ui/ \
 fi
 
 # 3. No old notification API outside method definitions and delegations.
+#
+# Exclusions:
+#  - `src/app/status_state.rs` is the defining module, so its own inline
+#    `#[cfg(test)] mod tests` may call its deprecated `set_*` methods to
+#    verify their behaviour. The deprecation is already signalled by the
+#    `#[deprecated]` attribute on the definition site.
+#  - `src/app.rs` dispatches through `status_center.set_*` shims; the
+#    regex is anchored to that file so the exception cannot leak.
 if grep -rn 'set_status\|set_background_status\|set_sticky_status\|set_info_status' \
     src/ --include='*.rs' \
     | grep -v 'tests\.rs' | grep -v 'test_' | grep -v '#\[deprecated' \
     | grep -v 'pub fn ' | grep -v 'pub use ' \
-    | grep -v 'self\.set_' | grep -v '// ' | grep -v '/// ' \
+    | grep -v 'self\.set_' | grep -Ev '^src/app\.rs:[0-9]+:.*status_center\.set_' \
+    | grep -v '^src/app/status_state\.rs:' \
+    | grep -v '// ' | grep -v '/// ' \
     | grep -q .; then
     echo "ERROR: Old notification API used. Use app.notify/notify_error/etc."
     grep -rn 'set_status\|set_background_status\|set_sticky_status\|set_info_status' \
         src/ --include='*.rs' \
         | grep -v 'tests\.rs' | grep -v 'test_' | grep -v '#\[deprecated' \
         | grep -v 'pub fn ' | grep -v 'pub use ' \
-        | grep -v 'self\.set_' | grep -v '// ' | grep -v '/// '
+        | grep -v 'self\.set_' | grep -Ev '^src/app\.rs:[0-9]+:.*status_center\.set_' \
+        | grep -v '^src/app/status_state\.rs:' \
+        | grep -v '// ' | grep -v '/// '
     exit 1
 fi
 

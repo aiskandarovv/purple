@@ -19,11 +19,11 @@ use crate::{
 
 pub(crate) fn run_tui(mut app: App) -> Result<()> {
     // First-launch welcome hint (one-shot: creates .purple/ so it won't show again)
-    if app.status.is_none() && !app.demo_mode {
+    if app.status_center.status.is_none() && !app.demo_mode {
         if let Some(home) = dirs::home_dir() {
             let purple_dir = home.join(".purple");
             if let Some(has_backup) = first_launch_init(&purple_dir, &app.reload.config_path) {
-                let host_count = app.hosts.len();
+                let host_count = app.hosts_state.list.len();
                 let known_hosts_count = if host_count == 0 {
                     import::count_known_hosts_candidates()
                 } else {
@@ -94,13 +94,14 @@ pub(crate) fn run_tui(mut app: App) -> Result<()> {
 
 /// Spawn auto-sync, auto-ping and the background version check on TUI startup.
 fn spawn_startup_tasks(app: &mut App, events_tx: &std::sync::mpsc::Sender<AppEvent>) {
-    for section in app.provider_config.configured_providers().to_vec() {
+    for section in app.providers.config.configured_providers().to_vec() {
         if !section.auto_sync {
             continue;
         }
-        if !app.syncing_providers.contains_key(&section.provider) {
+        if !app.providers.syncing.contains_key(&section.provider) {
             let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-            app.syncing_providers
+            app.providers
+                .syncing
                 .insert(section.provider.clone(), cancel.clone());
             handler::spawn_provider_sync(&section, events_tx.clone(), cancel);
         }
@@ -108,12 +109,13 @@ fn spawn_startup_tasks(app: &mut App, events_tx: &std::sync::mpsc::Sender<AppEve
 
     if app.ping.auto_ping {
         let hosts_to_ping: Vec<(String, String, u16)> = app
-            .hosts
+            .hosts_state
+            .list
             .iter()
             .filter(|h| !h.hostname.is_empty() && h.proxy_jump.is_empty())
             .map(|h| (h.alias.clone(), h.hostname.clone(), h.port))
             .collect();
-        for h in &app.hosts {
+        for h in &app.hosts_state.list {
             if !h.proxy_jump.is_empty() {
                 app.ping
                     .status
@@ -300,7 +302,7 @@ fn lazy_cert_check(app: &mut App, events_tx: &std::sync::mpsc::Sender<AppEvent>)
         if vault_ssh::resolve_vault_role(
             selected.vault_ssh.as_deref(),
             selected.provider.as_deref(),
-            &app.provider_config,
+            &app.providers.config,
         )
         .is_some()
         {
@@ -365,9 +367,14 @@ fn handle_pending_connect(
     let Some((alias, host_askpass)) = app.pending_connect.take() else {
         return Ok(());
     };
-    let vault_host = app.hosts.iter().find(|h| h.alias == alias).cloned();
+    let vault_host = app
+        .hosts_state
+        .list
+        .iter()
+        .find(|h| h.alias == alias)
+        .cloned();
     let askpass = host_askpass.or_else(preferences::load_askpass_default);
-    let has_active_tunnel = app.active_tunnels.contains_key(&alias);
+    let has_active_tunnel = app.tunnels.active.contains_key(&alias);
     let use_tmux = connection::is_in_tmux() && askpass.is_none();
 
     if use_tmux {
@@ -376,8 +383,12 @@ fn handle_pending_connect(
         // on the alternate screen — ratatui repaints over them on the next
         // draw cycle).
         let vault_msg = if let Some(ref host) = vault_host {
-            let msg =
-                ensure_vault_ssh_if_needed(&alias, host, &app.provider_config, &mut app.config);
+            let msg = ensure_vault_ssh_if_needed(
+                &alias,
+                host,
+                &app.providers.config,
+                &mut app.hosts_state.ssh_config,
+            );
             if msg.is_some() {
                 app.reload_hosts();
                 app.refresh_cert_cache(&alias);
@@ -413,7 +424,12 @@ fn handle_pending_connect(
     events.pause();
     terminal.exit()?;
     let vault_msg = if let Some(ref host) = vault_host {
-        let msg = ensure_vault_ssh_if_needed(&alias, host, &app.provider_config, &mut app.config);
+        let msg = ensure_vault_ssh_if_needed(
+            &alias,
+            host,
+            &app.providers.config,
+            &mut app.hosts_state.ssh_config,
+        );
         if msg.is_some() {
             app.reload_hosts();
             app.refresh_cert_cache(&alias);
@@ -440,7 +456,7 @@ fn handle_pending_connect(
             let code = cr.status.code().unwrap_or(1);
             if code != 255 {
                 app.history.record(&alias);
-                app.host_list_cache.invalidate();
+                app.hosts_state.render_cache.invalidate();
             }
             if code != 0 {
                 if let Some((hostname, known_hosts_path)) =
@@ -478,7 +494,7 @@ fn handle_pending_connect(
     terminal.enter()?;
     events.resume();
     *last_config_check = std::time::Instant::now();
-    app.config = SshConfigFile::parse(&app.reload.config_path)?;
+    app.hosts_state.ssh_config = SshConfigFile::parse(&app.reload.config_path)?;
     app.reload_hosts();
     app.update_last_modified();
     Ok(())
@@ -493,7 +509,7 @@ fn handle_pending_snippet(
     events: &EventHandler,
     last_config_check: &mut std::time::Instant,
 ) -> Result<()> {
-    let Some((snip, aliases)) = app.pending_snippet.take() else {
+    let Some((snip, aliases)) = app.snippets.pending.take() else {
         return Ok(());
     };
     events.pause();
@@ -502,7 +518,8 @@ fn handle_pending_snippet(
     let multi = aliases.len() > 1;
     for alias in &aliases {
         let askpass = app
-            .hosts
+            .hosts_state
+            .list
             .iter()
             .find(|h| h.alias == *alias)
             .and_then(|h| h.askpass.clone())
@@ -520,7 +537,7 @@ fn handle_pending_snippet(
                 crate::messages::cli::running_snippet_on(&snip.name, alias)
             );
         }
-        let has_tunnel = app.active_tunnels.contains_key(alias);
+        let has_tunnel = app.tunnels.active.contains_key(alias);
         match snippet::run_snippet(
             alias,
             &app.reload.config_path,
@@ -533,7 +550,7 @@ fn handle_pending_snippet(
             Ok(r) => {
                 if r.status.success() {
                     app.history.record(alias);
-                    app.host_list_cache.invalidate();
+                    app.hosts_state.render_cache.invalidate();
                 } else if multi {
                     eprintln!(
                         "{}",
@@ -567,7 +584,7 @@ fn handle_pending_snippet(
     events.resume();
     *last_config_check = std::time::Instant::now();
     // Reload so sort order (e.g. most recent) reflects the new history.
-    app.config = SshConfigFile::parse(&app.reload.config_path)?;
+    app.hosts_state.ssh_config = SshConfigFile::parse(&app.reload.config_path)?;
     app.reload_hosts();
     app.update_last_modified();
     Ok(())
@@ -585,7 +602,7 @@ fn tui_teardown(app: &mut App, terminal: &mut tui::Tui) -> Result<()> {
         let _ = handle.join();
     }
 
-    for (_, mut tunnel) in app.active_tunnels.drain() {
+    for (_, mut tunnel) in app.tunnels.active.drain() {
         let _ = tunnel.child.kill();
         let _ = tunnel.child.wait();
     }
@@ -595,7 +612,7 @@ fn tui_teardown(app: &mut App, terminal: &mut tui::Tui) -> Result<()> {
 }
 
 pub(crate) fn current_cert_mtime(alias: &str, app: &app::App) -> Option<std::time::SystemTime> {
-    let host = app.hosts.iter().find(|h| h.alias == alias)?;
+    let host = app.hosts_state.list.iter().find(|h| h.alias == alias)?;
     let cert_path = vault_ssh::resolve_cert_path(alias, &host.certificate_file).ok()?;
     std::fs::metadata(&cert_path)
         .ok()

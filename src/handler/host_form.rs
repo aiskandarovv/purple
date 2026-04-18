@@ -29,17 +29,17 @@ pub(super) fn handle_form(app: &mut App, key: KeyEvent) {
     }
 
     // Handle discard confirmation dialog
-    if app.pending_discard_confirm {
+    if app.forms.pending_discard_confirm {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
-                app.pending_discard_confirm = false;
+                app.forms.pending_discard_confirm = false;
                 app.clear_form_mtime();
-                app.form_baseline = None;
+                app.forms.host_baseline = None;
                 app.set_screen(Screen::HostList);
                 app.flush_pending_vault_write();
             }
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                app.pending_discard_confirm = false;
+                app.forms.pending_discard_confirm = false;
             }
             _ => {}
         }
@@ -49,78 +49,78 @@ pub(super) fn handle_form(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc => {
             if app.host_form_is_dirty() {
-                app.pending_discard_confirm = true;
+                app.forms.pending_discard_confirm = true;
             } else {
                 app.clear_form_mtime();
-                app.form_baseline = None;
+                app.forms.host_baseline = None;
                 app.set_screen(Screen::HostList);
                 app.flush_pending_vault_write();
             }
         }
         KeyCode::Tab | KeyCode::Down => {
             // Smart paste detection: when leaving Alias field, check for user@host:port
-            if app.form.focused_field == FormField::Alias {
+            if app.forms.host.focused_field == FormField::Alias {
                 maybe_smart_paste(app);
             }
-            if !app.form.expanded {
+            if !app.forms.host.expanded {
                 // Collapsed mode: Tab/Down from last required field expands
-                match app.form.focused_field {
+                match app.forms.host.focused_field {
                     FormField::Alias => {
-                        app.form.focused_field = FormField::Hostname;
+                        app.forms.host.focused_field = FormField::Hostname;
                     }
                     FormField::Hostname => {
-                        app.form.expanded = true;
-                        app.form.focused_field = FormField::User;
+                        app.forms.host.expanded = true;
+                        app.forms.host.focused_field = FormField::User;
                     }
                     // Defensive: if focus is on an optional field while collapsed, reset
                     _ => {
-                        app.form.focused_field = FormField::Alias;
+                        app.forms.host.focused_field = FormField::Alias;
                     }
                 }
             } else {
                 // Progressive disclosure: advance through the visible field
                 // subset so Tab skips over the hidden `VaultAddr` field when
                 // no role is set.
-                app.form.focus_next_visible();
+                app.forms.host.focus_next_visible();
             }
-            app.form.sync_cursor_to_end();
-            app.form.update_hint();
+            app.forms.host.sync_cursor_to_end();
+            app.forms.host.update_hint();
         }
         KeyCode::BackTab | KeyCode::Up => {
-            if !app.form.expanded {
+            if !app.forms.host.expanded {
                 // Collapsed: cycle within required fields only
-                app.form.focused_field = match app.form.focused_field {
+                app.forms.host.focused_field = match app.forms.host.focused_field {
                     FormField::Alias => FormField::Hostname,
                     // Any other field (including Hostname): go to Alias
                     _ => FormField::Alias,
                 };
             } else {
-                app.form.focus_prev_visible();
+                app.forms.host.focus_prev_visible();
             }
-            app.form.sync_cursor_to_end();
-            app.form.update_hint();
+            app.forms.host.sync_cursor_to_end();
+            app.forms.host.update_hint();
         }
-        KeyCode::Left if app.form.cursor_pos > 0 => {
-            app.form.cursor_pos -= 1;
+        KeyCode::Left if app.forms.host.cursor_pos > 0 => {
+            app.forms.host.cursor_pos -= 1;
         }
         KeyCode::Right => {
-            let len = app.form.focused_value().chars().count();
-            if app.form.cursor_pos < len {
-                app.form.cursor_pos += 1;
+            let len = app.forms.host.focused_value().chars().count();
+            if app.forms.host.cursor_pos < len {
+                app.forms.host.cursor_pos += 1;
             }
         }
         KeyCode::Home => {
-            app.form.cursor_pos = 0;
+            app.forms.host.cursor_pos = 0;
         }
         KeyCode::End => {
-            app.form.sync_cursor_to_end();
+            app.forms.host.sync_cursor_to_end();
         }
         KeyCode::Enter => {
             // INVARIANT: Enter ALWAYS submits the form, regardless of focused
             // field. Pickers are reached via Space (see Char(' ') arm below).
             // Smart-paste detection runs before submit on the Alias field so
             // pasted user@host:port targets get split into the right fields.
-            if app.form.focused_field == FormField::Alias {
+            if app.forms.host.focused_field == FormField::Alias {
                 maybe_smart_paste(app);
             }
             submit_form(app);
@@ -142,17 +142,18 @@ pub(super) fn handle_form(app: &mut App, key: KeyEvent) {
         // inserts a literal space — Space on empty VaultSsh with no
         // candidates degrades cleanly to "type the role yourself".
         KeyCode::Char(' ')
-            if app.form.focused_field.is_picker() && app.form.focused_value().is_empty() =>
+            if app.forms.host.focused_field.is_picker()
+                && app.forms.host.focused_value().is_empty() =>
         {
             open_picker_for_focused_field(app);
         }
         KeyCode::Char(c) => {
-            app.form.insert_char(c);
-            app.form.update_hint();
+            app.forms.host.insert_char(c);
+            app.forms.host.update_hint();
         }
         KeyCode::Backspace => {
-            app.form.delete_char_before_cursor();
-            app.form.update_hint();
+            app.forms.host.delete_char_before_cursor();
+            app.forms.host.update_hint();
         }
         _ => {}
     }
@@ -162,18 +163,18 @@ pub(super) fn handle_form(app: &mut App, key: KeyEvent) {
 /// Also detects bare domains and IP addresses (e.g. "db.example.com", "192.168.1.1")
 /// and moves them to the hostname field with a short alias derived from the first segment.
 fn maybe_smart_paste(app: &mut App) {
-    let alias_value = app.form.alias.clone();
+    let alias_value = app.forms.host.alias.clone();
     if quick_add::looks_like_target(&alias_value) {
         if let Ok(parsed) = quick_add::parse_target(&alias_value) {
             // Only auto-fill if other fields are still at defaults
-            if app.form.hostname.is_empty() {
-                app.form.hostname = parsed.hostname.clone();
+            if app.forms.host.hostname.is_empty() {
+                app.forms.host.hostname = parsed.hostname.clone();
             }
-            if app.form.user.is_empty() && !parsed.user.is_empty() {
-                app.form.user = parsed.user;
+            if app.forms.host.user.is_empty() && !parsed.user.is_empty() {
+                app.forms.host.user = parsed.user;
             }
-            if app.form.port == "22" && parsed.port != 22 {
-                app.form.port = parsed.port.to_string();
+            if app.forms.host.port == "22" && parsed.port != 22 {
+                app.forms.host.port = parsed.port.to_string();
             }
             // Generate a clean alias from the hostname
             let clean_alias = parsed
@@ -182,14 +183,14 @@ fn maybe_smart_paste(app: &mut App) {
                 .next()
                 .unwrap_or(&parsed.hostname)
                 .to_string();
-            app.form.alias = clean_alias;
+            app.forms.host.alias = clean_alias;
             app.notify(crate::messages::SMART_PARSED);
             log::debug!(
                 "host_form: smart-paste parsed alias={} host={} user={} port={}",
-                app.form.alias,
-                app.form.hostname,
-                app.form.user,
-                app.form.port
+                app.forms.host.alias,
+                app.forms.host.hostname,
+                app.forms.host.user,
+                app.forms.host.port
             );
         }
         return;
@@ -208,11 +209,11 @@ fn maybe_smart_paste(app: &mut App) {
         && trimmed
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
-        && app.form.hostname.is_empty()
+        && app.forms.host.hostname.is_empty()
     {
         // Copy the value to the Host field as a suggestion. The Name field
         // stays unchanged so the user keeps full control over the alias.
-        app.form.hostname = trimmed.to_string();
+        app.forms.host.hostname = trimmed.to_string();
         app.notify(crate::messages::LOOKS_LIKE_ADDRESS);
         log::debug!("host_form: auto-suggest hostname={trimmed}");
     }
@@ -226,7 +227,7 @@ fn maybe_smart_paste(app: &mut App) {
 /// fields always open their picker.
 fn open_picker_for_focused_field(app: &mut App) {
     use ratatui::widgets::ListState;
-    match app.form.focused_field {
+    match app.forms.host.focused_field {
         FormField::IdentityFile => {
             app.scan_keys();
             app.ui.show_key_picker = true;
@@ -248,8 +249,8 @@ fn open_picker_for_focused_field(app: &mut App) {
                 // No candidates → fall through to literal-space insert so
                 // the user can type the role manually. Picker opens only
                 // when there is something to pick.
-                app.form.insert_char(' ');
-                app.form.update_hint();
+                app.forms.host.insert_char(' ');
+                app.forms.host.update_hint();
             } else {
                 app.ui.show_vault_role_picker = true;
                 app.ui.vault_role_picker_state = ListState::default();
@@ -271,8 +272,8 @@ fn open_picker_for_focused_field(app: &mut App) {
                 "open_picker_for_focused_field has no arm for picker field {:?}",
                 other
             );
-            app.form.insert_char(' ');
-            app.form.update_hint();
+            app.forms.host.insert_char(' ');
+            app.forms.host.update_hint();
         }
     }
 }
@@ -285,7 +286,7 @@ pub(super) fn submit_form(app: &mut App) {
     }
 
     // Validate
-    if let Err(msg) = app.form.validate() {
+    if let Err(msg) = app.forms.host.validate() {
         app.notify_error(msg);
         return;
     }
@@ -293,7 +294,8 @@ pub(super) fn submit_form(app: &mut App) {
     // Track old askpass to detect keychain removal
     let old_askpass = match &app.screen {
         Screen::EditHost { alias } => app
-            .hosts
+            .hosts_state
+            .list
             .iter()
             .find(|h| h.alias == *alias)
             .and_then(|h| h.askpass.clone()),
@@ -311,11 +313,11 @@ pub(super) fn submit_form(app: &mut App) {
     match result {
         Ok(msg) => {
             // Clear undo buffer after successful write
-            app.undo_stack.clear();
+            app.hosts_state.undo_stack.clear();
             // Handle keychain changes on edit
             let mut final_msg = msg;
             if old_askpass.as_deref() == Some("keychain") {
-                if app.form.askpass != "keychain" {
+                if app.forms.host.askpass != "keychain" {
                     // Source changed away from keychain — remove old entry
                     if let Screen::EditHost { ref alias } = app.screen {
                         let _ = crate::askpass::remove_from_keychain(alias);
@@ -323,9 +325,10 @@ pub(super) fn submit_form(app: &mut App) {
                     final_msg = format!("{}. Keychain entry removed.", final_msg);
                 } else if let Screen::EditHost { ref alias } = app.screen {
                     // Alias renamed — migrate keychain entry
-                    if *alias != app.form.alias {
+                    if *alias != app.forms.host.alias {
                         if let Ok(pw) = crate::askpass::retrieve_keychain_password(alias) {
-                            if crate::askpass::store_in_keychain(&app.form.alias, &pw).is_ok() {
+                            if crate::askpass::store_in_keychain(&app.forms.host.alias, &pw).is_ok()
+                            {
                                 let _ = crate::askpass::remove_from_keychain(alias);
                             }
                         }
@@ -347,17 +350,17 @@ pub(super) fn submit_form(app: &mut App) {
         }
     }
 
-    let target_alias = app.form.alias.trim().to_string();
+    let target_alias = app.forms.host.alias.trim().to_string();
     // Editing a stale host means the user asserts it is still wanted
     if let Screen::EditHost { ref alias } = app.screen {
-        app.config.clear_host_stale(alias);
+        app.hosts_state.ssh_config.clear_host_stale(alias);
         // If alias was renamed, also clear on the new alias
         if *alias != target_alias {
-            app.config.clear_host_stale(&target_alias);
+            app.hosts_state.ssh_config.clear_host_stale(&target_alias);
         }
     }
     app.clear_form_mtime();
-    app.form_baseline = None;
+    app.forms.host_baseline = None;
     app.set_screen(Screen::HostList);
     app.select_host_by_alias(&target_alias);
     app.flush_pending_vault_write();

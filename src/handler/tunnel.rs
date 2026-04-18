@@ -10,40 +10,44 @@ pub(super) fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
     };
 
     // Handle pending tunnel delete confirmation first
-    if app.pending_tunnel_delete.is_some() && key.code != KeyCode::Char('?') {
+    if app.tunnels.pending_delete.is_some() && key.code != KeyCode::Char('?') {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
-                let Some(sel) = app.pending_tunnel_delete.take() else {
+                let Some(sel) = app.tunnels.pending_delete.take() else {
                     return;
                 };
-                if let Some(rule) = app.tunnel_list.get(sel) {
+                if let Some(rule) = app.tunnels.list.get(sel) {
                     let key = rule.tunnel_type.directive_key().to_string();
                     let value = rule.to_directive_value();
-                    let config_backup = app.config.clone();
-                    if !app.config.remove_forward(&alias, &key, &value) {
+                    let config_backup = app.hosts_state.ssh_config.clone();
+                    if !app
+                        .hosts_state
+                        .ssh_config
+                        .remove_forward(&alias, &key, &value)
+                    {
                         app.notify_warning(crate::messages::TUNNEL_NOT_FOUND);
                         return;
                     }
-                    if let Err(e) = app.config.write() {
-                        app.config = config_backup;
+                    if let Err(e) = app.hosts_state.ssh_config.write() {
+                        app.hosts_state.ssh_config = config_backup;
                         app.notify_error(crate::messages::failed_to_save(&e));
                     } else {
                         app.update_last_modified();
                         app.refresh_tunnel_list(&alias);
                         app.reload_hosts();
-                        if app.tunnel_list.is_empty() {
+                        if app.tunnels.list.is_empty() {
                             app.ui.tunnel_list_state.select(None);
-                        } else if sel >= app.tunnel_list.len() {
+                        } else if sel >= app.tunnels.list.len() {
                             app.ui
                                 .tunnel_list_state
-                                .select(Some(app.tunnel_list.len() - 1));
+                                .select(Some(app.tunnels.list.len() - 1));
                         }
                         app.notify(crate::messages::TUNNEL_REMOVED);
                     }
                 }
             }
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                app.pending_tunnel_delete = None;
+                app.tunnels.pending_delete = None;
             }
             _ => {}
         }
@@ -61,20 +65,20 @@ pub(super) fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
             app.select_prev_tunnel();
         }
         KeyCode::PageDown => {
-            crate::app::page_down(&mut app.ui.tunnel_list_state, app.tunnel_list.len(), 10);
+            crate::app::page_down(&mut app.ui.tunnel_list_state, app.tunnels.list.len(), 10);
         }
         KeyCode::PageUp => {
-            crate::app::page_up(&mut app.ui.tunnel_list_state, app.tunnel_list.len(), 10);
+            crate::app::page_up(&mut app.ui.tunnel_list_state, app.tunnels.list.len(), 10);
         }
         KeyCode::Char('a') => {
             // Check if host is from an included file (read-only)
-            if let Some(host) = app.hosts.iter().find(|h| h.alias == alias) {
+            if let Some(host) = app.hosts_state.list.iter().find(|h| h.alias == alias) {
                 if host.source_file.is_some() {
                     app.notify_warning(crate::messages::TUNNEL_INCLUDED_READ_ONLY);
                     return;
                 }
             }
-            app.tunnel_form = crate::app::TunnelForm::new();
+            app.tunnels.form = crate::app::TunnelForm::new();
             app.set_screen(Screen::TunnelForm {
                 alias: alias.clone(),
                 editing: None,
@@ -84,15 +88,15 @@ pub(super) fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Char('e') => {
             // Check if host is from an included file (read-only)
-            if let Some(host) = app.hosts.iter().find(|h| h.alias == alias) {
+            if let Some(host) = app.hosts_state.list.iter().find(|h| h.alias == alias) {
                 if host.source_file.is_some() {
                     app.notify_warning(crate::messages::TUNNEL_INCLUDED_READ_ONLY);
                     return;
                 }
             }
             if let Some(sel) = app.ui.tunnel_list_state.selected() {
-                if let Some(rule) = app.tunnel_list.get(sel) {
-                    app.tunnel_form = crate::app::TunnelForm::from_rule(rule);
+                if let Some(rule) = app.tunnels.list.get(sel) {
+                    app.tunnels.form = crate::app::TunnelForm::from_rule(rule);
                     app.set_screen(Screen::TunnelForm {
                         alias: alias.clone(),
                         editing: Some(sel),
@@ -104,37 +108,38 @@ pub(super) fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Char('d') => {
             // Check if host is from an included file (read-only)
-            if let Some(host) = app.hosts.iter().find(|h| h.alias == alias) {
+            if let Some(host) = app.hosts_state.list.iter().find(|h| h.alias == alias) {
                 if host.source_file.is_some() {
                     app.notify_warning(crate::messages::TUNNEL_INCLUDED_READ_ONLY);
                     return;
                 }
             }
             if let Some(sel) = app.ui.tunnel_list_state.selected() {
-                if sel < app.tunnel_list.len() {
-                    app.pending_tunnel_delete = Some(sel);
+                if sel < app.tunnels.list.len() {
+                    app.tunnels.pending_delete = Some(sel);
                 }
             }
         }
         KeyCode::Enter => {
             // Start/stop tunnel
-            if app.active_tunnels.contains_key(&alias) {
+            if app.tunnels.active.contains_key(&alias) {
                 // Stop
-                if let Some(mut tunnel) = app.active_tunnels.remove(&alias) {
+                if let Some(mut tunnel) = app.tunnels.active.remove(&alias) {
                     if let Err(e) = tunnel.child.kill() {
                         debug!("[external] Failed to kill tunnel process for {alias}: {e}");
                     }
                     let _ = tunnel.child.wait();
                     app.notify(crate::messages::tunnel_stopped(&alias));
                 }
-            } else if !app.tunnel_list.is_empty() {
+            } else if !app.tunnels.list.is_empty() {
                 // Start
                 if app.demo_mode {
                     app.notify(crate::messages::DEMO_TUNNELS_DISABLED);
                     return;
                 }
                 let askpass = app
-                    .hosts
+                    .hosts_state
+                    .list
                     .iter()
                     .find(|h| h.alias == alias)
                     .and_then(|h| h.askpass.clone());
@@ -145,7 +150,7 @@ pub(super) fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
                     app.bw_session.as_deref(),
                 ) {
                     Ok(child) => {
-                        for rule in &app.tunnel_list {
+                        for rule in &app.tunnels.list {
                             info!(
                                 "Tunnel started: type={} local={} remote={}:{} alias={alias}",
                                 rule.tunnel_type.label(),
@@ -154,7 +159,8 @@ pub(super) fn handle_tunnel_list(app: &mut App, key: KeyEvent) {
                                 rule.remote_port
                             );
                         }
-                        app.active_tunnels
+                        app.tunnels
+                            .active
                             .insert(alias.clone(), crate::tunnel::ActiveTunnel { child });
                         app.notify(crate::messages::tunnel_started(&alias));
                     }
@@ -181,16 +187,16 @@ pub(super) fn handle_tunnel_form(app: &mut App, key: KeyEvent) {
     };
 
     // Handle discard confirmation dialog
-    if app.pending_discard_confirm {
+    if app.forms.pending_discard_confirm {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
-                app.pending_discard_confirm = false;
+                app.forms.pending_discard_confirm = false;
                 app.clear_form_mtime();
-                app.tunnel_form_baseline = None;
+                app.tunnels.form_baseline = None;
                 app.set_screen(Screen::TunnelList { alias });
             }
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                app.pending_discard_confirm = false;
+                app.forms.pending_discard_confirm = false;
             }
             _ => {}
         }
@@ -200,59 +206,62 @@ pub(super) fn handle_tunnel_form(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc => {
             if app.tunnel_form_is_dirty() {
-                app.pending_discard_confirm = true;
+                app.forms.pending_discard_confirm = true;
             } else {
                 app.clear_form_mtime();
-                app.tunnel_form_baseline = None;
+                app.tunnels.form_baseline = None;
                 app.set_screen(Screen::TunnelList { alias });
             }
         }
         KeyCode::Tab | KeyCode::Down => {
-            app.tunnel_form.focused_field = app
-                .tunnel_form
+            app.tunnels.form.focused_field = app
+                .tunnels
+                .form
                 .focused_field
-                .next(app.tunnel_form.tunnel_type);
-            app.tunnel_form.sync_cursor_to_end();
+                .next(app.tunnels.form.tunnel_type);
+            app.tunnels.form.sync_cursor_to_end();
         }
         KeyCode::BackTab | KeyCode::Up => {
-            app.tunnel_form.focused_field = app
-                .tunnel_form
+            app.tunnels.form.focused_field = app
+                .tunnels
+                .form
                 .focused_field
-                .prev(app.tunnel_form.tunnel_type);
-            app.tunnel_form.sync_cursor_to_end();
+                .prev(app.tunnels.form.tunnel_type);
+            app.tunnels.form.sync_cursor_to_end();
         }
-        KeyCode::Left if app.tunnel_form.cursor_pos > 0 => {
-            app.tunnel_form.cursor_pos -= 1;
+        KeyCode::Left if app.tunnels.form.cursor_pos > 0 => {
+            app.tunnels.form.cursor_pos -= 1;
         }
         KeyCode::Right => {
             let len = app
-                .tunnel_form
+                .tunnels
+                .form
                 .focused_value()
                 .map(|v| v.chars().count())
                 .unwrap_or(0);
-            if app.tunnel_form.cursor_pos < len {
-                app.tunnel_form.cursor_pos += 1;
+            if app.tunnels.form.cursor_pos < len {
+                app.tunnels.form.cursor_pos += 1;
             }
         }
         KeyCode::Home => {
-            app.tunnel_form.cursor_pos = 0;
+            app.tunnels.form.cursor_pos = 0;
         }
         KeyCode::End => {
-            app.tunnel_form.sync_cursor_to_end();
+            app.tunnels.form.sync_cursor_to_end();
         }
         KeyCode::Enter => {
             submit_tunnel_form(app, &alias, editing);
         }
         KeyCode::Char(' ')
-            if app.tunnel_form.focused_field == crate::app::TunnelFormField::Type =>
+            if app.tunnels.form.focused_field == crate::app::TunnelFormField::Type =>
         {
-            app.tunnel_form.tunnel_type = app.tunnel_form.tunnel_type.next();
+            app.tunnels.form.tunnel_type = app.tunnels.form.tunnel_type.next();
         }
         KeyCode::Char(c) => {
-            app.tunnel_form.insert_char(c);
+            app.tunnels.form.insert_char(c);
         }
         KeyCode::Backspace => {
-            app.tunnel_form.delete_char_before_cursor();
+            app.tunnels.form.delete_char_before_cursor();
         }
         _ => {}
     }
@@ -265,21 +274,25 @@ fn submit_tunnel_form(app: &mut App, alias: &str, editing: Option<usize>) {
         return;
     }
 
-    if let Err(msg) = app.tunnel_form.validate() {
+    if let Err(msg) = app.tunnels.form.validate() {
         app.notify_error(msg);
         return;
     }
 
-    let (directive_key, directive_value) = app.tunnel_form.to_directive();
-    let config_backup = app.config.clone();
+    let (directive_key, directive_value) = app.tunnels.form.to_directive();
+    let config_backup = app.hosts_state.ssh_config.clone();
 
     // If editing, remove the old directive first
     if let Some(idx) = editing {
-        if let Some(old_rule) = app.tunnel_list.get(idx) {
+        if let Some(old_rule) = app.tunnels.list.get(idx) {
             let old_key = old_rule.tunnel_type.directive_key().to_string();
             let old_value = old_rule.to_directive_value();
-            if !app.config.remove_forward(alias, &old_key, &old_value) {
-                app.config = config_backup;
+            if !app
+                .hosts_state
+                .ssh_config
+                .remove_forward(alias, &old_key, &old_value)
+            {
+                app.hosts_state.ssh_config = config_backup;
                 app.notify_warning(crate::messages::TUNNEL_ORIGINAL_NOT_FOUND);
                 return;
             }
@@ -292,41 +305,43 @@ fn submit_tunnel_form(app: &mut App, alias: &str, editing: Option<usize>) {
 
     // Duplicate detection (runs after old directive removal for edits)
     if app
-        .config
+        .hosts_state
+        .ssh_config
         .has_forward(alias, directive_key, &directive_value)
     {
-        app.config = config_backup;
+        app.hosts_state.ssh_config = config_backup;
         app.notify_warning(crate::messages::TUNNEL_DUPLICATE);
         return;
     }
 
-    app.config
+    app.hosts_state
+        .ssh_config
         .add_forward(alias, directive_key, &directive_value);
-    if let Err(e) = app.config.write() {
-        app.config = config_backup;
+    if let Err(e) = app.hosts_state.ssh_config.write() {
+        app.hosts_state.ssh_config = config_backup;
         app.notify_error(crate::messages::failed_to_save(&e));
         return;
     }
 
-    app.undo_stack.clear(); // Clear undo buffer — positions may have shifted
+    app.hosts_state.undo_stack.clear(); // Clear undo buffer — positions may have shifted
     app.update_last_modified();
     app.refresh_tunnel_list(alias);
     app.reload_hosts();
     // Fix selection after list change
-    if app.tunnel_list.is_empty() {
+    if app.tunnels.list.is_empty() {
         app.ui.tunnel_list_state.select(None);
     } else if let Some(sel) = app.ui.tunnel_list_state.selected() {
-        if sel >= app.tunnel_list.len() {
+        if sel >= app.tunnels.list.len() {
             app.ui
                 .tunnel_list_state
-                .select(Some(app.tunnel_list.len() - 1));
+                .select(Some(app.tunnels.list.len() - 1));
         }
     } else {
         // First tunnel added to empty list — initialize selection
         app.ui.tunnel_list_state.select(Some(0));
     }
     app.clear_form_mtime();
-    app.tunnel_form_baseline = None;
+    app.tunnels.form_baseline = None;
     app.notify(crate::messages::TUNNEL_SAVED);
     app.set_screen(Screen::TunnelList {
         alias: alias.to_string(),

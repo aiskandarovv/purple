@@ -14,7 +14,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         _ => return,
     };
 
-    let form = match &app.snippet_param_form {
+    let form = match &app.snippets.param_form {
         Some(f) => f,
         None => return,
     };
@@ -49,11 +49,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let param_count = form.params.len();
 
     // Update form state so the handler uses the correct window size
-    if let Some(ref mut f) = app.snippet_param_form {
+    if let Some(ref mut f) = app.snippets.param_form {
         f.visible_count = actual_visible.max(1);
     }
     // Re-borrow form immutably after mutation
-    let form = match &app.snippet_param_form {
+    let form = match &app.snippets.param_form {
         Some(f) => f,
         None => return,
     };
@@ -146,7 +146,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // form_save_footer helper. Build manually but follow the same shape.
     let footer_area = design::render_overlay_footer(frame, block_area);
     if footer_area.y < form_area.y + form_area.height {
-        if app.pending_discard_confirm {
+        if app.forms.pending_discard_confirm {
             design::render_discard_prompt(frame, footer_area, app);
         } else {
             design::Footer::new()

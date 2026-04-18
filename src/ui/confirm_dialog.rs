@@ -19,7 +19,7 @@ pub fn render(frame: &mut Frame, app: &App, alias: &str) {
     // shared config). Single-alias hosts render the original compact
     // 5-row dialog, unchanged, so visual regression goldens for the
     // common case stay stable.
-    let siblings = app.config.siblings_of(alias);
+    let siblings = app.hosts_state.ssh_config.siblings_of(alias);
     let has_siblings = !siblings.is_empty();
 
     // Geometry is preserved bit-for-bit when no siblings exist so the

@@ -16,7 +16,12 @@ pub(super) fn ping_selected_host(
         // result to all dependents (handled in main.rs PingResult handler).
         let (ping_alias, hostname, port) = if !host.proxy_jump.is_empty() {
             let bastion_alias = host.proxy_jump.clone();
-            if let Some(bastion) = app.hosts.iter().find(|h| h.alias == bastion_alias) {
+            if let Some(bastion) = app
+                .hosts_state
+                .list
+                .iter()
+                .find(|h| h.alias == bastion_alias)
+            {
                 app.ping
                     .status
                     .insert(alias.clone(), crate::app::PingStatus::Checking);

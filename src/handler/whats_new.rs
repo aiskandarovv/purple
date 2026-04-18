@@ -52,10 +52,12 @@ fn close_and_mark_seen(app: &mut App) {
 
 pub(super) fn dismiss_whats_new_toast(app: &mut App) {
     let fragment = crate::messages::whats_new_toast::INVITE_FRAGMENT;
-    if let Some(ref t) = app.toast {
+    if let Some(ref t) = app.status_center.toast {
         if t.text.contains(fragment) {
-            app.toast = app.toast_queue.pop_front();
+            app.status_center.toast = app.status_center.toast_queue.pop_front();
         }
     }
-    app.toast_queue.retain(|t| !t.text.contains(fragment));
+    app.status_center
+        .toast_queue
+        .retain(|t| !t.text.contains(fragment));
 }

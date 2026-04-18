@@ -45,26 +45,26 @@ pub(super) fn handle_password_picker(app: &mut App, key: KeyEvent) {
                     let is_custom_cmd = source.label == "Custom command";
                     let is_prefix = source.value.ends_with(':') || source.value.ends_with("//");
                     if is_none {
-                        app.form.askpass = String::new();
-                        app.form.sync_cursor_to_end();
+                        app.forms.host.askpass = String::new();
+                        app.forms.host.sync_cursor_to_end();
                         app.notify(crate::messages::PASSWORD_SOURCE_CLEARED);
                     } else if is_custom_cmd {
-                        app.form.askpass = String::new();
-                        app.form.focused_field = FormField::AskPass;
-                        app.form.sync_cursor_to_end();
+                        app.forms.host.askpass = String::new();
+                        app.forms.host.focused_field = FormField::AskPass;
+                        app.forms.host.sync_cursor_to_end();
                         app.notify(
                             "Type your command. Use %a (alias) and %h (hostname) as placeholders.",
                         );
                         needs_more_input = true;
                     } else if is_prefix {
-                        app.form.askpass = source.value.to_string();
-                        app.form.focused_field = FormField::AskPass;
-                        app.form.sync_cursor_to_end();
+                        app.forms.host.askpass = source.value.to_string();
+                        app.forms.host.focused_field = FormField::AskPass;
+                        app.forms.host.sync_cursor_to_end();
                         app.notify(crate::messages::complete_path(source.label));
                         needs_more_input = true;
                     } else {
-                        app.form.askpass = source.value.to_string();
-                        app.form.sync_cursor_to_end();
+                        app.forms.host.askpass = source.value.to_string();
+                        app.forms.host.sync_cursor_to_end();
                         app.notify(crate::messages::password_source_set(source.label));
                     }
                 }
@@ -94,11 +94,11 @@ pub(super) fn handle_key_picker_shared(app: &mut App, key: KeyEvent, for_provide
             if let Some(index) = app.ui.key_picker_state.selected() {
                 if let Some(key_info) = app.keys.get(index) {
                     if for_provider {
-                        app.provider_form.identity_file = key_info.display_path.clone();
-                        app.provider_form.sync_cursor_to_end();
+                        app.providers.form.identity_file = key_info.display_path.clone();
+                        app.providers.form.sync_cursor_to_end();
                     } else {
-                        app.form.identity_file = key_info.display_path.clone();
-                        app.form.sync_cursor_to_end();
+                        app.forms.host.identity_file = key_info.display_path.clone();
+                        app.forms.host.sync_cursor_to_end();
                     }
                     app.notify(crate::messages::key_selected(&key_info.name));
                 }
@@ -130,8 +130,8 @@ pub(super) fn handle_proxyjump_picker(app: &mut App, key: KeyEvent) {
                 if let Some(crate::app::ProxyJumpCandidate::Host { alias, .. }) =
                     candidates.get(index)
                 {
-                    app.form.proxy_jump = alias.clone();
-                    app.form.sync_cursor_to_end();
+                    app.forms.host.proxy_jump = alias.clone();
+                    app.forms.host.sync_cursor_to_end();
                     app.notify(crate::messages::proxy_jump_set(alias));
                     app.ui.show_proxyjump_picker = false;
                     super::try_auto_submit_after_picker(app);
@@ -158,8 +158,8 @@ pub(super) fn handle_vault_role_picker(app: &mut App, key: KeyEvent) {
             let candidates = app.vault_role_candidates();
             if let Some(index) = app.ui.vault_role_picker_state.selected() {
                 if let Some(role) = candidates.get(index) {
-                    app.form.vault_ssh = role.clone();
-                    app.form.sync_cursor_to_end();
+                    app.forms.host.vault_ssh = role.clone();
+                    app.forms.host.sync_cursor_to_end();
                     app.notify(crate::messages::vault_role_set(role));
                 }
             }

@@ -222,97 +222,121 @@ impl App {
             .or_else(|| self.selected_pattern().map(|p| p.pattern.clone()));
 
         // Multi-select indices become visually misleading after reorder
-        self.multi_select.clear();
+        self.hosts_state.multi_select.clear();
         // display_list is about to be rebuilt; group_alias_map depends on it
-        self.host_list_cache.invalidate();
+        self.hosts_state.render_cache.invalidate();
 
-        if self.sort_mode == SortMode::Original && matches!(self.group_by, GroupBy::None) {
-            self.display_list =
-                Self::build_display_list_from(&self.config, &self.hosts, &self.patterns);
-        } else if self.sort_mode == SortMode::Original && !matches!(self.group_by, GroupBy::None) {
+        if self.hosts_state.sort_mode == SortMode::Original
+            && matches!(self.hosts_state.group_by, GroupBy::None)
+        {
+            self.hosts_state.display_list = Self::build_display_list_from(
+                &self.hosts_state.ssh_config,
+                &self.hosts_state.list,
+                &self.hosts_state.patterns,
+            );
+        } else if self.hosts_state.sort_mode == SortMode::Original
+            && !matches!(self.hosts_state.group_by, GroupBy::None)
+        {
             // Original order but grouped: extract flat indices from config order
-            let indices: Vec<usize> = (0..self.hosts.len()).collect();
-            self.display_list = self.group_indices(&indices);
+            let indices: Vec<usize> = (0..self.hosts_state.list.len()).collect();
+            self.hosts_state.display_list = self.group_indices(&indices);
         } else {
-            let mut indices: Vec<usize> = (0..self.hosts.len()).collect();
-            match self.sort_mode {
+            let mut indices: Vec<usize> = (0..self.hosts_state.list.len()).collect();
+            match self.hosts_state.sort_mode {
                 SortMode::AlphaAlias => {
                     indices.sort_by_cached_key(|&i| {
-                        let stale = self.hosts[i].stale.is_some();
-                        (stale, self.hosts[i].alias.to_ascii_lowercase())
+                        let stale = self.hosts_state.list[i].stale.is_some();
+                        (stale, self.hosts_state.list[i].alias.to_ascii_lowercase())
                     });
                 }
                 SortMode::AlphaHostname => {
                     indices.sort_by_cached_key(|&i| {
-                        let stale = self.hosts[i].stale.is_some();
-                        (stale, self.hosts[i].hostname.to_ascii_lowercase())
+                        let stale = self.hosts_state.list[i].stale.is_some();
+                        (
+                            stale,
+                            self.hosts_state.list[i].hostname.to_ascii_lowercase(),
+                        )
                     });
                 }
                 SortMode::Frecency => {
                     indices.sort_by(|a, b| {
-                        let sa = self.hosts[*a].stale.is_some();
-                        let sb = self.hosts[*b].stale.is_some();
+                        let sa = self.hosts_state.list[*a].stale.is_some();
+                        let sb = self.hosts_state.list[*b].stale.is_some();
                         sa.cmp(&sb).then_with(|| {
-                            let score_a = self.history.frecency_score(&self.hosts[*a].alias);
-                            let score_b = self.history.frecency_score(&self.hosts[*b].alias);
+                            let score_a = self
+                                .history
+                                .frecency_score(&self.hosts_state.list[*a].alias);
+                            let score_b = self
+                                .history
+                                .frecency_score(&self.hosts_state.list[*b].alias);
                             score_b.total_cmp(&score_a)
                         })
                     });
                 }
                 SortMode::MostRecent => {
                     indices.sort_by(|a, b| {
-                        let sa = self.hosts[*a].stale.is_some();
-                        let sb = self.hosts[*b].stale.is_some();
+                        let sa = self.hosts_state.list[*a].stale.is_some();
+                        let sb = self.hosts_state.list[*b].stale.is_some();
                         sa.cmp(&sb).then_with(|| {
-                            let ts_a = self.history.last_connected(&self.hosts[*a].alias);
-                            let ts_b = self.history.last_connected(&self.hosts[*b].alias);
+                            let ts_a = self
+                                .history
+                                .last_connected(&self.hosts_state.list[*a].alias);
+                            let ts_b = self
+                                .history
+                                .last_connected(&self.hosts_state.list[*b].alias);
                             ts_b.cmp(&ts_a)
                         })
                     });
                 }
                 SortMode::Status => {
                     indices.sort_by(|a, b| {
-                        let sa = self.hosts[*a].stale.is_some();
-                        let sb = self.hosts[*b].stale.is_some();
+                        let sa = self.hosts_state.list[*a].stale.is_some();
+                        let sb = self.hosts_state.list[*b].stale.is_some();
                         sa.cmp(&sb).then_with(|| {
-                            let pa = self.ping.status.get(&self.hosts[*a].alias);
-                            let pb = self.ping.status.get(&self.hosts[*b].alias);
+                            let pa = self.ping.status.get(&self.hosts_state.list[*a].alias);
+                            let pb = self.ping.status.get(&self.hosts_state.list[*b].alias);
                             super::ping_sort_key(pa).cmp(&super::ping_sort_key(pb))
                         })
                     });
                 }
                 _ => {}
             }
-            self.display_list = self.group_indices(&indices);
+            self.hosts_state.display_list = self.group_indices(&indices);
         }
 
         // Append pattern group at the bottom (sorted/grouped paths skip
         // build_display_list_from which already handles this)
-        if (self.sort_mode != SortMode::Original || !matches!(self.group_by, GroupBy::None))
-            && !self.patterns.is_empty()
+        if (self.hosts_state.sort_mode != SortMode::Original
+            || !matches!(self.hosts_state.group_by, GroupBy::None))
+            && !self.hosts_state.patterns.is_empty()
         {
-            self.display_list
+            self.hosts_state
+                .display_list
                 .push(HostListItem::GroupHeader("Patterns".to_string()));
             let mut pattern_index = 0usize;
             Self::append_pattern_items(
-                &self.config.elements,
+                &self.hosts_state.ssh_config.elements,
                 &mut pattern_index,
-                &mut self.display_list,
+                &mut self.hosts_state.display_list,
             );
         }
 
         // Compute group host counts before group filtering
         {
-            self.group_host_counts.clear();
+            self.hosts_state.group_host_counts.clear();
             let mut current_group: Option<&str> = None;
-            for item in &self.display_list {
+            for item in &self.hosts_state.display_list {
                 match item {
                     HostListItem::GroupHeader(text) => {
                         current_group = Some(text.as_str());
                     }
                     HostListItem::Host { .. } | HostListItem::Pattern { .. } => {
                         if let Some(group) = current_group {
-                            *self.group_host_counts.entry(group.to_string()).or_insert(0) += 1;
+                            *self
+                                .hosts_state
+                                .group_host_counts
+                                .entry(group.to_string())
+                                .or_insert(0) += 1;
                         }
                     }
                 }
@@ -321,15 +345,15 @@ impl App {
 
         // Build group tab order. For tag mode, compute from host tags (matching
         // render_group_bar's tab list). For provider mode, extract from GroupHeaders.
-        self.group_tab_order = match &self.group_by {
+        self.hosts_state.group_tab_order = match &self.hosts_state.group_by {
             GroupBy::Tag(_) => {
                 let mut tag_counts: HashMap<String, usize> = HashMap::new();
-                for host in &self.hosts {
+                for host in &self.hosts_state.list {
                     for tag in host.tags.iter() {
                         *tag_counts.entry(tag.clone()).or_insert(0) += 1;
                     }
                 }
-                for pattern in &self.patterns {
+                for pattern in &self.hosts_state.patterns {
                     for tag in &pattern.tags {
                         *tag_counts.entry(tag.clone()).or_insert(0) += 1;
                     }
@@ -337,13 +361,14 @@ impl App {
                 let mut sorted: Vec<(String, usize)> = tag_counts.into_iter().collect();
                 sorted.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
                 let top: Vec<(String, usize)> = sorted.into_iter().take(10).collect();
-                self.group_host_counts = top.iter().map(|(t, c)| (t.clone(), *c)).collect();
+                self.hosts_state.group_host_counts =
+                    top.iter().map(|(t, c)| (t.clone(), *c)).collect();
                 top.into_iter().map(|(t, _)| t).collect()
             }
             _ => {
                 let mut order = Vec::new();
                 let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
-                for item in &self.display_list {
+                for item in &self.hosts_state.display_list {
                     if let HostListItem::GroupHeader(text) = item {
                         if seen.insert(text.as_str()) {
                             order.push(text.clone());
@@ -355,8 +380,9 @@ impl App {
         };
 
         // Re-derive group_tab_index from group_filter after rebuild
-        self.group_tab_index = match &self.group_filter {
+        self.hosts_state.group_tab_index = match &self.hosts_state.group_filter {
             Some(name) => self
+                .hosts_state
                 .group_tab_order
                 .iter()
                 .position(|g| g == name)
@@ -366,18 +392,18 @@ impl App {
         };
 
         // Filter by group if active
-        if let Some(ref filter) = self.group_filter {
-            let is_tag_mode = matches!(self.group_by, GroupBy::Tag(_));
-            let mut filtered = Vec::with_capacity(self.display_list.len());
+        if let Some(ref filter) = self.hosts_state.group_filter {
+            let is_tag_mode = matches!(self.hosts_state.group_by, GroupBy::Tag(_));
+            let mut filtered = Vec::with_capacity(self.hosts_state.display_list.len());
 
             if is_tag_mode {
                 // In tag mode, filter by host tags directly (GroupHeaders don't
                 // cover all tags, only the active GroupBy tag).
-                for item in std::mem::take(&mut self.display_list) {
+                for item in std::mem::take(&mut self.hosts_state.display_list) {
                     match &item {
                         HostListItem::GroupHeader(_) => {} // skip all headers
                         HostListItem::Host { index } => {
-                            if let Some(host) = self.hosts.get(*index) {
+                            if let Some(host) = self.hosts_state.list.get(*index) {
                                 if host
                                     .tags
                                     .iter()
@@ -389,7 +415,7 @@ impl App {
                             }
                         }
                         HostListItem::Pattern { index } => {
-                            if let Some(pattern) = self.patterns.get(*index) {
+                            if let Some(pattern) = self.hosts_state.patterns.get(*index) {
                                 if pattern.tags.iter().any(|t| t == filter) {
                                     filtered.push(item);
                                 }
@@ -400,7 +426,7 @@ impl App {
             } else {
                 // In provider/none mode, filter by GroupHeader matching
                 let mut in_group = false;
-                for item in std::mem::take(&mut self.display_list) {
+                for item in std::mem::take(&mut self.hosts_state.display_list) {
                     match &item {
                         HostListItem::GroupHeader(text) => {
                             in_group = text == filter;
@@ -414,7 +440,7 @@ impl App {
                 }
             }
 
-            self.display_list = filtered;
+            self.hosts_state.display_list = filtered;
         }
 
         // Restore selection by alias, fall back to first host
@@ -429,7 +455,7 @@ impl App {
 
     /// Select the first selectable item in the display list (always skips headers).
     pub fn select_first_host(&mut self) {
-        if let Some(pos) = self.display_list.iter().position(|item| {
+        if let Some(pos) = self.hosts_state.display_list.iter().position(|item| {
             matches!(
                 item,
                 HostListItem::Host { .. } | HostListItem::Pattern { .. }
@@ -443,13 +469,17 @@ impl App {
     /// Hosts without provider appear first (no header), then named provider
     /// groups (in first-appearance order) with headers.
     fn group_indices(&self, sorted_indices: &[usize]) -> Vec<HostListItem> {
-        match &self.group_by {
+        match &self.hosts_state.group_by {
             GroupBy::None => sorted_indices
                 .iter()
                 .map(|&i| HostListItem::Host { index: i })
                 .collect(),
-            GroupBy::Provider => Self::group_indices_by_provider(&self.hosts, sorted_indices),
-            GroupBy::Tag(tag) => Self::group_indices_by_tag(&self.hosts, sorted_indices, tag),
+            GroupBy::Provider => {
+                Self::group_indices_by_provider(&self.hosts_state.list, sorted_indices)
+            }
+            GroupBy::Tag(tag) => {
+                Self::group_indices_by_tag(&self.hosts_state.list, sorted_indices, tag)
+            }
         }
     }
 

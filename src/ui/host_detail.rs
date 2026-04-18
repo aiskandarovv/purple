@@ -8,11 +8,11 @@ use crate::app::App;
 use crate::ssh_config::model::ConfigElement;
 
 pub fn render(frame: &mut Frame, app: &App, index: usize) {
-    let Some(host) = app.hosts.get(index) else {
+    let Some(host) = app.hosts_state.list.get(index) else {
         return;
     };
 
-    let directives = find_host_directives(&app.config.elements, &host.alias);
+    let directives = find_host_directives(&app.hosts_state.ssh_config.elements, &host.alias);
 
     let directive_count = directives.len();
     let max_visible = 15;

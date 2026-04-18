@@ -10,9 +10,9 @@ use crate::event::AppEvent;
 use crate::preferences;
 
 pub(super) fn open_snippet_picker(app: &mut App, aliases: Vec<String>) {
-    app.snippet_store = crate::snippet::SnippetStore::load();
+    app.snippets.store = crate::snippet::SnippetStore::load();
     app.ui.snippet_picker_state = ratatui::widgets::ListState::default();
-    if !app.snippet_store.snippets.is_empty() {
+    if !app.snippets.store.snippets.is_empty() {
         app.ui.snippet_picker_state.select(Some(0));
     }
     app.set_screen(Screen::SnippetPicker {
@@ -46,31 +46,31 @@ pub(super) fn handle_snippet_picker(
     }
 
     // Handle pending snippet delete confirmation
-    if app.pending_snippet_delete.is_some() && key.code != KeyCode::Char('?') {
+    if app.snippets.pending_delete.is_some() && key.code != KeyCode::Char('?') {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
-                let Some(sel) = app.pending_snippet_delete.take() else {
+                let Some(sel) = app.snippets.pending_delete.take() else {
                     return;
                 };
-                if sel < app.snippet_store.snippets.len() {
-                    let removed = app.snippet_store.snippets.remove(sel);
-                    if let Err(e) = app.snippet_store.save() {
-                        app.snippet_store.snippets.insert(sel, removed);
+                if sel < app.snippets.store.snippets.len() {
+                    let removed = app.snippets.store.snippets.remove(sel);
+                    if let Err(e) = app.snippets.store.save() {
+                        app.snippets.store.snippets.insert(sel, removed);
                         app.notify_error(crate::messages::failed_to_save(&e));
                     } else {
-                        if app.snippet_store.snippets.is_empty() {
+                        if app.snippets.store.snippets.is_empty() {
                             app.ui.snippet_picker_state.select(None);
-                        } else if sel >= app.snippet_store.snippets.len() {
+                        } else if sel >= app.snippets.store.snippets.len() {
                             app.ui
                                 .snippet_picker_state
-                                .select(Some(app.snippet_store.snippets.len() - 1));
+                                .select(Some(app.snippets.store.snippets.len() - 1));
                         }
                         app.notify(crate::messages::snippet_removed(&removed.name));
                     }
                 }
             }
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                app.pending_snippet_delete = None;
+                app.snippets.pending_delete = None;
             }
             _ => {}
         }
@@ -80,7 +80,7 @@ pub(super) fn handle_snippet_picker(
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') => {
             app.ui.snippet_search = None;
-            app.pending_snippet_delete = None;
+            app.snippets.pending_delete = None;
             app.set_screen(Screen::HostList);
         }
         KeyCode::Char('/') => {
@@ -95,19 +95,19 @@ pub(super) fn handle_snippet_picker(
         KeyCode::PageDown => {
             crate::app::page_down(
                 &mut app.ui.snippet_picker_state,
-                app.snippet_store.snippets.len(),
+                app.snippets.store.snippets.len(),
                 10,
             );
         }
         KeyCode::PageUp => {
             crate::app::page_up(
                 &mut app.ui.snippet_picker_state,
-                app.snippet_store.snippets.len(),
+                app.snippets.store.snippets.len(),
                 10,
             );
         }
         KeyCode::Char('a') => {
-            app.snippet_form = crate::app::SnippetForm::new();
+            app.snippets.form = crate::app::SnippetForm::new();
             app.set_screen(Screen::SnippetForm {
                 target_aliases: target_aliases.clone(),
                 editing: None,
@@ -116,8 +116,8 @@ pub(super) fn handle_snippet_picker(
         }
         KeyCode::Char('e') => {
             if let Some(sel) = app.ui.snippet_picker_state.selected() {
-                if let Some(snippet) = app.snippet_store.snippets.get(sel) {
-                    app.snippet_form = crate::app::SnippetForm::from_snippet(snippet);
+                if let Some(snippet) = app.snippets.store.snippets.get(sel) {
+                    app.snippets.form = crate::app::SnippetForm::from_snippet(snippet);
                     app.set_screen(Screen::SnippetForm {
                         target_aliases: target_aliases.clone(),
                         editing: Some(sel),
@@ -128,21 +128,21 @@ pub(super) fn handle_snippet_picker(
         }
         KeyCode::Char('d') => {
             if let Some(sel) = app.ui.snippet_picker_state.selected() {
-                if sel < app.snippet_store.snippets.len() {
-                    app.pending_snippet_delete = Some(sel);
+                if sel < app.snippets.store.snippets.len() {
+                    app.snippets.pending_delete = Some(sel);
                 }
             }
         }
         KeyCode::Enter => {
             if let Some(sel) = app.ui.snippet_picker_state.selected() {
-                if let Some(snippet) = app.snippet_store.snippets.get(sel).cloned() {
+                if let Some(snippet) = app.snippets.store.snippets.get(sel).cloned() {
                     run_or_prompt_params(app, snippet, target_aliases, false, events_tx);
                 }
             }
         }
         KeyCode::Char('!') => {
             if let Some(sel) = app.ui.snippet_picker_state.selected() {
-                if let Some(snippet) = app.snippet_store.snippets.get(sel).cloned() {
+                if let Some(snippet) = app.snippets.store.snippets.get(sel).cloned() {
                     run_or_prompt_params(app, snippet, target_aliases, true, events_tx);
                 }
             }
@@ -165,18 +165,18 @@ fn run_or_prompt_params(
     }
     let params = crate::snippet::parse_params(&snippet.command);
     if !params.is_empty() {
-        app.snippet_param_form = Some(crate::app::SnippetParamFormState::new(&params));
-        app.pending_snippet_terminal = terminal_mode;
+        app.snippets.param_form = Some(crate::app::SnippetParamFormState::new(&params));
+        app.snippets.pending_terminal = terminal_mode;
         app.set_screen(Screen::SnippetParamForm {
             snippet,
             target_aliases,
         });
     } else if terminal_mode {
-        app.pending_snippet = Some((snippet, target_aliases));
-        app.multi_select.clear();
+        app.snippets.pending = Some((snippet, target_aliases));
+        app.hosts_state.multi_select.clear();
         app.set_screen(Screen::HostList);
     } else {
-        app.multi_select.clear();
+        app.hosts_state.multi_select.clear();
         start_snippet_output(app, &snippet, &target_aliases, events_tx);
     }
 }
@@ -197,7 +197,8 @@ fn start_snippet_output(
         .iter()
         .map(|alias| {
             let askpass = app
-                .hosts
+                .hosts_state
+                .list
                 .iter()
                 .find(|h| h.alias == *alias)
                 .and_then(|h| h.askpass.clone())
@@ -207,11 +208,11 @@ fn start_snippet_output(
         .collect();
 
     let tunnel_aliases: std::collections::HashSet<String> =
-        app.active_tunnels.keys().cloned().collect();
+        app.tunnels.active.keys().cloned().collect();
 
     let run_id = SNIPPET_RUN_COUNTER.fetch_add(1, Ordering::Relaxed);
 
-    app.snippet_output = Some(crate::app::SnippetOutputState {
+    app.snippets.output = Some(crate::app::SnippetOutputState {
         run_id,
         results: Vec::new(),
         scroll_offset: 0,
@@ -262,54 +263,55 @@ fn snippet_result_lines(r: &crate::app::SnippetHostOutput) -> usize {
 
 pub(super) fn handle_snippet_output(app: &mut App, key: KeyEvent) {
     let total_lines = app
-        .snippet_output
+        .snippets
+        .output
         .as_ref()
         .map(|s| s.results.iter().map(snippet_result_lines).sum::<usize>())
         .unwrap_or(0);
 
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') => {
-            if let Some(ref state) = app.snippet_output {
+            if let Some(ref state) = app.snippets.output {
                 if !state.all_done {
                     state.cancel.store(true, Ordering::Relaxed);
                 }
             }
-            app.snippet_output = None;
+            app.snippets.output = None;
             app.set_screen(Screen::HostList);
         }
         KeyCode::Char('j') | KeyCode::Down => {
-            if let Some(ref mut state) = app.snippet_output {
+            if let Some(ref mut state) = app.snippets.output {
                 state.scroll_offset = state.scroll_offset.saturating_add(1);
             }
         }
         KeyCode::Char('k') | KeyCode::Up => {
-            if let Some(ref mut state) = app.snippet_output {
+            if let Some(ref mut state) = app.snippets.output {
                 state.scroll_offset = state.scroll_offset.saturating_sub(1);
             }
         }
         KeyCode::PageDown => {
-            if let Some(ref mut state) = app.snippet_output {
+            if let Some(ref mut state) = app.snippets.output {
                 state.scroll_offset = state.scroll_offset.saturating_add(20);
             }
         }
         KeyCode::PageUp => {
-            if let Some(ref mut state) = app.snippet_output {
+            if let Some(ref mut state) = app.snippets.output {
                 state.scroll_offset = state.scroll_offset.saturating_sub(20);
             }
         }
         KeyCode::Char('G') => {
-            if let Some(ref mut state) = app.snippet_output {
+            if let Some(ref mut state) = app.snippets.output {
                 state.scroll_offset = total_lines.saturating_sub(1);
             }
         }
         KeyCode::Char('g') => {
-            if let Some(ref mut state) = app.snippet_output {
+            if let Some(ref mut state) = app.snippets.output {
                 state.scroll_offset = 0;
             }
         }
         KeyCode::Char('n') => {
             // Jump to next host header
-            if let Some(ref mut state) = app.snippet_output {
+            if let Some(ref mut state) = app.snippets.output {
                 let current = state.scroll_offset;
                 let mut line = 0;
                 for result in &state.results {
@@ -324,7 +326,7 @@ pub(super) fn handle_snippet_output(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Char('N') => {
             // Jump to previous host header
-            if let Some(ref mut state) = app.snippet_output {
+            if let Some(ref mut state) = app.snippets.output {
                 let current = state.scroll_offset;
                 let mut offsets = Vec::new();
                 let mut line = 0;
@@ -343,7 +345,7 @@ pub(super) fn handle_snippet_output(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Char('c') => {
             // Copy all output
-            if let Some(ref state) = app.snippet_output {
+            if let Some(ref state) = app.snippets.output {
                 let mut text = String::new();
                 for result in &state.results {
                     text.push_str(&format!("-- {} --\n", result.alias));
@@ -393,7 +395,7 @@ pub(super) fn handle_snippet_picker_search(
         KeyCode::Esc => {
             app.ui.snippet_search = None;
             // Restore selection to full list
-            if !app.snippet_store.snippets.is_empty()
+            if !app.snippets.store.snippets.is_empty()
                 && app.ui.snippet_picker_state.selected().is_none()
             {
                 app.ui.snippet_picker_state.select(Some(0));
@@ -404,7 +406,7 @@ pub(super) fn handle_snippet_picker_search(
             if let Some(sel) = app.ui.snippet_picker_state.selected() {
                 if sel < filtered.len() {
                     let real_idx = filtered[sel];
-                    if let Some(snippet) = app.snippet_store.snippets.get(real_idx).cloned() {
+                    if let Some(snippet) = app.snippets.store.snippets.get(real_idx).cloned() {
                         app.ui.snippet_search = None;
                         run_or_prompt_params(
                             app,
@@ -428,7 +430,7 @@ pub(super) fn handle_snippet_picker_search(
                 query.pop();
                 if query.is_empty() {
                     app.ui.snippet_search = None;
-                    if !app.snippet_store.snippets.is_empty() {
+                    if !app.snippets.store.snippets.is_empty() {
                         app.ui.snippet_picker_state.select(Some(0));
                     }
                     return;
@@ -468,22 +470,22 @@ pub(super) fn handle_snippet_param_form(
         _ => return,
     };
 
-    let form = match app.snippet_param_form.as_mut() {
+    let form = match app.snippets.param_form.as_mut() {
         Some(f) => f,
         None => return,
     };
 
     // Handle discard confirmation dialog
-    if app.pending_discard_confirm {
+    if app.forms.pending_discard_confirm {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
-                app.pending_discard_confirm = false;
-                app.snippet_param_form = None;
-                app.pending_snippet_terminal = false;
+                app.forms.pending_discard_confirm = false;
+                app.snippets.param_form = None;
+                app.snippets.pending_terminal = false;
                 app.set_screen(Screen::SnippetPicker { target_aliases });
             }
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                app.pending_discard_confirm = false;
+                app.forms.pending_discard_confirm = false;
             }
             _ => {}
         }
@@ -493,10 +495,10 @@ pub(super) fn handle_snippet_param_form(
     match key.code {
         KeyCode::Esc => {
             if form.is_dirty() {
-                app.pending_discard_confirm = true;
+                app.forms.pending_discard_confirm = true;
             } else {
-                app.snippet_param_form = None;
-                app.pending_snippet_terminal = false;
+                app.snippets.param_form = None;
+                app.snippets.pending_terminal = false;
                 app.set_screen(Screen::SnippetPicker { target_aliases });
             }
         }
@@ -529,16 +531,16 @@ pub(super) fn handle_snippet_param_form(
             let mut resolved = snippet.clone();
             resolved.command = crate::snippet::substitute_params(&snippet.command, &values_map);
 
-            let terminal_mode = app.pending_snippet_terminal;
-            app.snippet_param_form = None;
-            app.pending_snippet_terminal = false;
+            let terminal_mode = app.snippets.pending_terminal;
+            app.snippets.param_form = None;
+            app.snippets.pending_terminal = false;
 
             if terminal_mode {
-                app.pending_snippet = Some((resolved, target_aliases));
-                app.multi_select.clear();
+                app.snippets.pending = Some((resolved, target_aliases));
+                app.hosts_state.multi_select.clear();
                 app.set_screen(Screen::HostList);
             } else {
-                app.multi_select.clear();
+                app.hosts_state.multi_select.clear();
                 start_snippet_output(app, &resolved, &target_aliases, events_tx);
             }
         }
@@ -565,17 +567,17 @@ pub(super) fn handle_snippet_form(app: &mut App, key: KeyEvent) {
     };
 
     // Handle discard confirmation dialog
-    if app.pending_discard_confirm {
+    if app.forms.pending_discard_confirm {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
-                app.pending_discard_confirm = false;
-                app.snippet_form_baseline = None;
+                app.forms.pending_discard_confirm = false;
+                app.snippets.form_baseline = None;
                 app.set_screen(Screen::SnippetPicker {
                     target_aliases: target_aliases.clone(),
                 });
             }
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                app.pending_discard_confirm = false;
+                app.forms.pending_discard_confirm = false;
             }
             _ => {}
         }
@@ -585,65 +587,66 @@ pub(super) fn handle_snippet_form(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc => {
             if app.snippet_form_is_dirty() {
-                app.pending_discard_confirm = true;
+                app.forms.pending_discard_confirm = true;
             } else {
-                app.snippet_form_baseline = None;
+                app.snippets.form_baseline = None;
                 app.set_screen(Screen::SnippetPicker {
                     target_aliases: target_aliases.clone(),
                 });
             }
         }
         KeyCode::Tab | KeyCode::Down => {
-            app.snippet_form.focused_field = app.snippet_form.focused_field.next();
-            app.snippet_form.sync_cursor_to_end();
+            app.snippets.form.focused_field = app.snippets.form.focused_field.next();
+            app.snippets.form.sync_cursor_to_end();
         }
         KeyCode::BackTab | KeyCode::Up => {
-            app.snippet_form.focused_field = app.snippet_form.focused_field.prev();
-            app.snippet_form.sync_cursor_to_end();
+            app.snippets.form.focused_field = app.snippets.form.focused_field.prev();
+            app.snippets.form.sync_cursor_to_end();
         }
-        KeyCode::Left if app.snippet_form.cursor_pos > 0 => {
-            app.snippet_form.cursor_pos -= 1;
+        KeyCode::Left if app.snippets.form.cursor_pos > 0 => {
+            app.snippets.form.cursor_pos -= 1;
         }
         KeyCode::Right => {
-            let len = app.snippet_form.focused_value().chars().count();
-            if app.snippet_form.cursor_pos < len {
-                app.snippet_form.cursor_pos += 1;
+            let len = app.snippets.form.focused_value().chars().count();
+            if app.snippets.form.cursor_pos < len {
+                app.snippets.form.cursor_pos += 1;
             }
         }
         KeyCode::Home => {
-            app.snippet_form.cursor_pos = 0;
+            app.snippets.form.cursor_pos = 0;
         }
         KeyCode::End => {
-            app.snippet_form.sync_cursor_to_end();
+            app.snippets.form.sync_cursor_to_end();
         }
         KeyCode::Enter => {
             submit_snippet_form(app, &target_aliases, editing);
         }
         KeyCode::Char(c) => {
-            app.snippet_form.insert_char(c);
+            app.snippets.form.insert_char(c);
         }
         KeyCode::Backspace => {
-            app.snippet_form.delete_char_before_cursor();
+            app.snippets.form.delete_char_before_cursor();
         }
         _ => {}
     }
 }
 
 fn submit_snippet_form(app: &mut App, target_aliases: &[String], editing: Option<usize>) {
-    if let Err(msg) = app.snippet_form.validate() {
+    if let Err(msg) = app.snippets.form.validate() {
         app.notify_error(msg);
         return;
     }
 
-    let new_name = app.snippet_form.name.trim().to_string();
-    let new_command = app.snippet_form.command.trim().to_string();
-    let new_description = app.snippet_form.description.trim().to_string();
+    let new_name = app.snippets.form.name.trim().to_string();
+    let new_command = app.snippets.form.command.trim().to_string();
+    let new_description = app.snippets.form.description.trim().to_string();
 
     // Check for duplicate name (skip the snippet being edited)
     let old_name =
-        editing.and_then(|idx| app.snippet_store.snippets.get(idx).map(|s| s.name.clone()));
+        editing.and_then(|idx| app.snippets.store.snippets.get(idx).map(|s| s.name.clone()));
     let name_taken = app
-        .snippet_store
+        .snippets
+        .store
         .snippets
         .iter()
         .any(|s| s.name == new_name && Some(&s.name) != old_name.as_ref());
@@ -659,34 +662,35 @@ fn submit_snippet_form(app: &mut App, target_aliases: &[String], editing: Option
     };
 
     // Save a snapshot for rollback
-    let snapshot = app.snippet_store.snippets.clone();
+    let snapshot = app.snippets.store.snippets.clone();
 
     // If editing and name changed, remove the old one
     if let Some(old_name) = &old_name {
         if *old_name != snippet.name {
-            app.snippet_store.remove(old_name);
+            app.snippets.store.remove(old_name);
         }
     }
 
     let is_new = editing.is_none();
-    app.snippet_store.set(snippet);
+    app.snippets.store.set(snippet);
 
-    if let Err(e) = app.snippet_store.save() {
-        app.snippet_store.snippets = snapshot;
+    if let Err(e) = app.snippets.store.save() {
+        app.snippets.store.snippets = snapshot;
         app.notify_error(crate::messages::failed_to_save(&e));
         return;
     }
 
     // Re-select in picker
-    let name = app.snippet_form.name.trim().to_string();
+    let name = app.snippets.form.name.trim().to_string();
     let new_idx = app
-        .snippet_store
+        .snippets
+        .store
         .snippets
         .iter()
         .position(|s| s.name == name);
     app.ui.snippet_picker_state.select(new_idx);
 
-    app.snippet_form_baseline = None;
+    app.snippets.form_baseline = None;
     if is_new {
         app.notify(crate::messages::snippet_added(&name));
     } else {

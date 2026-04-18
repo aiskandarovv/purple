@@ -20,7 +20,7 @@ pub(super) fn clone_selected(app: &mut App) {
         let mut form = HostForm::from_pattern_entry(pattern);
         form.alias.clear();
         form.cursor_pos = 0;
-        app.form = form;
+        app.forms.host = form;
         app.set_screen(Screen::AddHost);
         app.capture_form_mtime();
         app.capture_form_baseline();
@@ -52,7 +52,7 @@ pub(super) fn clone_selected(app: &mut App) {
         } else if vault_cleared {
             app.notify(crate::messages::CLONED_VAULT_CLEARED);
         }
-        app.form = form;
+        app.forms.host = form;
         app.set_screen(Screen::AddHost);
         app.capture_form_mtime();
         app.capture_form_baseline();
@@ -79,7 +79,7 @@ pub(super) fn initiate_bulk_vault_sign(app: &mut App) {
         return;
     }
     let provider_config = crate::providers::config::ProviderConfig::load();
-    let entries = app.config.host_entries();
+    let entries = app.hosts_state.ssh_config.host_entries();
     let mut signable: Vec<(String, String, String, std::path::PathBuf, Option<String>)> =
         Vec::new();
     let mut pubkey_error: Option<String> = None;
@@ -188,7 +188,7 @@ pub(super) fn open_file_browser(app: &mut App, events_tx: &mpsc::Sender<AppEvent
     if let Some(hint) = stale_hint {
         app.notify_warning(crate::messages::stale_host(&hint));
     }
-    let has_tunnel = app.active_tunnels.contains_key(&alias);
+    let has_tunnel = app.tunnels.active.contains_key(&alias);
     let (local_path, remote_path) =
         app.file_browser_paths
             .get(&alias)
@@ -320,7 +320,7 @@ pub(super) fn open_container_overlay(app: &mut App, events_tx: &mpsc::Sender<App
         alias: alias.clone(),
     });
     if !app.demo_mode {
-        let has_tunnel = app.active_tunnels.contains_key(&alias);
+        let has_tunnel = app.tunnels.active.contains_key(&alias);
         let ctx = crate::ssh_context::OwnedSshContext {
             alias,
             config_path: app.reload.config_path.clone(),

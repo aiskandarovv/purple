@@ -43,7 +43,7 @@ pub(super) fn handle_file_browser(
                 };
                 let alias = fb.alias.clone();
                 let askpass = fb.askpass.clone();
-                let has_active_tunnel = app.active_tunnels.contains_key(&alias);
+                let has_active_tunnel = app.tunnels.active.contains_key(&alias);
                 let local_path = fb.local_path.clone();
                 let remote_path = if fb.remote_path.ends_with('/') {
                     fb.remote_path.clone()
@@ -293,7 +293,7 @@ pub(super) fn handle_file_browser(
                                 config_path: app.reload.config_path.clone(),
                                 askpass: fb.askpass.clone(),
                                 bw_session: app.bw_session.clone(),
-                                has_tunnel: app.active_tunnels.contains_key(&fb.alias),
+                                has_tunnel: app.tunnels.active.contains_key(&fb.alias),
                             };
                             let show_hidden = fb.show_hidden;
                             let sort = fb.sort;
@@ -336,7 +336,7 @@ pub(super) fn handle_file_browser(
                                 config_path: app.reload.config_path.clone(),
                                 askpass: fb.askpass.clone(),
                                 bw_session: app.bw_session.clone(),
-                                has_tunnel: app.active_tunnels.contains_key(&fb.alias),
+                                has_tunnel: app.tunnels.active.contains_key(&fb.alias),
                             };
                             let show_hidden = fb.show_hidden;
                             let sort = fb.sort;
@@ -408,7 +408,7 @@ pub(super) fn handle_file_browser(
                             config_path: app.reload.config_path.clone(),
                             askpass: fb.askpass.clone(),
                             bw_session: app.bw_session.clone(),
-                            has_tunnel: app.active_tunnels.contains_key(&fb.alias),
+                            has_tunnel: app.tunnels.active.contains_key(&fb.alias),
                         };
                         let show_hidden = fb.show_hidden;
                         let sort = fb.sort;
@@ -507,7 +507,7 @@ pub(super) fn handle_file_browser(
                     config_path: app.reload.config_path.clone(),
                     askpass: fb.askpass.clone(),
                     bw_session: app.bw_session.clone(),
-                    has_tunnel: app.active_tunnels.contains_key(&fb.alias),
+                    has_tunnel: app.tunnels.active.contains_key(&fb.alias),
                 };
                 let path = fb.remote_path.clone();
                 let show_hidden = fb.show_hidden;
@@ -547,7 +547,7 @@ pub(super) fn handle_file_browser(
                     config_path: app.reload.config_path.clone(),
                     askpass: fb.askpass.clone(),
                     bw_session: app.bw_session.clone(),
-                    has_tunnel: app.active_tunnels.contains_key(&fb.alias),
+                    has_tunnel: app.tunnels.active.contains_key(&fb.alias),
                 };
                 let path = fb.remote_path.clone();
                 let show_hidden = fb.show_hidden;

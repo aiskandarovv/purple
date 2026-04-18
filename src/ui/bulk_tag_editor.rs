@@ -12,14 +12,15 @@ use crate::app::{App, BulkTagAction};
 /// have that tag. A "+ new tag" row lets the user add a tag that exists
 /// nowhere else in the config yet.
 pub fn render(frame: &mut Frame, app: &mut App) {
-    let host_count = app.bulk_tag_editor.aliases.len();
-    let editable_count = host_count.saturating_sub(app.bulk_tag_editor.skipped_included.len());
-    let input_active = app.bulk_tag_editor.new_tag_input.is_some();
-    let has_skipped = !app.bulk_tag_editor.skipped_included.is_empty();
+    let host_count = app.forms.bulk_tag_editor.aliases.len();
+    let editable_count =
+        host_count.saturating_sub(app.forms.bulk_tag_editor.skipped_included.len());
+    let input_active = app.forms.bulk_tag_editor.new_tag_input.is_some();
+    let has_skipped = !app.forms.bulk_tag_editor.skipped_included.is_empty();
 
     // +3 rows reserved for: legend, optional skip-warning, spacer/input.
     // Footer renders below the block.
-    let content_rows = app.bulk_tag_editor.rows.len() as u16 + 3;
+    let content_rows = app.forms.bulk_tag_editor.rows.len() as u16 + 3;
     let overlay_h = (content_rows + 4).min(frame.area().height.saturating_sub(5));
     let overlay_w = 52u16.min(frame.area().width.saturating_sub(4));
     let area = super::centered_rect_fixed(overlay_w, overlay_h, frame.area());
@@ -69,7 +70,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Skip warning (only present when the layout has 5 rows).
     if has_skipped {
-        let skipped = app.bulk_tag_editor.skipped_included.len();
+        let skipped = app.forms.bulk_tag_editor.skipped_included.len();
         let warn = Line::from(vec![
             Span::raw("  "),
             Span::styled(
@@ -87,10 +88,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let list_idx = if has_skipped { 2 } else { 1 };
     let spacer_idx = if has_skipped { 3 } else { 2 };
 
-    if app.bulk_tag_editor.rows.is_empty() && !input_active {
+    if app.forms.bulk_tag_editor.rows.is_empty() && !input_active {
         design::render_empty_with_hint(frame, chunks[list_idx], "No tags yet.", "+", "add");
     } else {
         let items: Vec<ListItem> = app
+            .forms
             .bulk_tag_editor
             .rows
             .iter()
@@ -106,7 +108,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // Optional input bar rendered in-place of the spacer when typing a new
     // tag name. This keeps the layout stable — the list never jumps.
     if input_active {
-        let input = app.bulk_tag_editor.new_tag_input.as_deref().unwrap_or("");
+        let input = app
+            .forms
+            .bulk_tag_editor
+            .new_tag_input
+            .as_deref()
+            .unwrap_or("");
         let spans = new_tag_input_spans(input);
         frame.render_widget(Paragraph::new(Line::from(spans)), chunks[spacer_idx]);
     }
@@ -115,7 +122,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // dirty-checked surface routes through `render_discard_prompt` for
     // uniform confirm behavior.
     let footer_area = design::render_overlay_footer(frame, area);
-    if app.pending_discard_confirm {
+    if app.forms.pending_discard_confirm {
         design::render_discard_prompt(frame, footer_area, app);
     } else {
         let f = if input_active {

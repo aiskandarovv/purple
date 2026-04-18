@@ -363,13 +363,13 @@ pub fn build_demo_app() -> App {
     app.history = build_demo_history();
 
     // Provider config — replace disk-loaded config with demo-only providers
-    app.provider_config = ProviderConfig::parse(DEMO_PROVIDERS);
+    app.providers.config = ProviderConfig::parse(DEMO_PROVIDERS);
 
     // Sync history (timestamps relative to now)
-    app.sync_history = SyncRecord::load_from_content(&build_demo_sync_history());
+    app.providers.sync_history = SyncRecord::load_from_content(&build_demo_sync_history());
 
     // Snippets
-    app.snippet_store = SnippetStore::parse(DEMO_SNIPPETS);
+    app.snippets.store = SnippetStore::parse(DEMO_SNIPPETS);
 
     // Container cache (timestamps relative to now)
     app.container_cache = containers::parse_container_cache_content(&build_demo_container_cache());
@@ -518,9 +518,9 @@ pub fn build_demo_app() -> App {
     ];
 
     // Preferences
-    app.view_mode = ViewMode::Compact;
-    app.sort_mode = SortMode::MostRecent;
-    app.group_by = GroupBy::None;
+    app.hosts_state.view_mode = ViewMode::Compact;
+    app.hosts_state.sort_mode = SortMode::MostRecent;
+    app.hosts_state.group_by = GroupBy::None;
     app.ping.auto_ping = true;
 
     // Rebuild display list with sort/group applied
@@ -534,7 +534,7 @@ pub fn build_demo_app() -> App {
 /// Kept out of `build_demo_app` so visual regression tests get a stable baseline.
 pub fn seed_whats_new_toast(app: &mut App) {
     let version = env!("CARGO_PKG_VERSION");
-    app.toast = Some(crate::app::StatusMessage {
+    app.status_center.toast = Some(crate::app::StatusMessage {
         text: crate::messages::whats_new_toast::upgraded(version),
         class: crate::app::MessageClass::Success,
         tick_count: 0,
@@ -573,13 +573,13 @@ mod tests {
     #[test]
     fn demo_app_has_expected_hosts() {
         let (app, _guard) = demo_app();
-        assert_eq!(app.hosts.len(), 22);
+        assert_eq!(app.hosts_state.list.len(), 22);
     }
 
     #[test]
     fn demo_app_has_providers() {
         let (app, _guard) = demo_app();
-        assert_eq!(app.provider_config.configured_providers().len(), 3);
+        assert_eq!(app.providers.config.configured_providers().len(), 3);
     }
 
     #[test]
@@ -591,7 +591,7 @@ mod tests {
     #[test]
     fn demo_app_has_snippets() {
         let (app, _guard) = demo_app();
-        assert_eq!(app.snippet_store.snippets.len(), 5);
+        assert_eq!(app.snippets.store.snippets.len(), 5);
     }
 
     #[test]
@@ -639,7 +639,7 @@ mod tests {
     #[test]
     fn demo_app_has_sync_history() {
         let (app, _guard) = demo_app();
-        assert_eq!(app.sync_history.len(), 3);
+        assert_eq!(app.providers.sync_history.len(), 3);
     }
 
     #[test]
@@ -652,13 +652,14 @@ mod tests {
     fn demo_app_has_vault_ssh_config() {
         let (app, _guard) = demo_app();
         // Two providers have vault_role (inheritance for their hosts).
-        let aws = app.provider_config.section("aws").expect("aws section");
+        let aws = app.providers.config.section("aws").expect("aws section");
         assert!(
             !aws.vault_role.is_empty(),
             "aws provider should have vault_role set"
         );
         let pve = app
-            .provider_config
+            .providers
+            .config
             .section("proxmox")
             .expect("proxmox section");
         assert!(
@@ -671,7 +672,8 @@ mod tests {
         );
         // At least one host has a per-host vault_ssh override.
         let override_host = app
-            .hosts
+            .hosts_state
+            .list
             .iter()
             .find(|h| h.vault_ssh.as_deref().is_some_and(|s| !s.is_empty()));
         assert!(
@@ -683,10 +685,18 @@ mod tests {
     #[test]
     fn demo_app_has_stale_hosts() {
         let (app, _guard) = demo_app();
-        let cache = app.hosts.iter().find(|h| h.alias == "aws-cache-eu");
+        let cache = app
+            .hosts_state
+            .list
+            .iter()
+            .find(|h| h.alias == "aws-cache-eu");
         assert!(cache.is_some());
         assert!(cache.unwrap().stale.is_some());
-        let backup = app.hosts.iter().find(|h| h.alias == "pve-backup");
+        let backup = app
+            .hosts_state
+            .list
+            .iter()
+            .find(|h| h.alias == "pve-backup");
         assert!(backup.is_some());
         assert!(backup.unwrap().stale.is_some());
     }
@@ -715,7 +725,7 @@ mod tests {
         // No other provider should have a checkmark (be configured)
         for name in &names[3..] {
             assert!(
-                app.provider_config.section(name).is_none(),
+                app.providers.config.section(name).is_none(),
                 "unexpected configured provider: {}",
                 name
             );
@@ -725,10 +735,10 @@ mod tests {
     #[test]
     fn demo_app_has_correct_preferences() {
         let (app, _guard) = demo_app();
-        assert_eq!(app.view_mode, ViewMode::Compact);
-        assert_eq!(app.sort_mode, SortMode::MostRecent);
-        assert_eq!(app.group_by, GroupBy::None);
+        assert_eq!(app.hosts_state.view_mode, ViewMode::Compact);
+        assert_eq!(app.hosts_state.sort_mode, SortMode::MostRecent);
+        assert_eq!(app.hosts_state.group_by, GroupBy::None);
         assert!(app.ping.auto_ping);
-        assert!(!app.display_list.is_empty());
+        assert!(!app.hosts_state.display_list.is_empty());
     }
 }

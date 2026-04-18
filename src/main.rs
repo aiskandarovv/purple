@@ -416,16 +416,16 @@ fn print_host_list(config: &SshConfigFile) {
 fn apply_saved_sort(app: &mut App) {
     let saved = preferences::load_sort_mode();
     let group = preferences::load_group_by();
-    app.sort_mode = saved;
-    app.group_by = group;
-    app.view_mode = preferences::load_view_mode();
+    app.hosts_state.sort_mode = saved;
+    app.hosts_state.group_by = group;
+    app.hosts_state.view_mode = preferences::load_view_mode();
     // Clear stale tag preference if the tag no longer exists in any host
     if app.clear_stale_group_tag() {
-        if let Err(e) = preferences::save_group_by(&app.group_by) {
+        if let Err(e) = preferences::save_group_by(&app.hosts_state.group_by) {
             app.notify_error(crate::messages::group_pref_reset_failed(&e));
         }
     }
-    if saved != app::SortMode::Original || !matches!(app.group_by, app::GroupBy::None) {
+    if saved != app::SortMode::Original || !matches!(app.hosts_state.group_by, app::GroupBy::None) {
         app.apply_sort();
         // After startup sort, select the first host in the sorted order
         // rather than preserving the arbitrary first-in-config selection.
@@ -513,23 +513,23 @@ pub(crate) fn format_sync_diff(added: usize, updated: usize, stale: usize) -> St
 /// Shows "Synced: AWS, DO, Vultr" that grows as each provider finishes.
 /// Clears the batch state once all providers are done so the status can expire normally.
 pub(crate) fn set_sync_summary(app: &mut App) {
-    let still_syncing = !app.syncing_providers.is_empty();
-    let names = app.sync_done.join(", ");
+    let still_syncing = !app.providers.syncing.is_empty();
+    let names = app.providers.sync_done.join(", ");
     if still_syncing {
-        if app.sync_had_errors {
+        if app.providers.sync_had_errors {
             app.notify_background_error(crate::messages::synced_progress(&names));
         } else {
             app.notify_background(crate::messages::synced_progress(&names));
         }
     } else {
-        if app.sync_had_errors {
+        if app.providers.sync_had_errors {
             app.notify_background_error(crate::messages::synced_done(&names));
         } else {
             app.notify_background(crate::messages::synced_done(&names));
         }
-        app.sync_done.clear();
-        app.sync_had_errors = false;
-        app::SyncRecord::save_all(&app.sync_history);
+        app.providers.sync_done.clear();
+        app.providers.sync_had_errors = false;
+        app::SyncRecord::save_all(&app.providers.sync_history);
     }
 }
 

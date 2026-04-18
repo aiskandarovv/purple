@@ -1,3 +1,10 @@
+## 2.43.1 - 2026-04-18
+
+- feat: Tighter foundations for faster, safer releases.
+- change: App state is split into six focused domains (hosts, tunnels, snippets, providers, forms, status) so changes land in one place and are easier to reason about.
+- change: New behaviour tests cover status routing, toast expiry and provider ordering, catching regressions earlier.
+- change: Fewer surprise file reads at startup. Provider state loads explicitly in one place, so tests and tools run predictably.
+
 ## 2.43.0 - 2026-04-18
 
 - feat: Confident edits on every host, shared lines included.

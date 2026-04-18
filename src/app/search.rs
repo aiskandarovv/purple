@@ -10,9 +10,10 @@ use crate::app::App;
 impl App {
     /// Compute the search scope from the current display list when group-filtered.
     fn compute_search_scope(&self) -> Option<HashSet<usize>> {
-        self.group_filter.as_ref()?;
+        self.hosts_state.group_filter.as_ref()?;
         Some(
-            self.display_list
+            self.hosts_state
+                .display_list
                 .iter()
                 .filter_map(|item| {
                     if let HostListItem::Host { index } = item {
@@ -50,9 +51,9 @@ impl App {
         self.search.scope_indices = None;
         // Restore pre-search position (bounds-checked)
         if let Some(pos) = self.search.pre_search_selection.take() {
-            if pos < self.display_list.len() {
+            if pos < self.hosts_state.display_list.len() {
                 self.ui.list_state.select(Some(pos));
-            } else if let Some(first) = self.display_list.iter().position(|item| {
+            } else if let Some(first) = self.hosts_state.display_list.iter().position(|item| {
                 matches!(
                     item,
                     HostListItem::Host { .. } | HostListItem::Pattern { .. }
@@ -67,12 +68,13 @@ impl App {
     pub fn apply_filter(&mut self) {
         // Filtered index lists drive the search-mode render path which also
         // consumes the render cache; recompute fresh.
-        self.host_list_cache.invalidate();
+        self.hosts_state.render_cache.invalidate();
         let query = match &self.search.query {
             Some(q) if !q.is_empty() => q.clone(),
             Some(_) => {
-                self.search.filtered_indices = (0..self.hosts.len()).collect();
-                self.search.filtered_pattern_indices = (0..self.patterns.len()).collect();
+                self.search.filtered_indices = (0..self.hosts_state.list.len()).collect();
+                self.search.filtered_pattern_indices =
+                    (0..self.hosts_state.patterns.len()).collect();
                 // Scope to group if active
                 if let Some(ref scope) = self.search.scope_indices {
                     self.search.filtered_indices.retain(|i| scope.contains(i));
@@ -95,7 +97,7 @@ impl App {
                     return;
                 }
                 // No search query but down-only is active: start with all hosts
-                self.search.filtered_indices = (0..self.hosts.len()).collect();
+                self.search.filtered_indices = (0..self.hosts_state.list.len()).collect();
                 self.search.filtered_pattern_indices = Vec::new();
                 // Scope to group if active
                 if let Some(ref scope) = self.search.scope_indices {
@@ -108,9 +110,10 @@ impl App {
 
         if let Some(tag_exact) = query.strip_prefix("tag=") {
             // Exact tag match (from tag picker), includes provider name and virtual "stale"/"vault"
-            let provider_config = &self.provider_config;
+            let provider_config = &self.providers.config;
             self.search.filtered_indices = self
-                .hosts
+                .hosts_state
+                .list
                 .iter()
                 .enumerate()
                 .filter(|(_, host)| {
@@ -141,6 +144,7 @@ impl App {
                 .map(|(i, _)| i)
                 .collect();
             self.search.filtered_pattern_indices = self
+                .hosts_state
                 .patterns
                 .iter()
                 .enumerate()
@@ -149,9 +153,10 @@ impl App {
                 .collect();
         } else if let Some(tag_query) = query.strip_prefix("tag:") {
             // Fuzzy tag match (manual search), includes provider name and virtual "stale"/"vault"
-            let provider_config = &self.provider_config;
+            let provider_config = &self.providers.config;
             self.search.filtered_indices = self
-                .hosts
+                .hosts_state
+                .list
                 .iter()
                 .enumerate()
                 .filter(|(_, host)| {
@@ -182,6 +187,7 @@ impl App {
                 .map(|(i, _)| i)
                 .collect();
             self.search.filtered_pattern_indices = self
+                .hosts_state
                 .patterns
                 .iter()
                 .enumerate()
@@ -190,7 +196,8 @@ impl App {
                 .collect();
         } else {
             self.search.filtered_indices = self
-                .hosts
+                .hosts_state
+                .list
                 .iter()
                 .enumerate()
                 .filter(|(_, host)| {
@@ -210,6 +217,7 @@ impl App {
                 .map(|(i, _)| i)
                 .collect();
             self.search.filtered_pattern_indices = self
+                .hosts_state
                 .patterns
                 .iter()
                 .enumerate()
@@ -229,7 +237,7 @@ impl App {
         // Post-filter: keep only unreachable hosts when down-only mode is active
         if self.ping.filter_down_only {
             self.search.filtered_indices.retain(|&idx| {
-                let alias = &self.hosts[idx].alias;
+                let alias = &self.hosts_state.list[idx].alias;
                 matches!(self.ping.status.get(alias), Some(PingStatus::Unreachable))
             });
             // Patterns can't be pinged, so hide them in down-only mode
@@ -248,10 +256,11 @@ impl App {
     /// Return indices of snippets matching the search query.
     pub fn filtered_snippet_indices(&self) -> Vec<usize> {
         match &self.ui.snippet_search {
-            None => (0..self.snippet_store.snippets.len()).collect(),
-            Some(query) if query.is_empty() => (0..self.snippet_store.snippets.len()).collect(),
+            None => (0..self.snippets.store.snippets.len()).collect(),
+            Some(query) if query.is_empty() => (0..self.snippets.store.snippets.len()).collect(),
             Some(query) => self
-                .snippet_store
+                .snippets
+                .store
                 .snippets
                 .iter()
                 .enumerate()

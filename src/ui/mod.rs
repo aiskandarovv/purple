@@ -54,14 +54,18 @@ pub fn render(frame: &mut Frame, app: &mut App, anim: &mut crate::animation::Ani
 
     // Render host list with animated detail panel width. When an overlay is active,
     // hide the status so it only appears in the overlay's own footer.
-    // Note: host_list::render does not set app.status, so the unconditional restore
+    // Note: host_list::render does not set app.status_center.status, so the unconditional restore
     // is safe. If that invariant ever changes, use get_or_insert semantics instead.
     let has_overlay = !matches!(app.screen, Screen::HostList) || app.palette.is_some();
-    let status = if has_overlay { app.status.take() } else { None };
+    let status = if has_overlay {
+        app.status_center.status.take()
+    } else {
+        None
+    };
     let detail_progress = anim.detail_anim_progress();
     host_list::render(frame, app, anim.spinner_tick, detail_progress);
     if let Some(s) = status {
-        app.status = Some(s);
+        app.status_center.status = Some(s);
     }
     match &app.screen {
         Screen::HostList => {
@@ -398,7 +402,7 @@ pub fn render_footer_with_help(
     app: &App,
 ) {
     // Only show footer-class status (Info or Progress), not toast-class
-    let footer_status = app.status.as_ref().filter(|s| !s.is_toast());
+    let footer_status = app.status_center.status.as_ref().filter(|s| !s.is_toast());
     if let Some(status) = footer_status {
         render_footer_status_right(frame, area, footer_spans, status);
         return;
@@ -424,7 +428,7 @@ pub fn render_footer_with_status(
     footer_spans: Vec<Span<'_>>,
     app: &App,
 ) {
-    if let Some(ref status) = app.status {
+    if let Some(ref status) = app.status_center.status {
         render_footer_status_right(frame, area, footer_spans, status);
     } else {
         frame.render_widget(Paragraph::new(Line::from(footer_spans)), area);
@@ -487,7 +491,7 @@ fn render_footer_status_right(
 /// remaining lifetime of the toast (full = just shown, empty = about to
 /// expire). Sticky toasts (Errors, Progress) skip the drain bar.
 fn render_toast(frame: &mut Frame, app: &App) {
-    let toast = match app.toast.as_ref() {
+    let toast = match app.status_center.toast.as_ref() {
         Some(t) => t,
         None => return,
     };
@@ -877,14 +881,14 @@ mod tests {
             .draw(|frame| {
                 render_overlay_inner(frame, &mut app, &mut anim, true, |_frame, app| {
                     assert!(
-                        app.status.is_some(),
+                        app.status_center.status.is_some(),
                         "status should be visible during overlay render"
                     );
                 });
             })
             .unwrap();
         assert!(
-            app.status.is_some(),
+            app.status_center.status.is_some(),
             "status should still be present after overlay render"
         );
     }
@@ -931,7 +935,7 @@ mod tests {
         let has_overlay = !matches!(app.screen, crate::app::Screen::HostList);
         assert!(has_overlay, "should detect overlay");
         // Mimic render(): take status during host list render, then restore.
-        let status = app.status.take();
+        let status = app.status_center.status.take();
         terminal
             .draw(|frame| {
                 let area = frame.area();
@@ -951,10 +955,10 @@ mod tests {
         );
         // Restore and verify status is preserved for overlay.
         if let Some(s) = status {
-            app.status = Some(s);
+            app.status_center.status = Some(s);
         }
         assert!(
-            app.status.is_some(),
+            app.status_center.status.is_some(),
             "status should be restored for overlay footer"
         );
     }
@@ -1154,7 +1158,7 @@ mod tests {
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();
         let app = make_app();
-        assert!(app.toast.is_none());
+        assert!(app.status_center.toast.is_none());
         terminal
             .draw(|frame| {
                 render_toast(frame, &app);
@@ -1237,7 +1241,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = make_app();
         app.notify("Saved profile changes successfully");
-        let timeout_ms = app.toast.as_ref().unwrap().timeout_ms();
+        let timeout_ms = app.status_center.toast.as_ref().unwrap().timeout_ms();
 
         // Helper: count `\u{2501}` cells in the rendered buffer.
         let count_drain_bar = |app: &App, terminal: &mut Terminal<TestBackend>| -> usize {
@@ -1262,7 +1266,7 @@ mod tests {
         );
 
         // Simulate halfway elapsed by backdating created_at.
-        if let Some(toast) = app.toast.as_mut() {
+        if let Some(toast) = app.status_center.toast.as_mut() {
             toast.created_at = Instant::now() - Duration::from_millis(timeout_ms / 2);
         }
         let bar_half = count_drain_bar(&app, &mut terminal);
@@ -1274,7 +1278,7 @@ mod tests {
         );
 
         // Simulate past expiry.
-        if let Some(toast) = app.toast.as_mut() {
+        if let Some(toast) = app.status_center.toast.as_mut() {
             toast.created_at = Instant::now() - Duration::from_millis(timeout_ms + 1000);
         }
         let bar_empty = count_drain_bar(&app, &mut terminal);
@@ -1313,8 +1317,8 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = make_app();
         app.notify("Copied"); // Goes to toast, NOT footer
-        assert!(app.toast.is_some());
-        assert!(app.status.is_none()); // Footer should be clear
+        assert!(app.status_center.toast.is_some());
+        assert!(app.status_center.status.is_none()); // Footer should be clear
         let footer_spans = vec![
             Span::styled(" ? ", theme::footer_key()),
             Span::styled(" more", theme::muted()),
@@ -1342,8 +1346,8 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let mut app = make_app();
         app.notify_info("Syncing AWS...");
-        assert!(app.status.is_some());
-        assert!(app.toast.is_none());
+        assert!(app.status_center.status.is_some());
+        assert!(app.status_center.toast.is_none());
         let footer_spans = vec![
             Span::styled(" ? ", theme::footer_key()),
             Span::styled(" more", theme::muted()),

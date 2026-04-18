@@ -19,7 +19,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // Count hosts per tag (including provider as virtual tag)
     let tag_counts: std::collections::HashMap<&str, usize> = {
         let mut counts = std::collections::HashMap::new();
-        for host in &app.hosts {
+        for host in &app.hosts_state.list {
             for tag in host.provider_tags.iter().chain(host.tags.iter()) {
                 *counts.entry(tag.as_str()).or_insert(0) += 1;
             }
@@ -38,7 +38,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             if crate::vault_ssh::resolve_vault_role(
                 host.vault_ssh.as_deref(),
                 host.provider.as_deref(),
-                &app.provider_config,
+                &app.providers.config,
             )
             .is_some()
                 && !host
@@ -63,7 +63,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 *counts.entry("vault-kv").or_insert(0) += 1;
             }
         }
-        for pattern in &app.patterns {
+        for pattern in &app.hosts_state.patterns {
             for tag in &pattern.tags {
                 *counts.entry(tag.as_str()).or_insert(0) += 1;
             }

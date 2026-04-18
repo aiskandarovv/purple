@@ -28,12 +28,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let item_count = if searching {
         filtered.len().max(1)
     } else {
-        app.snippet_store.snippets.len().max(1)
+        app.snippets.store.snippets.len().max(1)
     };
     let has_snippets = if searching {
         !filtered.is_empty()
     } else {
-        !app.snippet_store.snippets.is_empty()
+        !app.snippets.store.snippets.is_empty()
     };
     let search_row = if searching { 1u16 } else { 0 };
     let header_row = if has_snippets { 1u16 } else { 0 };
@@ -97,7 +97,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let indices = if searching {
         filtered
     } else {
-        (0..app.snippet_store.snippets.len()).collect()
+        (0..app.snippets.store.snippets.len()).collect()
     };
 
     // Column widths: name gets ~28%, command gets the rest (or split with description)
@@ -106,7 +106,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let usable = list_area.width.saturating_sub(3) as usize; // 2 highlight + 1 leading space
     let has_desc = indices
         .iter()
-        .any(|&i| !app.snippet_store.snippets[i].description.is_empty());
+        .any(|&i| !app.snippets.store.snippets[i].description.is_empty());
     let (name_w, cmd_w, desc_w) = if has_desc {
         let nw = (usable * 28 / 100).max(10);
         let dw = (usable * 28 / 100).max(10);
@@ -147,7 +147,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         let items: Vec<ListItem> = indices
             .iter()
             .map(|&idx| {
-                let snippet = &app.snippet_store.snippets[idx];
+                let snippet = &app.snippets.store.snippets[idx];
                 let mut spans = vec![
                     Span::styled(
                         format!(" {:<name_w$}", super::truncate(&snippet.name, name_w)),
@@ -183,10 +183,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             .primary("Enter", " select ")
             .action("Esc", " cancel")
             .render_with_status(frame, footer_area, app);
-    } else if app.pending_snippet_delete.is_some() {
+    } else if app.snippets.pending_delete.is_some() {
         let name = app
-            .pending_snippet_delete
-            .and_then(|i| app.snippet_store.snippets.get(i))
+            .snippets
+            .pending_delete
+            .and_then(|i| app.snippets.store.snippets.get(i))
             .map(|s| s.name.as_str())
             .unwrap_or("");
         let mut spans = vec![Span::styled(
@@ -198,11 +199,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         super::render_footer_with_status(frame, footer_area, spans, app);
     } else {
         let mut f = design::Footer::new();
-        if !app.snippet_store.snippets.is_empty() {
+        if !app.snippets.store.snippets.is_empty() {
             f = f.primary("Enter", " run ").action("!", " terminal ");
         }
         f = f.action("a", " add ");
-        if !app.snippet_store.snippets.is_empty() {
+        if !app.snippets.store.snippets.is_empty() {
             f = f
                 .action("e", " edit ")
                 .action("d", " del ")

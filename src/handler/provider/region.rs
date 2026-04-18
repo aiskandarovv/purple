@@ -75,7 +75,8 @@ pub(crate) fn handle_region_picker(app: &mut App, key: KeyEvent) {
 
     // Parse current regions into a set for toggling
     let mut selected: std::collections::HashSet<String> = app
-        .provider_form
+        .providers
+        .form
         .regions
         .split(',')
         .map(|s| s.trim().to_string())
@@ -92,8 +93,8 @@ pub(crate) fn handle_region_picker(app: &mut App, key: KeyEvent) {
 
     match key.code {
         KeyCode::Esc => {
-            app.provider_form.regions = rebuild_regions_string(&selected, &provider_name);
-            app.provider_form.sync_cursor_to_end();
+            app.providers.form.regions = rebuild_regions_string(&selected, &provider_name);
+            app.providers.form.sync_cursor_to_end();
             app.ui.show_region_picker = false;
             let count = selected.len();
             if count > 0 {
@@ -111,8 +112,8 @@ pub(crate) fn handle_region_picker(app: &mut App, key: KeyEvent) {
                     selected.insert(code.to_string());
                 }
             }
-            app.provider_form.regions = rebuild_regions_string(&selected, &provider_name);
-            app.provider_form.sync_cursor_to_end();
+            app.providers.form.regions = rebuild_regions_string(&selected, &provider_name);
+            app.providers.form.sync_cursor_to_end();
             app.ui.show_region_picker = false;
             let count = selected.len();
             if count > 0 {
@@ -150,7 +151,7 @@ pub(crate) fn handle_region_picker(app: &mut App, key: KeyEvent) {
                     }
                 }
             }
-            app.provider_form.regions = rebuild_regions_string(&selected, &provider_name);
+            app.providers.form.regions = rebuild_regions_string(&selected, &provider_name);
         }
         _ => {}
     }

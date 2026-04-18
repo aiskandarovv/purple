@@ -23,27 +23,27 @@ pub(super) fn handle_provider_list(
     events_tx: &mpsc::Sender<AppEvent>,
 ) {
     // Handle pending provider delete confirmation first
-    if app.pending_provider_delete.is_some() && key.code != KeyCode::Char('?') {
+    if app.providers.pending_delete.is_some() && key.code != KeyCode::Char('?') {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
-                let Some(name) = app.pending_provider_delete.take() else {
+                let Some(name) = app.providers.pending_delete.take() else {
                     return;
                 };
-                if let Some(old_section) = app.provider_config.section(name.as_str()).cloned() {
-                    app.provider_config.remove_section(name.as_str());
-                    if let Err(e) = app.provider_config.save() {
-                        app.provider_config.set_section(old_section);
+                if let Some(old_section) = app.providers.config.section(name.as_str()).cloned() {
+                    app.providers.config.remove_section(name.as_str());
+                    if let Err(e) = app.providers.config.save() {
+                        app.providers.config.set_section(old_section);
                         app.notify_error(crate::messages::failed_to_save(&e));
                     } else {
-                        app.sync_history.remove(name.as_str());
-                        crate::app::SyncRecord::save_all(&app.sync_history);
+                        app.providers.sync_history.remove(name.as_str());
+                        crate::app::SyncRecord::save_all(&app.providers.sync_history);
                         let display_name = crate::providers::provider_display_name(name.as_str());
                         app.notify(crate::messages::provider_removed(display_name));
                     }
                 }
             }
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                app.pending_provider_delete = None;
+                app.providers.pending_delete = None;
             }
             _ => {}
         }
@@ -54,7 +54,7 @@ pub(super) fn handle_provider_list(
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') => {
             // Cancel all running syncs
-            for cancel_flag in app.syncing_providers.values() {
+            for cancel_flag in app.providers.syncing.values() {
                 cancel_flag.store(true, Ordering::Relaxed);
             }
             app.set_screen(Screen::HostList);
@@ -83,8 +83,8 @@ pub(super) fn handle_provider_list(
 
                     // Pre-fill form from existing config or defaults
                     let first_field = crate::app::ProviderFormField::fields_for(name.as_str())[0];
-                    app.provider_form = if let Some(section) =
-                        app.provider_config.section(name.as_str())
+                    app.providers.form = if let Some(section) =
+                        app.providers.config.section(name.as_str())
                     {
                         let cursor_pos = match first_field {
                             crate::app::ProviderFormField::Url => section.url.chars().count(),
@@ -145,10 +145,10 @@ pub(super) fn handle_provider_list(
             if let Some(index) = app.ui.provider_list_state.selected() {
                 let sorted = app.sorted_provider_names();
                 if let Some(name) = sorted.get(index) {
-                    if let Some(section) = app.provider_config.section(name.as_str()).cloned() {
-                        if !app.syncing_providers.contains_key(name.as_str()) {
+                    if let Some(section) = app.providers.config.section(name.as_str()).cloned() {
+                        if !app.providers.syncing.contains_key(name.as_str()) {
                             let cancel = Arc::new(AtomicBool::new(false));
-                            app.syncing_providers.insert(name.clone(), cancel.clone());
+                            app.providers.syncing.insert(name.clone(), cancel.clone());
                             let display_name =
                                 crate::providers::provider_display_name(name.as_str());
                             app.notify_info(crate::messages::syncing_provider(display_name));
@@ -165,8 +165,8 @@ pub(super) fn handle_provider_list(
             if let Some(index) = app.ui.provider_list_state.selected() {
                 let sorted = app.sorted_provider_names();
                 if let Some(name) = sorted.get(index) {
-                    if app.provider_config.section(name.as_str()).is_some() {
-                        app.pending_provider_delete = Some(name.clone());
+                    if app.providers.config.section(name.as_str()).is_some() {
+                        app.providers.pending_delete = Some(name.clone());
                     } else {
                         let display_name = crate::providers::provider_display_name(name.as_str());
                         app.notify(crate::messages::provider_not_configured(display_name));
@@ -184,11 +184,11 @@ pub(super) fn handle_provider_list(
             if let Some(index) = app.ui.provider_list_state.selected() {
                 let sorted = app.sorted_provider_names();
                 if let Some(name) = sorted.get(index) {
-                    let stale = app.config.stale_hosts();
+                    let stale = app.hosts_state.ssh_config.stale_hosts();
                     let provider_stale: Vec<_> = stale
                         .iter()
                         .filter(|(alias, _)| {
-                            app.config.host_entries().iter().any(|e| {
+                            app.hosts_state.ssh_config.host_entries().iter().any(|e| {
                                 e.alias == *alias && e.provider.as_deref() == Some(name.as_str())
                             })
                         })
@@ -216,10 +216,10 @@ fn warn_aws_token_format(app: &mut App, provider_name: &str) {
     if provider_name != "aws" {
         return;
     }
-    if app.provider_form.focused_field != crate::app::ProviderFormField::Token {
+    if app.providers.form.focused_field != crate::app::ProviderFormField::Token {
         return;
     }
-    let token = app.provider_form.token.trim();
+    let token = app.providers.form.token.trim();
     if token.is_empty() {
         return;
     }
@@ -252,7 +252,7 @@ pub(super) fn handle_provider_form(
     // Progressive disclosure: hide `VaultAddr` when no role is set so Tab
     // navigation skips the hidden field. `visible_fields` is a filtered
     // snapshot of `fields_for(provider)` taken once per key press.
-    let visible = app.provider_form.visible_fields(&provider_name);
+    let visible = app.providers.form.visible_fields(&provider_name);
     let fields: &[crate::app::ProviderFormField] = &visible;
     // Field-kind predicates live on `ProviderFormField` so the rule is
     // enforced in one place. Note: `is_picker` here matches the full set
@@ -265,17 +265,17 @@ pub(super) fn handle_provider_form(
     let is_picker = |f: crate::app::ProviderFormField| f.is_picker(&provider_name);
 
     // Handle discard confirmation dialog
-    if app.pending_discard_confirm {
+    if app.forms.pending_discard_confirm {
         match key.code {
             KeyCode::Char('y') | KeyCode::Char('Y') => {
-                app.pending_discard_confirm = false;
+                app.forms.pending_discard_confirm = false;
                 app.clear_form_mtime();
-                app.provider_form_baseline = None;
+                app.providers.form_baseline = None;
                 app.set_screen(Screen::Providers);
                 app.flush_pending_vault_write();
             }
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                app.pending_discard_confirm = false;
+                app.forms.pending_discard_confirm = false;
             }
             _ => {}
         }
@@ -285,17 +285,17 @@ pub(super) fn handle_provider_form(
     match key.code {
         KeyCode::Esc => {
             if app.provider_form_is_dirty() {
-                app.pending_discard_confirm = true;
+                app.forms.pending_discard_confirm = true;
             } else {
                 app.clear_form_mtime();
-                app.provider_form_baseline = None;
+                app.providers.form_baseline = None;
                 app.set_screen(Screen::Providers);
                 app.flush_pending_vault_write();
             }
         }
         KeyCode::Tab | KeyCode::Down => {
             warn_aws_token_format(app, &provider_name);
-            if !app.provider_form.expanded {
+            if !app.providers.form.expanded {
                 let all = crate::app::ProviderFormField::fields_for(&provider_name);
                 let req_count = all
                     .iter()
@@ -306,35 +306,36 @@ pub(super) fn handle_provider_form(
                 let required = &all[..req_count];
                 if required.is_empty() {
                     // Fallback: no required fields, use full field list
-                    app.provider_form.focused_field = app.provider_form.focused_field.next(fields);
+                    app.providers.form.focused_field =
+                        app.providers.form.focused_field.next(fields);
                 } else {
                     let pos = required
                         .iter()
-                        .position(|f| *f == app.provider_form.focused_field);
+                        .position(|f| *f == app.providers.form.focused_field);
                     if let Some(idx) = pos {
                         if idx + 1 < required.len() {
-                            app.provider_form.focused_field = required[idx + 1];
+                            app.providers.form.focused_field = required[idx + 1];
                         } else if req_count < all.len() {
                             // Last required field: expand and focus first optional
-                            app.provider_form.expanded = true;
-                            app.provider_form.focused_field = all[req_count];
+                            app.providers.form.expanded = true;
+                            app.providers.form.focused_field = all[req_count];
                         } else {
                             // No optional fields, wrap
-                            app.provider_form.focused_field = required[0];
+                            app.providers.form.focused_field = required[0];
                         }
                     } else {
-                        app.provider_form.focused_field =
-                            app.provider_form.focused_field.next(fields);
+                        app.providers.form.focused_field =
+                            app.providers.form.focused_field.next(fields);
                     }
                 }
             } else {
-                app.provider_form.focused_field = app.provider_form.focused_field.next(fields);
+                app.providers.form.focused_field = app.providers.form.focused_field.next(fields);
             }
-            app.provider_form.sync_cursor_to_end();
+            app.providers.form.sync_cursor_to_end();
         }
         KeyCode::BackTab | KeyCode::Up => {
             warn_aws_token_format(app, &provider_name);
-            if !app.provider_form.expanded {
+            if !app.providers.form.expanded {
                 let all = crate::app::ProviderFormField::fields_for(&provider_name);
                 let req_count = all
                     .iter()
@@ -345,38 +346,39 @@ pub(super) fn handle_provider_form(
                 let required = &all[..req_count];
                 if required.is_empty() {
                     // Fallback: no required fields, use full field list
-                    app.provider_form.focused_field = app.provider_form.focused_field.prev(fields);
+                    app.providers.form.focused_field =
+                        app.providers.form.focused_field.prev(fields);
                 } else {
                     let pos = required
                         .iter()
-                        .position(|f| *f == app.provider_form.focused_field);
+                        .position(|f| *f == app.providers.form.focused_field);
                     if let Some(idx) = pos {
                         let prev_idx = if idx > 0 { idx - 1 } else { required.len() - 1 };
-                        app.provider_form.focused_field = required[prev_idx];
+                        app.providers.form.focused_field = required[prev_idx];
                     } else {
                         // Focus is on a non-required field while collapsed; go to last required
-                        app.provider_form.focused_field = required[required.len() - 1];
+                        app.providers.form.focused_field = required[required.len() - 1];
                     }
                 }
             } else {
-                app.provider_form.focused_field = app.provider_form.focused_field.prev(fields);
+                app.providers.form.focused_field = app.providers.form.focused_field.prev(fields);
             }
-            app.provider_form.sync_cursor_to_end();
+            app.providers.form.sync_cursor_to_end();
         }
-        KeyCode::Left if app.provider_form.cursor_pos > 0 => {
-            app.provider_form.cursor_pos -= 1;
+        KeyCode::Left if app.providers.form.cursor_pos > 0 => {
+            app.providers.form.cursor_pos -= 1;
         }
         KeyCode::Right => {
-            let len = app.provider_form.focused_value().chars().count();
-            if app.provider_form.cursor_pos < len {
-                app.provider_form.cursor_pos += 1;
+            let len = app.providers.form.focused_value().chars().count();
+            if app.providers.form.cursor_pos < len {
+                app.providers.form.cursor_pos += 1;
             }
         }
         KeyCode::Home => {
-            app.provider_form.cursor_pos = 0;
+            app.providers.form.cursor_pos = 0;
         }
         KeyCode::End => {
-            app.provider_form.sync_cursor_to_end();
+            app.providers.form.sync_cursor_to_end();
         }
         KeyCode::Enter => {
             // INVARIANT: Enter ALWAYS submits the form, regardless of focused
@@ -387,24 +389,24 @@ pub(super) fn handle_provider_form(
         // Order: toggle first, picker second (no overlap, but explicit
         // ordering protects against future ProviderFormField additions).
         KeyCode::Char(' ')
-            if app.provider_form.focused_field == crate::app::ProviderFormField::VerifyTls =>
+            if app.providers.form.focused_field == crate::app::ProviderFormField::VerifyTls =>
         {
-            app.provider_form.verify_tls = !app.provider_form.verify_tls;
+            app.providers.form.verify_tls = !app.providers.form.verify_tls;
         }
         KeyCode::Char(' ')
-            if app.provider_form.focused_field == crate::app::ProviderFormField::AutoSync =>
+            if app.providers.form.focused_field == crate::app::ProviderFormField::AutoSync =>
         {
-            app.provider_form.auto_sync = !app.provider_form.auto_sync;
+            app.providers.form.auto_sync = !app.providers.form.auto_sync;
         }
         // Empty-field gate: same rationale as host_form — once the user
         // has typed anything, Space inserts a literal space so custom
         // identity paths (e.g. `~/My Keys/id_rsa`) and free-form region
         // lists work. On an empty picker field, Space opens the picker.
         KeyCode::Char(' ')
-            if is_picker(app.provider_form.focused_field)
-                && app.provider_form.focused_value().is_empty() =>
+            if is_picker(app.providers.form.focused_field)
+                && app.providers.form.focused_value().is_empty() =>
         {
-            let f = app.provider_form.focused_field;
+            let f = app.providers.form.focused_field;
             if f == crate::app::ProviderFormField::IdentityFile {
                 app.scan_keys();
                 app.ui.show_key_picker = true;
@@ -422,15 +424,15 @@ pub(super) fn handle_provider_form(
             // every other field — including picker fields — accepts free-text
             // typing so users can supply custom paths or region values not
             // surfaced by the picker. Matches the host form's Char arm.
-            let f = app.provider_form.focused_field;
+            let f = app.providers.form.focused_field;
             if !is_toggle(f) {
-                app.provider_form.insert_char(c);
+                app.providers.form.insert_char(c);
             }
         }
         KeyCode::Backspace => {
-            let f = app.provider_form.focused_field;
+            let f = app.providers.form.focused_field;
             if !is_toggle(f) {
-                app.provider_form.delete_char_before_cursor();
+                app.providers.form.delete_char_before_cursor();
             }
         }
         _ => {}
@@ -458,14 +460,14 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
 
     // Reject control characters in all fields (prevents INI injection)
     let pf_fields = [
-        (&app.provider_form.url, "URL"),
-        (&app.provider_form.token, "Token"),
-        (&app.provider_form.alias_prefix, "Alias Prefix"),
-        (&app.provider_form.user, "User"),
-        (&app.provider_form.identity_file, "Identity File"),
-        (&app.provider_form.profile, "Profile"),
-        (&app.provider_form.project, "Project ID"),
-        (&app.provider_form.regions, "Regions"),
+        (&app.providers.form.url, "URL"),
+        (&app.providers.form.token, "Token"),
+        (&app.providers.form.alias_prefix, "Alias Prefix"),
+        (&app.providers.form.user, "User"),
+        (&app.providers.form.identity_file, "Identity File"),
+        (&app.providers.form.profile, "Profile"),
+        (&app.providers.form.project, "Project ID"),
+        (&app.providers.form.regions, "Regions"),
     ];
     for (value, name) in &pf_fields {
         if value.chars().any(|c| c.is_control()) {
@@ -476,7 +478,7 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
 
     // Proxmox requires a URL
     if provider_name == "proxmox" {
-        let url = app.provider_form.url.trim();
+        let url = app.providers.form.url.trim();
         if url.is_empty() {
             app.notify_warning(crate::messages::URL_REQUIRED_PROXMOX);
             return;
@@ -490,9 +492,9 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
     }
 
     // AWS allows empty token when profile is set (credentials from ~/.aws/credentials)
-    if app.provider_form.token.trim().is_empty()
+    if app.providers.form.token.trim().is_empty()
         && provider_name != "tailscale"
-        && (provider_name != "aws" || app.provider_form.profile.trim().is_empty())
+        && (provider_name != "aws" || app.providers.form.profile.trim().is_empty())
     {
         let hint = if provider_name == "gcp" {
             "Token can't be empty. Provide a service account JSON key file path or access token."
@@ -512,28 +514,28 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
     }
 
     // GCP requires a project ID
-    if provider_name == "gcp" && app.provider_form.project.trim().is_empty() {
+    if provider_name == "gcp" && app.providers.form.project.trim().is_empty() {
         app.notify_warning(crate::messages::PROJECT_REQUIRED_GCP);
         return;
     }
 
     // Oracle requires a compartment OCID
-    if provider_name == "oracle" && app.provider_form.compartment.trim().is_empty() {
+    if provider_name == "oracle" && app.providers.form.compartment.trim().is_empty() {
         app.notify_warning(crate::messages::COMPARTMENT_REQUIRED_OCI);
         return;
     }
 
     // AWS/Scaleway require at least one region/zone
-    if provider_name == "aws" && app.provider_form.regions.trim().is_empty() {
+    if provider_name == "aws" && app.providers.form.regions.trim().is_empty() {
         app.notify_warning(crate::messages::REGIONS_REQUIRED_AWS);
         return;
     }
-    if provider_name == "scaleway" && app.provider_form.regions.trim().is_empty() {
+    if provider_name == "scaleway" && app.providers.form.regions.trim().is_empty() {
         app.notify_warning(crate::messages::ZONES_REQUIRED_SCALEWAY);
         return;
     }
     if provider_name == "azure" {
-        let subs = app.provider_form.regions.trim();
+        let subs = app.providers.form.regions.trim();
         if subs.is_empty() {
             app.notify_warning(crate::messages::SUBSCRIPTIONS_REQUIRED_AZURE);
             return;
@@ -547,15 +549,15 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
         }
     }
 
-    let token = app.provider_form.token.trim().to_string();
-    let alias_prefix = app.provider_form.alias_prefix.trim().to_string();
+    let token = app.providers.form.token.trim().to_string();
+    let alias_prefix = app.providers.form.alias_prefix.trim().to_string();
     if crate::ssh_config::model::is_host_pattern(&alias_prefix) {
         app.notify_warning(crate::messages::ALIAS_PREFIX_INVALID);
         return;
     }
 
     let user = {
-        let u = app.provider_form.user.trim();
+        let u = app.providers.form.user.trim();
         if u.is_empty() {
             "root".to_string()
         } else {
@@ -567,7 +569,7 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
         return;
     }
 
-    let vault_role_trimmed = app.provider_form.vault_role.trim();
+    let vault_role_trimmed = app.providers.form.vault_role.trim();
     if !vault_role_trimmed.is_empty() && !crate::vault_ssh::is_valid_role(vault_role_trimmed) {
         app.notify_warning(crate::messages::VAULT_ROLE_FORMAT);
         return;
@@ -578,25 +580,25 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
         token: token.clone(),
         alias_prefix,
         user,
-        identity_file: app.provider_form.identity_file.trim().to_string(),
-        url: app.provider_form.url.trim().to_string(),
-        verify_tls: app.provider_form.verify_tls,
-        auto_sync: app.provider_form.auto_sync,
-        profile: app.provider_form.profile.trim().to_string(),
-        regions: app.provider_form.regions.trim().to_string(),
-        project: app.provider_form.project.trim().to_string(),
-        compartment: app.provider_form.compartment.trim().to_string(),
-        vault_role: app.provider_form.vault_role.trim().to_string(),
-        vault_addr: app.provider_form.vault_addr.trim().to_string(),
+        identity_file: app.providers.form.identity_file.trim().to_string(),
+        url: app.providers.form.url.trim().to_string(),
+        verify_tls: app.providers.form.verify_tls,
+        auto_sync: app.providers.form.auto_sync,
+        profile: app.providers.form.profile.trim().to_string(),
+        regions: app.providers.form.regions.trim().to_string(),
+        project: app.providers.form.project.trim().to_string(),
+        compartment: app.providers.form.compartment.trim().to_string(),
+        vault_role: app.providers.form.vault_role.trim().to_string(),
+        vault_addr: app.providers.form.vault_addr.trim().to_string(),
     };
 
-    let old_section = app.provider_config.section(&provider_name).cloned();
-    app.provider_config.set_section(section);
-    if let Err(e) = app.provider_config.save() {
+    let old_section = app.providers.config.section(&provider_name).cloned();
+    app.providers.config.set_section(section);
+    if let Err(e) = app.providers.config.save() {
         // Rollback: restore previous state
         match old_section {
-            Some(old) => app.provider_config.set_section(old),
-            None => app.provider_config.remove_section(&provider_name),
+            Some(old) => app.providers.config.set_section(old),
+            None => app.providers.config.remove_section(&provider_name),
         }
         app.notify_error(crate::messages::failed_to_save(&e));
         return;
@@ -604,11 +606,12 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
 
     let display_name = crate::providers::provider_display_name(provider_name.as_str());
 
-    if !app.syncing_providers.contains_key(&provider_name) {
-        let sync_section = app.provider_config.section(&provider_name).cloned();
+    if !app.providers.syncing.contains_key(&provider_name) {
+        let sync_section = app.providers.config.section(&provider_name).cloned();
         if let Some(sync_section) = sync_section {
             let cancel = Arc::new(AtomicBool::new(false));
-            app.syncing_providers
+            app.providers
+                .syncing
                 .insert(provider_name.clone(), cancel.clone());
             app.notify(crate::messages::provider_saved_syncing(display_name));
             super::sync::spawn_provider_sync(&sync_section, events_tx.clone(), cancel);
@@ -617,7 +620,7 @@ fn submit_provider_form(app: &mut App, events_tx: &mpsc::Sender<AppEvent>) {
         app.notify(crate::messages::provider_saved(display_name));
     }
     app.clear_form_mtime();
-    app.provider_form_baseline = None;
+    app.providers.form_baseline = None;
     app.set_screen(Screen::Providers);
     app.flush_pending_vault_write();
 }

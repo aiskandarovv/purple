@@ -509,7 +509,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect, spinner_tick: u64) {
             );
             section_close(&mut lines, box_width);
         } else {
-            let chain = resolve_proxy_chain(host, &app.hosts);
+            let chain = resolve_proxy_chain(host, &app.hosts_state.list);
             if !chain.is_empty() {
                 section_open(&mut lines, "ROUTE", box_width);
                 // hop_width: content width minus "  ● " prefix (4 chars)
@@ -632,7 +632,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect, spinner_tick: u64) {
         let effective_role = crate::vault_ssh::resolve_vault_role(
             host.vault_ssh.as_deref(),
             host.provider.as_deref(),
-            &app.provider_config,
+            &app.providers.config,
         );
         if let Some(ref role) = effective_role {
             section_open(&mut lines, "VAULT SSH", box_width);
@@ -737,7 +737,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect, spinner_tick: u64) {
     }
 
     // Tunnels section
-    let tunnel_active = app.active_tunnels.contains_key(&host.alias);
+    let tunnel_active = app.tunnels.active.contains_key(&host.alias);
     if host.tunnel_count > 0 {
         let tunnel_label = if tunnel_active {
             "TUNNELS (active)"
@@ -746,7 +746,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect, spinner_tick: u64) {
         };
         section_open(&mut lines, tunnel_label, box_width);
 
-        let rules = find_tunnel_rules(&app.config.elements, &host.alias);
+        let rules = find_tunnel_rules(&app.hosts_state.ssh_config.elements, &host.alias);
         let style = if tunnel_active {
             theme::success()
         } else {
@@ -762,7 +762,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect, spinner_tick: u64) {
     }
 
     // Snippets hint
-    let snippet_count = app.snippet_store.snippets.len();
+    let snippet_count = app.snippets.store.snippets.len();
     if snippet_count > 0 {
         section_open(&mut lines, "SNIPPETS", box_width);
         let msg = format!("{} available (r to run)", snippet_count);
@@ -834,7 +834,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect, spinner_tick: u64) {
 
     // Inherited directives section — alias-only matching (SSH-faithful).
     // OpenSSH Host keyword matches only the alias typed on the command line.
-    let inherited = app.config.matching_patterns(&host.alias);
+    let inherited = app.hosts_state.ssh_config.matching_patterns(&host.alias);
     for pattern_entry in &inherited {
         section_open(&mut lines, "PATTERN MATCH", box_width);
         section_line(
@@ -946,7 +946,8 @@ fn render_pattern_detail(
 
     // Matches section — alias-only matching (SSH-faithful).
     let matching_aliases: Vec<String> = app
-        .hosts
+        .hosts_state
+        .list
         .iter()
         .filter(|h| crate::ssh_config::model::host_pattern_matches(&pattern.pattern, &h.alias))
         .map(|h| h.alias.clone())

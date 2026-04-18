@@ -153,14 +153,14 @@ fn cache_invalid_entry_fresh_within_backoff() {
 fn test_sync_summary_still_syncing() {
     let mut app = empty_app();
     let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    app.syncing_providers.insert("aws".to_string(), cancel);
-    app.sync_done.push("DigitalOcean".to_string());
+    app.providers.syncing.insert("aws".to_string(), cancel);
+    app.providers.sync_done.push("DigitalOcean".to_string());
     set_sync_summary(&mut app);
-    let status = app.status.as_ref().unwrap();
+    let status = app.status_center.status.as_ref().unwrap();
     assert_eq!(status.text, "Synced: DigitalOcean...");
     assert!(!status.is_error());
     // sync_done should NOT be cleared while still syncing
-    assert_eq!(app.sync_done.len(), 1);
+    assert_eq!(app.providers.sync_done.len(), 1);
 }
 
 #[test]
@@ -224,42 +224,42 @@ fn replace_spinner_frame_ignores_regular_status() {
 #[test]
 fn test_sync_summary_all_done() {
     let mut app = empty_app();
-    app.sync_done.push("AWS".to_string());
-    app.sync_done.push("Hetzner".to_string());
+    app.providers.sync_done.push("AWS".to_string());
+    app.providers.sync_done.push("Hetzner".to_string());
     set_sync_summary(&mut app);
-    let status = app.status.as_ref().unwrap();
+    let status = app.status_center.status.as_ref().unwrap();
     assert_eq!(status.text, "Synced: AWS, Hetzner");
     assert!(!status.is_error());
     // sync_done should be cleared when all done
-    assert!(app.sync_done.is_empty());
-    assert!(!app.sync_had_errors);
+    assert!(app.providers.sync_done.is_empty());
+    assert!(!app.providers.sync_had_errors);
 }
 
 #[test]
 fn test_sync_summary_with_errors() {
     let mut app = empty_app();
-    app.sync_done.push("AWS".to_string());
-    app.sync_had_errors = true;
+    app.providers.sync_done.push("AWS".to_string());
+    app.providers.sync_had_errors = true;
     set_sync_summary(&mut app);
-    let toast = app.toast.as_ref().unwrap();
+    let toast = app.status_center.toast.as_ref().unwrap();
     assert_eq!(toast.text, "Synced: AWS");
     assert!(toast.is_error());
     // Error flag should be reset when batch completes
-    assert!(!app.sync_had_errors);
+    assert!(!app.providers.sync_had_errors);
 }
 
 #[test]
 fn test_sync_summary_errors_persist_while_syncing() {
     let mut app = empty_app();
     let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    app.syncing_providers.insert("vultr".to_string(), cancel);
-    app.sync_done.push("AWS".to_string());
-    app.sync_had_errors = true;
+    app.providers.syncing.insert("vultr".to_string(), cancel);
+    app.providers.sync_done.push("AWS".to_string());
+    app.providers.sync_had_errors = true;
     set_sync_summary(&mut app);
-    let toast = app.toast.as_ref().unwrap();
+    let toast = app.status_center.toast.as_ref().unwrap();
     assert!(toast.is_error());
     // Error flag should persist while still syncing
-    assert!(app.sync_had_errors);
+    assert!(app.providers.sync_had_errors);
 }
 
 // =========================================================================
@@ -664,7 +664,11 @@ fn host_list_i_key_sets_error_when_no_hosts_available() {
     // If we got ConfirmImport, known_hosts had entries (can't control that)
     // If we stayed on HostList, verify error status was set
     if matches!(app.screen, app::Screen::HostList) {
-        let toast = app.toast.as_ref().expect("toast should be set");
+        let toast = app
+            .status_center
+            .toast
+            .as_ref()
+            .expect("toast should be set");
         assert!(toast.is_error());
         assert_eq!(toast.text, "No importable hosts in known_hosts.");
     }
@@ -755,7 +759,7 @@ fn confirm_import_y_transitions_to_host_list() {
     // Should transition to HostList regardless of import result
     assert!(matches!(app.screen, app::Screen::HostList));
     // Status or toast should be set (either success or error)
-    assert!(app.status.is_some() || app.toast.is_some());
+    assert!(app.status_center.status.is_some() || app.status_center.toast.is_some());
 }
 
 // =========================================================================
@@ -817,15 +821,16 @@ fn import_successful_sets_success_status() {
     let hosts_file = dir.join("hosts.txt");
     std::fs::write(&hosts_file, "web.example.com\ndb.example.com\n").unwrap();
 
-    let result = import::import_from_file(&mut app.config, &hosts_file, Some("test"));
+    let result =
+        import::import_from_file(&mut app.hosts_state.ssh_config, &hosts_file, Some("test"));
     let (imported, skipped, _, _) = result.unwrap();
     assert_eq!(imported, 2);
     assert_eq!(skipped, 0);
 
     // Write should succeed
-    assert!(app.config.write().is_ok());
+    assert!(app.hosts_state.ssh_config.write().is_ok());
     app.reload_hosts();
-    assert_eq!(app.hosts.len(), 2);
+    assert_eq!(app.hosts_state.list.len(), 2);
 
     // Verify the status message format
     let msg = format!(
@@ -863,13 +868,13 @@ fn import_all_duplicates_sets_status() {
     std::fs::write(&hosts_file, "web.example.com\n").unwrap();
 
     // First import
-    let _ = import::import_from_file(&mut app.config, &hosts_file, None);
-    let _ = app.config.write();
+    let _ = import::import_from_file(&mut app.hosts_state.ssh_config, &hosts_file, None);
+    let _ = app.hosts_state.ssh_config.write();
     app.reload_hosts();
 
     // Second import - all duplicates
     let (imported, skipped, _, _) =
-        import::import_from_file(&mut app.config, &hosts_file, None).unwrap();
+        import::import_from_file(&mut app.hosts_state.ssh_config, &hosts_file, None).unwrap();
     assert_eq!(imported, 0);
     assert_eq!(skipped, 1);
 
@@ -902,21 +907,22 @@ fn import_write_failure_rolls_back_config() {
         bom: false,
     };
     let mut app = App::new(config);
-    let config_backup = app.config.clone();
+    let config_backup = app.hosts_state.ssh_config.clone();
 
     let hosts_file = dir.join("hosts.txt");
     std::fs::write(&hosts_file, "web.example.com\n").unwrap();
 
-    let (imported, _, _, _) = import::import_from_file(&mut app.config, &hosts_file, None).unwrap();
+    let (imported, _, _, _) =
+        import::import_from_file(&mut app.hosts_state.ssh_config, &hosts_file, None).unwrap();
     assert_eq!(imported, 1);
 
     // Write should fail because parent dir doesn't exist
-    let write_result = app.config.write();
+    let write_result = app.hosts_state.ssh_config.write();
     assert!(write_result.is_err());
 
     // After failure, rollback should restore config
-    app.config = config_backup;
-    let hosts = app.config.host_entries();
+    app.hosts_state.ssh_config = config_backup;
+    let hosts = app.hosts_state.ssh_config.host_entries();
     assert_eq!(hosts.len(), 0, "config should be rolled back to empty");
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -974,7 +980,7 @@ fn welcome_i_with_known_hosts_transitions_to_host_list() {
     let _ = crate::handler::handle_key_event(&mut app, key, &tx);
     assert!(matches!(app.screen, app::Screen::HostList));
     // Status or toast should be set (import attempted)
-    assert!(app.status.is_some() || app.toast.is_some());
+    assert!(app.status_center.status.is_some() || app.status_center.toast.is_some());
 }
 
 // =========================================================================

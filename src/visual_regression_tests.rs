@@ -258,7 +258,7 @@ fn visual_host_list_detail_panel() {
     let mut app = demo::build_demo_app();
     // Detail panel renders alongside the host list when view_mode is Detailed
     // and the terminal is wide enough (DETAIL_MIN_WIDTH).
-    app.view_mode = crate::app::ViewMode::Detailed;
+    app.hosts_state.view_mode = crate::app::ViewMode::Detailed;
     let actual = render_screen(&mut app);
     assert_golden("host_list_detail_panel", &actual);
 }
@@ -382,7 +382,7 @@ fn visual_snippet_form() {
 fn visual_snippet_output() {
     let _g = setup();
     let mut app = demo::build_demo_app();
-    app.snippet_output = Some(crate::app::SnippetOutputState {
+    app.snippets.output = Some(crate::app::SnippetOutputState {
         run_id: 1,
         results: vec![crate::app::SnippetHostOutput {
             alias: "bastion-ams".to_string(),
@@ -416,7 +416,7 @@ fn visual_snippet_param_form() {
     // Param form requires state populated with the snippet's params (none here),
     // so build an empty SnippetParamFormState matching the snippet.
     let params: Vec<crate::snippet::SnippetParam> = Vec::new();
-    app.snippet_param_form = Some(crate::app::SnippetParamFormState::new(&params));
+    app.snippets.param_form = Some(crate::app::SnippetParamFormState::new(&params));
     app.screen = Screen::SnippetParamForm {
         snippet,
         target_aliases: vec!["bastion-ams".to_string()],
@@ -522,8 +522,8 @@ fn visual_bulk_tag_editor() {
     let _g = setup();
     let mut app = demo::build_demo_app();
     // Bulk tag editor operates on multi_select. Populate it with a couple of demo hosts.
-    app.multi_select.insert(0);
-    app.multi_select.insert(1);
+    app.hosts_state.multi_select.insert(0);
+    app.hosts_state.multi_select.insert(1);
     app.screen = Screen::BulkTagEditor;
     let actual = render_screen(&mut app);
     assert_golden("bulk_tag_editor", &actual);

@@ -26,7 +26,7 @@ pub(crate) fn handle_tick(
     // Update the spinner character in the signing status text
     // so the spinner animates between VaultSignProgress events.
     if vault_signing {
-        if let Some(ref mut status) = app.status {
+        if let Some(ref mut status) = app.status_center.status {
             if status.sticky && !status.is_error() {
                 let frame = crate::animation::SPINNER_FRAMES
                     [anim.spinner_tick as usize % crate::animation::SPINNER_FRAMES.len()];
@@ -75,12 +75,17 @@ pub(crate) fn handle_ping_result(
         let status = app::classify_ping(rtt_ms, app.ping.slow_threshold_ms);
         app.ping.status.insert(alias.clone(), status.clone());
         // Propagate bastion status to all ProxyJump dependents.
-        app::propagate_ping_to_dependents(&app.hosts, &mut app.ping.status, &alias, &status);
+        app::propagate_ping_to_dependents(
+            &app.hosts_state.list,
+            &mut app.ping.status,
+            &alias,
+            &status,
+        );
         // Update live filter/sort as results arrive
         if app.ping.filter_down_only {
             app.apply_filter();
         }
-        if app.sort_mode == app::SortMode::Status {
+        if app.hosts_state.sort_mode == app::SortMode::Status {
             app.apply_sort();
         }
         // Update "last checked" timestamp when all pings are done
@@ -100,7 +105,7 @@ pub(crate) fn handle_ping_result(
 pub(crate) fn handle_sync_progress(app: &mut App, provider: String, message: String) {
     // Only show per-provider progress while that provider is still syncing.
     // Late progress events (arriving after SyncComplete) are discarded.
-    if app.syncing_providers.contains_key(&provider) && app.sync_done.is_empty() {
+    if app.providers.syncing.contains_key(&provider) && app.providers.sync_done.is_empty() {
         let name = providers::provider_display_name(&provider);
         app.notify_background(crate::messages::provider_event(name, &message));
     }
@@ -121,7 +126,7 @@ pub(crate) fn handle_sync_complete(
     let (_msg, is_err, total, added, updated, stale) =
         app.apply_sync_result(&provider, hosts, false);
     if is_err {
-        app.sync_history.insert(
+        app.providers.sync_history.insert(
             provider.clone(),
             app::SyncRecord {
                 timestamp: now,
@@ -129,7 +134,7 @@ pub(crate) fn handle_sync_complete(
                 is_error: true,
             },
         );
-        app.sync_had_errors = true;
+        app.providers.sync_had_errors = true;
     } else {
         let label = if total == 1 { "server" } else { "servers" };
         let message = format!(
@@ -138,7 +143,7 @@ pub(crate) fn handle_sync_complete(
             label,
             crate::format_sync_diff(added, updated, stale)
         );
-        app.sync_history.insert(
+        app.providers.sync_history.insert(
             provider.clone(),
             app::SyncRecord {
                 timestamp: now,
@@ -147,8 +152,8 @@ pub(crate) fn handle_sync_complete(
             },
         );
     }
-    app.syncing_providers.remove(&provider);
-    app.sync_done.push(display_name.to_string());
+    app.providers.syncing.remove(&provider);
+    app.providers.sync_done.push(display_name.to_string());
     crate::set_sync_summary(app);
     // Reset config check timer so auto-reload doesn't immediately
     // detect our own write as an "external" change
@@ -172,7 +177,7 @@ pub(crate) fn handle_sync_partial(
     let (msg, is_err, synced, added, updated, stale) =
         app.apply_sync_result(&provider, hosts, true);
     if is_err {
-        app.sync_history.insert(
+        app.providers.sync_history.insert(
             provider.clone(),
             app::SyncRecord {
                 timestamp: now,
@@ -182,7 +187,7 @@ pub(crate) fn handle_sync_partial(
         );
     } else {
         let label = if synced == 1 { "server" } else { "servers" };
-        app.sync_history.insert(
+        app.providers.sync_history.insert(
             provider.clone(),
             app::SyncRecord {
                 timestamp: now,
@@ -198,9 +203,9 @@ pub(crate) fn handle_sync_partial(
             },
         );
     }
-    app.sync_had_errors = true;
-    app.syncing_providers.remove(&provider);
-    app.sync_done.push(display_name.to_string());
+    app.providers.sync_had_errors = true;
+    app.providers.syncing.remove(&provider);
+    app.providers.sync_done.push(display_name.to_string());
     crate::set_sync_summary(app);
     *last_config_check = Instant::now();
 }
@@ -217,7 +222,7 @@ pub(crate) fn handle_sync_error(
         .unwrap_or_default()
         .as_secs();
     let display_name = providers::provider_display_name(provider.as_str());
-    app.sync_history.insert(
+    app.providers.sync_history.insert(
         provider.clone(),
         app::SyncRecord {
             timestamp: now,
@@ -225,9 +230,9 @@ pub(crate) fn handle_sync_error(
             is_error: true,
         },
     );
-    app.sync_had_errors = true;
-    app.syncing_providers.remove(&provider);
-    app.sync_done.push(display_name.to_string());
+    app.providers.sync_had_errors = true;
+    app.providers.syncing.remove(&provider);
+    app.providers.sync_done.push(display_name.to_string());
     crate::set_sync_summary(app);
     *last_config_check = Instant::now();
 }
@@ -306,7 +311,7 @@ pub(crate) fn handle_scp_complete(
             if success {
                 app.history.record(&alias);
                 // history_width depends on formatted timestamps; rebuild next render
-                app.host_list_cache.invalidate();
+                app.hosts_state.render_cache.invalidate();
                 fb.local_selected.clear();
                 fb.remote_selected.clear();
                 match file_browser::list_local(&fb.local_path, fb.show_hidden, fb.sort) {
@@ -349,7 +354,7 @@ pub(crate) fn handle_scp_complete(
         app.apply_sort();
     }
     if let Some((fb_alias, askpass_fb, path, show_hidden, sort)) = refresh_remote {
-        let has_tunnel = app.active_tunnels.contains_key(&fb_alias);
+        let has_tunnel = app.tunnels.active.contains_key(&fb_alias);
         let ctx = crate::ssh_context::OwnedSshContext {
             alias: fb_alias,
             config_path: app.reload.config_path.clone(),
@@ -384,7 +389,7 @@ pub(crate) fn handle_snippet_host_done(
         app.history.record(&alias);
         app.apply_sort();
     }
-    if let Some(ref mut state) = app.snippet_output {
+    if let Some(ref mut state) = app.snippets.output {
         if state.run_id == run_id {
             state.results.push(app::SnippetHostOutput {
                 alias,
@@ -398,7 +403,7 @@ pub(crate) fn handle_snippet_host_done(
 
 /// Handle `AppEvent::SnippetProgress`.
 pub(crate) fn handle_snippet_progress(app: &mut App, run_id: u64, completed: usize, total: usize) {
-    if let Some(ref mut state) = app.snippet_output {
+    if let Some(ref mut state) = app.snippets.output {
         if state.run_id == run_id {
             state.completed = completed;
             state.total = total;
@@ -408,7 +413,7 @@ pub(crate) fn handle_snippet_progress(app: &mut App, run_id: u64, completed: usi
 
 /// Handle `AppEvent::SnippetAllDone`.
 pub(crate) fn handle_snippet_all_done(app: &mut App, run_id: u64) {
-    if let Some(ref mut state) = app.snippet_output {
+    if let Some(ref mut state) = app.snippets.output {
         if state.run_id == run_id {
             state.all_done = true;
         }
@@ -510,7 +515,7 @@ pub(crate) fn handle_container_action_complete(
     };
     if let Some((refresh_alias, askpass, cached_runtime)) = should_refresh {
         app.notify_background(crate::messages::container_action_complete(action.as_str()));
-        let has_tunnel = app.active_tunnels.contains_key(&refresh_alias);
+        let has_tunnel = app.tunnels.active.contains_key(&refresh_alias);
         let ctx = crate::ssh_context::OwnedSshContext {
             alias: refresh_alias,
             config_path: app.reload.config_path.clone(),
@@ -545,7 +550,8 @@ pub(crate) fn handle_vault_sign_result(
         if crate::should_write_certificate_file(&existing_cert_file) {
             if let Ok(cert_path) = vault_ssh::cert_path_for(&alias) {
                 let updated = app
-                    .config
+                    .hosts_state
+                    .ssh_config
                     .set_host_certificate_file(&alias, &cert_path.to_string_lossy());
                 if !updated {
                     host_missing = true;
@@ -641,7 +647,8 @@ pub(crate) fn handle_vault_sign_all_done(
             // by an external editor while the bulk-sign worker was
             // running. Writing now would overwrite those edits.
             let reapply: Vec<(String, String)> = app
-                .config
+                .hosts_state
+                .ssh_config
                 .host_entries()
                 .into_iter()
                 .filter_map(|h| {
@@ -658,24 +665,28 @@ pub(crate) fn handle_vault_sign_all_done(
                 .collect();
             match ssh_config::model::SshConfigFile::parse(&app.reload.config_path) {
                 Ok(fresh) => {
-                    app.config = fresh;
+                    app.hosts_state.ssh_config = fresh;
                     let mut reapplied = 0usize;
                     for (alias, cert_path) in &reapply {
                         let entry = app
-                            .config
+                            .hosts_state
+                            .ssh_config
                             .host_entries()
                             .into_iter()
                             .find(|h| &h.alias == alias);
                         if let Some(entry) = entry {
                             if crate::should_write_certificate_file(&entry.certificate_file)
-                                && app.config.set_host_certificate_file(alias, cert_path)
+                                && app
+                                    .hosts_state
+                                    .ssh_config
+                                    .set_host_certificate_file(alias, cert_path)
                             {
                                 reapplied += 1;
                             }
                         }
                     }
                     if reapplied > 0 {
-                        if let Err(e) = app.config.write() {
+                        if let Err(e) = app.hosts_state.ssh_config.write() {
                             app.notify_sticky_error(crate::messages::vault_config_reapply_failed(
                                 signed as usize,
                                 &e,
@@ -711,7 +722,7 @@ pub(crate) fn handle_vault_sign_all_done(
                     ));
                 }
             }
-        } else if let Err(e) = app.config.write() {
+        } else if let Err(e) = app.hosts_state.ssh_config.write() {
             app.notify_sticky_error(crate::messages::vault_config_update_failed(
                 signed as usize,
                 &e,

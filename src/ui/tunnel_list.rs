@@ -7,15 +7,16 @@ use super::theme;
 use crate::app::App;
 
 pub fn render(frame: &mut Frame, app: &mut App, alias: &str) {
-    let is_active = app.active_tunnels.contains_key(alias);
+    let is_active = app.tunnels.active.contains_key(alias);
     let is_readonly = app
-        .hosts
+        .hosts_state
+        .list
         .iter()
         .any(|h| h.alias == alias && h.source_file.is_some());
 
     // Overlay: percentage-based width, height fits content. Reserve 1 row
     // below the block for the external footer.
-    let item_count = app.tunnel_list.len().max(1);
+    let item_count = app.tunnels.list.len().max(1);
     let height = (item_count as u16 + 4).min(frame.area().height.saturating_sub(5));
     let area = design::overlay_area(frame, design::OVERLAY_W, design::OVERLAY_H, height);
     frame.render_widget(Clear, area);
@@ -28,7 +29,7 @@ pub fn render(frame: &mut Frame, app: &mut App, alias: &str) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    if app.tunnel_list.is_empty() {
+    if app.tunnels.list.is_empty() {
         if is_readonly {
             design::render_empty(frame, inner, "Read-only (included file).");
         } else {
@@ -36,7 +37,8 @@ pub fn render(frame: &mut Frame, app: &mut App, alias: &str) {
         }
     } else {
         let items: Vec<ListItem> = app
-            .tunnel_list
+            .tunnels
+            .list
             .iter()
             .map(|rule| {
                 let type_label = format!(" {:<10}", rule.tunnel_type.label());
@@ -76,7 +78,7 @@ pub fn render(frame: &mut Frame, app: &mut App, alias: &str) {
 
     // Footer below the block
     let footer_area = design::render_overlay_footer(frame, area);
-    if app.pending_tunnel_delete.is_some() {
+    if app.tunnels.pending_delete.is_some() {
         let mut spans = vec![Span::styled(" Remove tunnel? ", theme::bold())];
         // Stakes test: deleting a tunnel rule rewrites the SSH config
         // (destructive). Action verbs.
@@ -86,12 +88,12 @@ pub fn render(frame: &mut Frame, app: &mut App, alias: &str) {
         let mut f = design::Footer::new();
         if is_active {
             f = f.primary("Enter", " stop ");
-        } else if !app.tunnel_list.is_empty() {
+        } else if !app.tunnels.list.is_empty() {
             f = f.primary("Enter", " start ");
         }
         if !is_readonly {
             f = f.action("a", " add ");
-            if !app.tunnel_list.is_empty() {
+            if !app.tunnels.list.is_empty() {
                 f = f.action("e", " edit ").action("d", " del ");
             }
         }
