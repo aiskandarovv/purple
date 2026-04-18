@@ -10,7 +10,7 @@
 │   ● aws-worke│                   | .__/ \__,_|_|  | .__/|_|\___|                  │          6h  │
 │   ● aws-batch│                   |_|              |_|                             │          7h  │
 │   ● aws-ml-eu│                                                                    │          8h  │
-│   ● do-web-am│                       you're on purple 2.42.1                      │ean      10h  │
+│   ● do-web-am│                   upgraded from 2.42.1 to 2.42.2                   │ean      10h  │
 │   ● do-stagin│                                                                    │         11h  │
 │   ● do-worker│                                                                    │         12h  │
 │   ● do-ci-run│  2.41.0  2026-04-15                                                │         13h  │
@@ -887,6 +887,10 @@
 (13,12) fg=DarkGray bg=Reset mod=BOLD|DIM
 (14,12) fg=DarkGray bg=Reset mod=BOLD|DIM
 (15,12) fg=Reset bg=Reset mod=DIM
+(35,12) fg=Reset bg=Reset mod=DIM
+(36,12) fg=Reset bg=Reset mod=DIM
+(37,12) fg=Reset bg=Reset mod=DIM
+(38,12) fg=Reset bg=Reset mod=DIM
 (39,12) fg=Reset bg=Reset mod=DIM
 (40,12) fg=Reset bg=Reset mod=DIM
 (41,12) fg=Reset bg=Reset mod=DIM
@@ -910,6 +914,9 @@
 (59,12) fg=Reset bg=Reset mod=DIM
 (60,12) fg=Reset bg=Reset mod=DIM
 (61,12) fg=Reset bg=Reset mod=DIM
+(62,12) fg=Reset bg=Reset mod=DIM
+(63,12) fg=Reset bg=Reset mod=DIM
+(64,12) fg=Reset bg=Reset mod=DIM
 (84,12) fg=Reset bg=Reset mod=DIM
 (85,12) fg=DarkGray bg=Reset mod=DIM
 (86,12) fg=DarkGray bg=Reset mod=DIM
