@@ -42,6 +42,13 @@ fn clear_path_override() {
     PATH_OVERRIDE.with(|p| *p.borrow_mut() = None);
 }
 
+/// Public wrapper for `clear_path_override`, callable from visual regression
+/// tests and other test suites that need to reset the thread-local override.
+#[cfg(test)]
+pub fn clear_path_override_for_tests() {
+    clear_path_override();
+}
+
 fn path() -> Option<PathBuf> {
     #[cfg(test)]
     {

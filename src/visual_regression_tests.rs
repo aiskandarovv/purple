@@ -36,8 +36,10 @@ const TERM_WIDTH: u16 = 100;
 const TERM_HEIGHT: u16 = 30;
 
 /// RAII guard returned by `setup()`. Holds the cross-suite lock for the
-/// duration of the test and resets the demo flag on drop so subsequent
-/// non-visual tests do not observe a sticky `demo_flag::is_demo() == true`.
+/// duration of the test, resets the demo flag on drop so subsequent
+/// non-visual tests do not observe a sticky `demo_flag::is_demo() == true`,
+/// and clears the preferences path override so later tests do not inherit
+/// a stale thread-local pointer.
 struct VisualGuard {
     _lock: MutexGuard<'static, ()>,
 }
@@ -45,21 +47,46 @@ struct VisualGuard {
 impl Drop for VisualGuard {
     fn drop(&mut self) {
         demo_flag::disable();
+        preferences::clear_path_override_for_tests();
     }
 }
 
-/// Acquire the cross-suite test lock, pin ANSI 16 colors and return a guard
-/// that releases the lock and resets the demo flag on drop.
+/// Acquire the cross-suite test lock, pin ANSI 16 colors, point the
+/// preferences path at a non-existent file so reads (e.g. last_seen_version
+/// consumed by the What's New overlay) return `None` regardless of the host
+/// environment, and return a guard that releases the lock and resets the
+/// demo flag on drop.
 ///
 /// The lock is shared with `preferences::tests::with_temp_prefs` because both
 /// suites mutate process-wide state (`PATH_OVERRIDE`, `demo_flag::DEMO_MODE`)
 /// that would otherwise race when `cargo test` runs them concurrently.
+///
+/// Env-sensitivity audit: visual tests must be byte-identical on any host.
+/// The consumed state is:
+/// - `ui::theme` — pinned via `init_with_mode(1)`, ignores NO_COLOR/COLORTERM
+/// - `preferences` — path_override below, so ~/.purple/preferences is ignored
+/// - `CHANGELOG.md` — embedded via `include_str!` at compile time
+/// - `CARGO_PKG_VERSION` / `PURPLE_BUILD_DATE` — compile-time env vars
+///   (build date drifts by calendar day; accepted as known limitation)
 #[must_use]
 fn setup() -> VisualGuard {
     let lock = preferences::GLOBAL_TEST_IO_LOCK
         .lock()
         .unwrap_or_else(|e| e.into_inner());
     ui::theme::init_with_mode(1);
+    // Point at a path that does not exist so load_* returns None. We
+    // intentionally do NOT create the file — individual tests may override
+    // this if they need canned preference values.
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let sentinel = std::env::temp_dir().join(format!(
+        "purple_vistest_nonexistent_{}_{}",
+        std::process::id(),
+        nanos,
+    ));
+    preferences::set_path_override(sentinel);
     VisualGuard { _lock: lock }
 }
 
