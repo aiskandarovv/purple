@@ -14,7 +14,33 @@ pub(super) fn handle_confirm_delete(app: &mut App, key: KeyEvent) {
         super::ConfirmAction::Yes => {
             if let Screen::ConfirmDelete { ref alias } = app.screen {
                 let alias = alias.clone();
-                if let Some((element, position)) = app.config.delete_host_undoable(&alias) {
+                let siblings = app.config.siblings_of(&alias);
+
+                if !siblings.is_empty() {
+                    // Multi-alias block: strip only the selected token.
+                    // `delete_host_undoable` refuses this case (returning
+                    // None) because re-inserting the whole element via
+                    // `insert_host_at` cannot reverse a token strip. We
+                    // therefore skip the undo stack and surface the event
+                    // via a dedicated toast that names the surviving
+                    // siblings, so the user knows what did and did not
+                    // change on disk.
+                    app.config.delete_host(&alias);
+                    if let Err(e) = app.config.write() {
+                        // Disk write failed: reload from disk to discard
+                        // the in-memory strip so view and storage match.
+                        app.notify_error(crate::messages::failed_to_save(&e));
+                        app.reload_hosts();
+                    } else {
+                        if let Some(mut tunnel) = app.active_tunnels.remove(&alias) {
+                            let _ = tunnel.child.kill();
+                            let _ = tunnel.child.wait();
+                        }
+                        app.update_last_modified();
+                        app.reload_hosts();
+                        app.notify(crate::messages::siblings_stripped(&alias, siblings.len()));
+                    }
+                } else if let Some((element, position)) = app.config.delete_host_undoable(&alias) {
                     if let Err(e) = app.config.write() {
                         // Restore the element on write failure
                         app.config.insert_host_at(element, position);

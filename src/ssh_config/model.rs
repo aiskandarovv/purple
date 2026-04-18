@@ -472,6 +472,81 @@ impl SshConfigFile {
         false
     }
 
+    /// Return the sibling aliases that share a `Host` block with `alias`.
+    ///
+    /// An empty vector means `alias` lives in its own single-alias block (or
+    /// is not present). A non-empty vector lists the other tokens in the
+    /// block in source order, so the UI can render indicators like `+N` or
+    /// spell the aliases out in a confirm dialog before a destructive
+    /// action. Does not recurse into `Include`d files: those are read-only
+    /// and their hosts cannot be edited from purple anyway.
+    pub fn siblings_of(&self, alias: &str) -> Vec<String> {
+        if alias.is_empty() {
+            return Vec::new();
+        }
+        self.elements
+            .iter()
+            .find_map(|el| match el {
+                ConfigElement::HostBlock(b) => {
+                    // Full-pattern match means the caller is acting on the
+                    // whole block (e.g. pattern browser delete of
+                    // `web-01 web-01.prod`). All tokens are the target, so
+                    // there are no "siblings" to preserve.
+                    if b.host_pattern == alias {
+                        return Some(Vec::new());
+                    }
+                    let tokens: Vec<String> = b
+                        .host_pattern
+                        .split_whitespace()
+                        .map(String::from)
+                        .collect();
+                    if tokens.iter().any(|t| t == alias) {
+                        Some(tokens.into_iter().filter(|t| t != alias).collect())
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    /// Find a mutable top-level `HostBlock` whose `host_pattern` contains
+    /// `alias` as one of its whitespace-separated tokens.
+    ///
+    /// Mirrors the matching used by read-path helpers like `has_host` and
+    /// `find_tunnel_directives`, so that any host visible in the TUI is also
+    /// addressable from write paths (`update_host`, `delete_host`,
+    /// `set_host_*`). Prior to this helper, writers compared the full
+    /// `host_pattern` for exact equality, which silently no-op'd on
+    /// multi-alias blocks like `Host web-01 web-01.prod 10.0.1.5` and
+    /// resulted in on-disk drift between the in-memory view and the config
+    /// file.
+    ///
+    /// Does not recurse into `Include`d files: those are read-only.
+    ///
+    /// A block matches when either (a) its full `host_pattern` equals
+    /// `alias` (used by the pattern browser for blocks like `web-* db-*`
+    /// or `web-01 web-01.prod` whose full pattern is the caller's key) or
+    /// (b) `alias` appears as one of the whitespace-separated tokens (used
+    /// by the host list for multi-alias blocks). The full-pattern match is
+    /// tried first so callers that pass a pattern string do not
+    /// accidentally trigger the token-strip path.
+    fn find_host_block_mut(&mut self, alias: &str) -> Option<&mut HostBlock> {
+        if alias.is_empty() {
+            return None;
+        }
+        self.elements.iter_mut().find_map(|el| match el {
+            ConfigElement::HostBlock(b)
+                if b.host_pattern == alias
+                    || b.host_pattern.split_whitespace().any(|t| t == alias) =>
+            {
+                Some(b)
+            }
+            _ => None,
+        })
+    }
+
     /// Check if a host block with exactly this host_pattern exists (top-level only).
     /// Unlike `has_host` which splits multi-host patterns and checks individual parts,
     /// this matches the full `Host` line pattern string (e.g. "web-* db-*").
@@ -591,33 +666,60 @@ impl SshConfigFile {
 
     /// Update an existing host entry by alias.
     /// Merges changes into the existing block, preserving unknown directives.
+    ///
+    /// Alias matching uses whitespace-tokenized equality, so a host visible
+    /// under a multi-alias block like `Host web-01 web-01.prod` is reachable
+    /// from any of its aliases. Directives are shared across all tokens in
+    /// the block (per SSH semantics): updating `User` on `web-01.prod`
+    /// therefore also affects `web-01`.
+    ///
+    /// On rename of a multi-alias block only the matching token is replaced
+    /// in the `Host` line; sibling aliases are preserved verbatim.
     pub fn update_host(&mut self, old_alias: &str, entry: &HostEntry) {
-        for element in &mut self.elements {
-            if let ConfigElement::HostBlock(block) = element {
-                if block.host_pattern == old_alias {
-                    // Update host pattern (preserve raw_host_line when alias unchanged)
-                    if entry.alias != block.host_pattern {
-                        block.host_pattern = entry.alias.clone();
-                        block.raw_host_line = format!("Host {}", entry.alias);
-                    }
+        let Some(block) = self.find_host_block_mut(old_alias) else {
+            return;
+        };
 
-                    // Merge known directives (update existing, add missing, remove empty)
-                    Self::upsert_directive(block, "HostName", &entry.hostname);
-                    Self::upsert_directive(block, "User", &entry.user);
-                    if entry.port != 22 {
-                        Self::upsert_directive(block, "Port", &entry.port.to_string());
-                    } else {
-                        // Remove explicit Port 22 (it's the default)
-                        block
-                            .directives
-                            .retain(|d| d.is_non_directive || !d.key.eq_ignore_ascii_case("port"));
-                    }
-                    Self::upsert_directive(block, "IdentityFile", &entry.identity_file);
-                    Self::upsert_directive(block, "ProxyJump", &entry.proxy_jump);
-                    return;
-                }
-            }
+        if entry.alias != old_alias {
+            // Full-pattern match (pattern browser rename) replaces the whole
+            // `host_pattern` verbatim. Token match (host list rename on a
+            // multi-alias block) replaces only the selected token so
+            // siblings survive. Single-alias blocks are covered by the
+            // token path because `tokens == [old_alias]`.
+            let is_full_pattern_match = block.host_pattern == old_alias;
+            let new_pattern: String = if is_full_pattern_match {
+                entry.alias.clone()
+            } else {
+                block
+                    .host_pattern
+                    .split_whitespace()
+                    .map(|t| {
+                        if t == old_alias {
+                            entry.alias.as_str()
+                        } else {
+                            t
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            };
+            block.host_pattern = new_pattern.clone();
+            block.raw_host_line = format!("Host {}", new_pattern);
         }
+
+        // Merge known directives (update existing, add missing, remove empty)
+        Self::upsert_directive(block, "HostName", &entry.hostname);
+        Self::upsert_directive(block, "User", &entry.user);
+        if entry.port != 22 {
+            Self::upsert_directive(block, "Port", &entry.port.to_string());
+        } else {
+            // Remove explicit Port 22 (it's the default)
+            block
+                .directives
+                .retain(|d| d.is_non_directive || !d.key.eq_ignore_ascii_case("port"));
+        }
+        Self::upsert_directive(block, "IdentityFile", &entry.identity_file);
+        Self::upsert_directive(block, "ProxyJump", &entry.proxy_jump);
     }
 
     /// Update a directive in-place, add it if missing, or remove it if value is empty.
@@ -702,13 +804,8 @@ impl SshConfigFile {
 
     /// Set provider on a host block by alias.
     pub fn set_host_provider(&mut self, alias: &str, provider_name: &str, server_id: &str) {
-        for element in &mut self.elements {
-            if let ConfigElement::HostBlock(block) = element {
-                if block.host_pattern == alias {
-                    block.set_provider(provider_name, server_id);
-                    return;
-                }
-            }
+        if let Some(block) = self.find_host_block_mut(alias) {
+            block.set_provider(provider_name, server_id);
         }
     }
 
@@ -876,49 +973,29 @@ impl SshConfigFile {
 
     /// Set tags on a host block by alias.
     pub fn set_host_tags(&mut self, alias: &str, tags: &[String]) {
-        for element in &mut self.elements {
-            if let ConfigElement::HostBlock(block) = element {
-                if block.host_pattern == alias {
-                    block.set_tags(tags);
-                    return;
-                }
-            }
+        if let Some(block) = self.find_host_block_mut(alias) {
+            block.set_tags(tags);
         }
     }
 
     /// Set provider-synced tags on a host block by alias.
     pub fn set_host_provider_tags(&mut self, alias: &str, tags: &[String]) {
-        for element in &mut self.elements {
-            if let ConfigElement::HostBlock(block) = element {
-                if block.host_pattern == alias {
-                    block.set_provider_tags(tags);
-                    return;
-                }
-            }
+        if let Some(block) = self.find_host_block_mut(alias) {
+            block.set_provider_tags(tags);
         }
     }
 
     /// Set askpass source on a host block by alias.
     pub fn set_host_askpass(&mut self, alias: &str, source: &str) {
-        for element in &mut self.elements {
-            if let ConfigElement::HostBlock(block) = element {
-                if block.host_pattern == alias {
-                    block.set_askpass(source);
-                    return;
-                }
-            }
+        if let Some(block) = self.find_host_block_mut(alias) {
+            block.set_askpass(source);
         }
     }
 
     /// Set vault-ssh role on a host block by alias.
     pub fn set_host_vault_ssh(&mut self, alias: &str, role: &str) {
-        for element in &mut self.elements {
-            if let ConfigElement::HostBlock(block) = element {
-                if block.host_pattern == alias {
-                    block.set_vault_ssh(role);
-                    return;
-                }
-            }
+        if let Some(block) = self.find_host_block_mut(alias) {
+            block.set_vault_ssh(role);
         }
     }
 
@@ -944,15 +1021,19 @@ impl SshConfigFile {
         if alias.is_empty() || is_host_pattern(alias) {
             return false;
         }
-        for element in &mut self.elements {
-            if let ConfigElement::HostBlock(block) = element {
-                if block.host_pattern == alias {
-                    block.set_vault_addr(url);
-                    return true;
-                }
-            }
+        let Some(block) = self.find_host_block_mut(alias) else {
+            return false;
+        };
+        // Defense in depth: refuse to mutate a block that is itself a
+        // pattern or a multi-alias block (ExactAliasOnly policy). Writing a
+        // vault endpoint onto such a block would apply to every sibling
+        // alias and every host resolving through the pattern, which is
+        // almost certainly not what the caller intends.
+        if is_host_pattern(&block.host_pattern) {
+            return false;
         }
-        false
+        block.set_vault_addr(url);
+        true
     }
 
     /// Set or remove the CertificateFile directive on a host block by alias.
@@ -977,50 +1058,39 @@ impl SshConfigFile {
         if alias.is_empty() || is_host_pattern(alias) {
             return false;
         }
-        for element in &mut self.elements {
-            if let ConfigElement::HostBlock(block) = element {
-                if block.host_pattern == alias {
-                    Self::upsert_directive(block, "CertificateFile", path);
-                    return true;
-                }
-            }
+        let Some(block) = self.find_host_block_mut(alias) else {
+            return false;
+        };
+        // Additionally refuse when the matched block is itself a pattern or
+        // multi-alias block (ExactAliasOnly policy). The input `alias` may
+        // be a plain token yet resolve into a block like `Host web-01
+        // web-01.prod`, where writing `CertificateFile` would silently
+        // affect sibling aliases.
+        if is_host_pattern(&block.host_pattern) {
+            return false;
         }
-        false
+        Self::upsert_directive(block, "CertificateFile", path);
+        true
     }
 
     /// Set provider metadata on a host block by alias.
     pub fn set_host_meta(&mut self, alias: &str, meta: &[(String, String)]) {
-        for element in &mut self.elements {
-            if let ConfigElement::HostBlock(block) = element {
-                if block.host_pattern == alias {
-                    block.set_meta(meta);
-                    return;
-                }
-            }
+        if let Some(block) = self.find_host_block_mut(alias) {
+            block.set_meta(meta);
         }
     }
 
     /// Mark a host as stale by alias.
     pub fn set_host_stale(&mut self, alias: &str, timestamp: u64) {
-        for element in &mut self.elements {
-            if let ConfigElement::HostBlock(block) = element {
-                if block.host_pattern == alias {
-                    block.set_stale(timestamp);
-                    return;
-                }
-            }
+        if let Some(block) = self.find_host_block_mut(alias) {
+            block.set_stale(timestamp);
         }
     }
 
     /// Clear stale marking from a host by alias.
     pub fn clear_host_stale(&mut self, alias: &str) {
-        for element in &mut self.elements {
-            if let ConfigElement::HostBlock(block) = element {
-                if block.host_pattern == alias {
-                    block.clear_stale();
-                    return;
-                }
-            }
+        if let Some(block) = self.find_host_block_mut(alias) {
+            block.clear_stale();
         }
     }
 
@@ -1038,24 +1108,82 @@ impl SshConfigFile {
     }
 
     /// Delete a host entry by alias.
+    ///
+    /// For a single-alias block this removes the whole block (and cleans up
+    /// any orphaned `# purple:group` header left behind). For a multi-alias
+    /// block like `Host web-01 web-01.prod 10.0.1.5` only the matching
+    /// alias token is stripped from the `Host` line; sibling aliases and
+    /// all directives are preserved so that `delete_host("web-01.prod")`
+    /// does not silently wipe configuration for `web-01` and `10.0.1.5`.
+    ///
+    /// Callers that want to remove the entire block regardless of sibling
+    /// aliases should surface an explicit confirmation in the UI and then
+    /// delete each sibling alias in turn.
     pub fn delete_host(&mut self, alias: &str) {
-        // Before deletion, check if this host belongs to a provider so we can
-        // clean up an orphaned group header afterwards.
-        let provider_name = self.elements.iter().find_map(|e| {
-            if let ConfigElement::HostBlock(b) = e {
-                if b.host_pattern == alias {
-                    return b.provider().map(|(name, _)| name);
+        // Two matching modes:
+        //   - Full-pattern match: block.host_pattern == alias. Removes the
+        //     entire block (plus duplicates). Used by the pattern browser,
+        //     where `alias` is a full pattern string like `web-* db-*` or
+        //     `web-01 web-01.prod`.
+        //   - Token match: alias appears as one of the whitespace-separated
+        //     tokens. Strips just that token from a multi-alias block and
+        //     removes single-alias blocks outright. Used by the host list.
+        // Full-pattern is checked first so pattern-browser deletes never
+        // degenerate into partial token strips.
+        let has_full_match = self
+            .elements
+            .iter()
+            .any(|e| matches!(e, ConfigElement::HostBlock(b) if b.host_pattern == alias));
+
+        // Capture the provider for orphaned-group cleanup before mutation.
+        let provider_name = self.elements.iter().find_map(|e| match e {
+            ConfigElement::HostBlock(b)
+                if (has_full_match && b.host_pattern == alias)
+                    || (!has_full_match
+                        && b.host_pattern.split_whitespace().any(|t| t == alias)) =>
+            {
+                b.provider().map(|(name, _)| name)
+            }
+            _ => None,
+        });
+
+        if has_full_match {
+            // Remove every block whose full host_pattern equals the input
+            // (duplicate-block invariant preserved, matches pre-refactor).
+            self.elements.retain(|e| match e {
+                ConfigElement::HostBlock(block) => block.host_pattern != alias,
+                _ => true,
+            });
+        } else {
+            // Token-aware: strip the alias from multi-alias blocks first,
+            // then drop single-alias blocks whose sole token equals alias.
+            for el in &mut self.elements {
+                if let ConfigElement::HostBlock(block) = el {
+                    let tokens: Vec<&str> = block.host_pattern.split_whitespace().collect();
+                    if tokens.len() > 1 && tokens.contains(&alias) {
+                        let new_pattern = tokens
+                            .iter()
+                            .filter(|t| **t != alias)
+                            .copied()
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        block.host_pattern = new_pattern.clone();
+                        block.raw_host_line = format!("Host {}", new_pattern);
+                    }
                 }
             }
-            None
-        });
+            self.elements.retain(|e| match e {
+                ConfigElement::HostBlock(block) => {
+                    let mut tokens = block.host_pattern.split_whitespace();
+                    !matches!(
+                        (tokens.next(), tokens.next()),
+                        (Some(first), None) if first == alias
+                    )
+                }
+                _ => true,
+            });
+        }
 
-        self.elements.retain(|e| match e {
-            ConfigElement::HostBlock(block) => block.host_pattern != alias,
-            _ => true,
-        });
-
-        // Remove orphaned group header if no hosts remain for the provider.
         if let Some(name) = provider_name {
             self.remove_orphaned_group_header(&name);
         }
@@ -1074,11 +1202,39 @@ impl SshConfigFile {
     /// Does NOT collapse blank lines or remove group headers so the position
     /// stays valid for re-insertion via `insert_host_at()`.
     /// Orphaned group headers (if any) are cleaned up at next startup.
+    ///
+    /// For multi-alias blocks this returns `None`: undoable-delete of a
+    /// single alias out of a shared `Host` line cannot be round-tripped via
+    /// `insert_host_at` because sibling aliases would be lost. Callers
+    /// should fall back to `delete_host` in that case (which strips only
+    /// the requested token).
     pub fn delete_host_undoable(&mut self, alias: &str) -> Option<(ConfigElement, usize)> {
-        let pos = self
+        // Two-mode match mirroring `delete_host`: full-pattern first (for
+        // pattern-browser deletes where `alias` is the whole pattern
+        // string), then token match. Undoable delete is only safe when
+        // removing the entire block; token-strip on a multi-alias block is
+        // therefore refused (returns `None`) because re-inserting the
+        // whole element would not reverse a token strip.
+        let full_pos = self
             .elements
             .iter()
-            .position(|e| matches!(e, ConfigElement::HostBlock(b) if b.host_pattern == alias))?;
+            .position(|e| matches!(e, ConfigElement::HostBlock(b) if b.host_pattern == alias));
+        let pos = if let Some(p) = full_pos {
+            p
+        } else {
+            let token_pos = self.elements.iter().position(|e| match e {
+                ConfigElement::HostBlock(b) => {
+                    b.host_pattern.split_whitespace().any(|t| t == alias)
+                }
+                _ => false,
+            })?;
+            if let ConfigElement::HostBlock(b) = &self.elements[token_pos] {
+                if b.host_pattern.split_whitespace().count() > 1 {
+                    return None;
+                }
+            }
+            token_pos
+        };
         let element = self.elements.remove(pos);
         Some((element, pos))
     }

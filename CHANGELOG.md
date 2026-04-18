@@ -1,3 +1,12 @@
+## 2.43.0 - 2026-04-18
+
+- feat: Confident edits on every host, shared lines included.
+- feat: Multi-alias `Host` lines like `Host web-01 web-01.prod` are first-class in the TUI. Edit, rename and delete them from any alias and the on-disk config keeps up.
+- feat: Deleting one alias from a shared line keeps the surviving aliases and their shared directives in place, ready to use.
+- feat: The delete confirm dialog spells out the sibling aliases that will survive, so you press y knowing exactly what stays.
+- change: Vault SSH certificates and Vault HTTP endpoints scope themselves per-alias automatically, keeping shared lines clean.
+- change: OpenSSH itself is now a test oracle. Purple's parse and serialize cycle is cross-validated against `ssh -G` on 16 curated configs plus every fuzz seed, on top of 637k-run fuzzing.
+
 ## 2.42.3 - 2026-04-18
 
 - change: Codebase tune-up: sharper debug trail, snappier renders.

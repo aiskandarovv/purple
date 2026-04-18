@@ -141,6 +141,36 @@ pub fn host_not_found(alias: &str) -> String {
     format!("Host '{}' not found.", alias)
 }
 
+/// Toast after stripping an alias token from a shared `Host` line. Undo is
+/// not offered because re-inserting a whole block would not reverse a token
+/// strip (sibling aliases and their directives stay in place).
+pub fn siblings_stripped(alias: &str, sibling_count: usize) -> String {
+    if sibling_count == 1 {
+        format!(
+            "Stripped {}. 1 sibling alias kept its shared config.",
+            alias
+        )
+    } else {
+        format!(
+            "Stripped {}. {} sibling aliases kept their shared config.",
+            alias, sibling_count
+        )
+    }
+}
+
+/// One-line note rendered inside the confirm-delete dialog when the target
+/// alias shares its `Host` block with siblings. Explains that the other
+/// tokens survive.
+pub fn confirm_delete_siblings_note(siblings: &[String]) -> String {
+    let shown: Vec<&str> = siblings.iter().take(3).map(String::as_str).collect();
+    let tail = if siblings.len() > shown.len() {
+        format!(" +{} more", siblings.len() - shown.len())
+    } else {
+        String::new()
+    };
+    format!("Siblings kept: {}{}", shown.join(", "), tail)
+}
+
 pub fn cert_cleanup_warning(path: &impl std::fmt::Display, e: &impl std::fmt::Display) -> String {
     format!("Warning: failed to clean up Vault SSH cert {}: {}", path, e)
 }

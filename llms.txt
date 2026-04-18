@@ -407,9 +407,9 @@ A: Press m in the host list to open the theme picker with live preview. 11 built
 
 ## Status
 
-- Current version: 2.42.3 (April 2026)
+- Current version: 2.43.0 (April 2026)
 - Release cadence: approximately bi-weekly
-- Test suite: 6200+ tests (unit, integration, property-based and HTTP mocking)
+- Test suite: 6500+ tests (unit, integration, property-based, HTTP mocking and OpenSSH ground-truth cross-validation)
 - CI: fmt, clippy, build, test on macOS and Linux, cargo-deny, MSRV 1.86 check, rustdoc warnings, site sync, TUI smoke test, design system, message centralization, keybinding invariants and visual regression
 - Dependencies actively maintained
 

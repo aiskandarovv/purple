@@ -12,20 +12,45 @@ use crate::app::App;
 // Status messages are not shown here. Any active status will be visible
 // once the user closes the dialog and returns to the parent screen.
 
-pub fn render(frame: &mut Frame, _app: &App, alias: &str) {
-    let area = super::centered_rect_fixed(52, 5, frame.area());
+pub fn render(frame: &mut Frame, app: &App, alias: &str) {
+    // Multi-alias awareness: if this alias shares its `Host` block with
+    // sibling tokens, spell them out so the user understands what will
+    // happen (only the selected alias is stripped; siblings keep the
+    // shared config). Single-alias hosts render the original compact
+    // 5-row dialog, unchanged, so visual regression goldens for the
+    // common case stay stable.
+    let siblings = app.config.siblings_of(alias);
+    let has_siblings = !siblings.is_empty();
+
+    // Geometry is preserved bit-for-bit when no siblings exist so the
+    // visual regression golden for single-alias deletes stays stable. Only
+    // the multi-alias case widens the dialog (to fit a readable siblings
+    // list) and adds two extra rows (blank + note).
+    let (width, height): (u16, u16) = if has_siblings { (60, 7) } else { (52, 5) };
+    let area = super::centered_rect_fixed(width, height, frame.area());
 
     frame.render_widget(Clear, area);
 
     let block = design::danger_block("Confirm Delete");
 
-    let text = vec![
+    let mut text = vec![
         Line::from(""),
         Line::from(Span::styled(
             format!("  Delete \"{}\"?", alias),
             theme::bold(),
         )),
     ];
+
+    if has_siblings {
+        text.push(Line::from(""));
+        text.push(Line::from(Span::styled(
+            format!(
+                "  {}",
+                crate::messages::confirm_delete_siblings_note(&siblings)
+            ),
+            theme::muted(),
+        )));
+    }
 
     let paragraph = Paragraph::new(text).block(block);
     frame.render_widget(paragraph, area);

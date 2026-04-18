@@ -3303,3 +3303,229 @@ fn set_vault_ssh_removes_duplicate_comments() {
         Some("ssh/sign/new".to_string())
     );
 }
+
+// Regression tests: multi-alias Host blocks must be addressable from any
+// of their whitespace-separated tokens, for both reads and writes. Before
+// the `find_host_block_mut` helper, writers compared the full
+// `host_pattern` for exact equality, which silently no-op'd on blocks like
+// `Host web-01 web-01.prod 10.0.1.5`. Users saw the host in the TUI, hit
+// edit or delete, and purple accepted the interaction while the on-disk
+// config stayed untouched.
+
+#[test]
+fn delete_host_strips_single_alias_from_multi_alias_block() {
+    let input = "Host web-01 web-01.prod 10.0.1.5\n  HostName 10.0.1.5\n  User deploy\n";
+    let mut config = parse_str(input);
+    config.delete_host("web-01.prod");
+    let output = config.serialize();
+    assert!(
+        output.contains("Host web-01 10.0.1.5"),
+        "sibling aliases must survive: {}",
+        output
+    );
+    assert!(
+        !output.contains("web-01.prod"),
+        "deleted alias must be gone: {}",
+        output
+    );
+    // Directives untouched — they still apply to the remaining aliases.
+    assert!(output.contains("HostName 10.0.1.5"));
+    assert!(output.contains("User deploy"));
+    // has_host reflects the on-disk state.
+    assert!(!config.has_host("web-01.prod"));
+    assert!(config.has_host("web-01"));
+    assert!(config.has_host("10.0.1.5"));
+}
+
+#[test]
+fn delete_host_removes_block_when_last_alias_is_stripped() {
+    // After repeated strips the block empties out; final strip removes the
+    // whole block so we do not leave behind a dangling `Host ` line.
+    let input = "Host alpha beta\n  User deploy\n";
+    let mut config = parse_str(input);
+    config.delete_host("alpha");
+    config.delete_host("beta");
+    let output = config.serialize();
+    assert!(!output.contains("Host "), "block must be gone: {}", output);
+    assert!(!config.has_host("alpha"));
+    assert!(!config.has_host("beta"));
+}
+
+#[test]
+fn delete_host_single_alias_block_still_removes_entire_block() {
+    // Regression guard: single-alias behaviour must match the pre-refactor
+    // semantics (whole block removed plus blank-line collapse).
+    let input = "Host alpha\n  User a\n\nHost beta\n  User b\n";
+    let mut config = parse_str(input);
+    config.delete_host("alpha");
+    let output = config.serialize();
+    assert!(!output.contains("Host alpha"));
+    assert!(output.contains("Host beta"));
+    assert!(output.contains("User b"));
+}
+
+#[test]
+fn update_host_rename_on_multi_alias_replaces_only_matching_token() {
+    let input = "Host web-01 web-01.prod 10.0.1.5\n  HostName 10.0.1.5\n  User deploy\n";
+    let mut config = parse_str(input);
+    let renamed = HostEntry {
+        alias: "web-prod".to_string(),
+        hostname: "10.0.1.5".to_string(),
+        user: "deploy".to_string(),
+        ..Default::default()
+    };
+    config.update_host("web-01.prod", &renamed);
+    let output = config.serialize();
+    assert!(
+        output.contains("Host web-01 web-prod 10.0.1.5"),
+        "only the renamed token must change: {}",
+        output
+    );
+    assert!(!output.contains("web-01.prod"));
+    assert!(config.has_host("web-prod"));
+    assert!(config.has_host("web-01"));
+    assert!(config.has_host("10.0.1.5"));
+}
+
+#[test]
+fn update_host_field_on_multi_alias_affects_all_siblings() {
+    // Per SSH semantics all tokens in a Host line share the same directives;
+    // updating a non-alias field via any token must therefore apply to the
+    // whole block (not silently no-op as the pre-refactor == match did).
+    let input = "Host web-01 web-01.prod\n  User old\n";
+    let mut config = parse_str(input);
+    let entry = HostEntry {
+        alias: "web-01.prod".to_string(),
+        user: "deploy".to_string(),
+        ..Default::default()
+    };
+    config.update_host("web-01.prod", &entry);
+    let output = config.serialize();
+    assert!(output.contains("User deploy"));
+    assert!(!output.contains("User old"));
+    assert!(output.contains("Host web-01 web-01.prod"));
+}
+
+#[test]
+fn set_host_tags_reaches_multi_alias_block_via_any_token() {
+    let input = "Host web-01 web-01.prod\n  User deploy\n";
+    let mut config = parse_str(input);
+    config.set_host_tags("web-01.prod", &["prod".to_string(), "web".to_string()]);
+    let output = config.serialize();
+    assert!(
+        output.contains("purple:tags"),
+        "tags comment must be written: {}",
+        output
+    );
+    let block = first_block(&config);
+    assert_eq!(block.tags(), vec!["prod".to_string(), "web".to_string()]);
+}
+
+#[test]
+fn set_host_provider_reaches_multi_alias_block() {
+    let input = "Host web-01 web-01.prod\n  User deploy\n";
+    let mut config = parse_str(input);
+    config.set_host_provider("web-01", "hetzner", "12345");
+    let block = first_block(&config);
+    assert_eq!(
+        block.provider(),
+        Some(("hetzner".to_string(), "12345".to_string()))
+    );
+}
+
+#[test]
+fn set_host_certificate_file_refuses_multi_alias_block() {
+    // ExactAliasOnly policy: a multi-alias block is refused even though the
+    // input alias itself is a clean token, because writing `CertificateFile`
+    // would silently apply to every sibling alias.
+    let input = "Host web-01 web-01.prod\n  User deploy\n";
+    let mut config = parse_str(input);
+    let ok = config.set_host_certificate_file("web-01", "/tmp/cert.pub");
+    assert!(
+        !ok,
+        "set_host_certificate_file must refuse multi-alias blocks"
+    );
+    assert!(!config.serialize().contains("CertificateFile"));
+}
+
+#[test]
+fn set_host_vault_addr_refuses_multi_alias_block() {
+    let input = "Host web-01 web-01.prod\n  User deploy\n";
+    let mut config = parse_str(input);
+    let ok = config.set_host_vault_addr("web-01", "https://vault.example.com:8200");
+    assert!(!ok, "set_host_vault_addr must refuse multi-alias blocks");
+    assert!(!config.serialize().contains("purple:vault-addr"));
+}
+
+#[test]
+fn siblings_of_returns_other_tokens_in_multi_alias_block() {
+    let config = parse_str("Host web-01 web-01.prod 10.0.1.5\n  HostName 10.0.1.5\n");
+    let siblings = config.siblings_of("web-01.prod");
+    assert_eq!(siblings, vec!["web-01".to_string(), "10.0.1.5".to_string()]);
+}
+
+#[test]
+fn siblings_of_returns_empty_for_single_alias_block() {
+    let config = parse_str("Host solo\n  HostName 1.2.3.4\n");
+    assert!(config.siblings_of("solo").is_empty());
+}
+
+#[test]
+fn siblings_of_returns_empty_for_full_pattern_match() {
+    // Full-pattern match means the caller targets the whole block (pattern
+    // browser). All tokens are the target so there are no siblings to keep.
+    let config = parse_str("Host web-01 web-01.prod\n  HostName 10.0.0.1\n");
+    assert!(config.siblings_of("web-01 web-01.prod").is_empty());
+}
+
+#[test]
+fn siblings_of_returns_empty_for_unknown_alias() {
+    let config = parse_str("Host solo\n  HostName 1.2.3.4\n");
+    assert!(config.siblings_of("nonexistent").is_empty());
+    assert!(config.siblings_of("").is_empty());
+}
+
+#[test]
+fn delete_host_full_pattern_still_removes_whole_block() {
+    // Pattern browser delete: the caller passes the full host_pattern as
+    // alias. The whole block must be removed, not token-stripped.
+    let input = "Host web-01 web-01.prod\n  HostName shared.com\n\nHost other\n  User root\n";
+    let mut config = parse_str(input);
+    config.delete_host("web-01 web-01.prod");
+    let output = config.serialize();
+    assert!(!output.contains("web-01"));
+    assert!(!output.contains("web-01.prod"));
+    assert!(output.contains("Host other"));
+}
+
+#[test]
+fn update_host_full_pattern_rename_replaces_whole_pattern() {
+    // Pattern browser rename with a multi-token pattern must replace the
+    // whole host_pattern, not try to rename a single token.
+    let input = "Host web-01 web-01.prod\n  User root\n";
+    let mut config = parse_str(input);
+    let renamed = HostEntry {
+        alias: "prod".to_string(),
+        user: "root".to_string(),
+        ..Default::default()
+    };
+    config.update_host("web-01 web-01.prod", &renamed);
+    let output = config.serialize();
+    assert!(output.contains("Host prod"));
+    assert!(!output.contains("web-01"));
+}
+
+#[test]
+fn delete_host_undoable_refuses_multi_alias_block() {
+    // Undoable delete returns `None` for multi-alias blocks because
+    // re-inserting the whole element via `insert_host_at` would not reverse
+    // a token-strip. The caller should fall back to `delete_host` (which
+    // strips the token safely) and skip the undo stack entry.
+    let input = "Host web-01 web-01.prod\n  User deploy\n";
+    let mut config = parse_str(input);
+    let undo = config.delete_host_undoable("web-01.prod");
+    assert!(undo.is_none());
+    // Config untouched by the refused undoable delete.
+    assert!(config.has_host("web-01.prod"));
+    assert!(config.has_host("web-01"));
+}

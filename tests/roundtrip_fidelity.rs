@@ -3630,16 +3630,30 @@ fn deduplicate_alias_multiple_collisions() {
 }
 
 #[test]
-fn delete_host_multi_pattern_not_deleted_by_single() {
+fn delete_host_on_multi_alias_strips_only_matching_token() {
+    // Correct OpenSSH semantics: `Host prod staging` defines two aliases
+    // sharing directives. `delete_host("prod")` removes only the `prod`
+    // token; the `staging` sibling and its directives survive. Prior to
+    // the multi-alias matching fix this silently no-op'd because the
+    // writer compared the full `host_pattern` for exact equality.
     let input = "Host prod staging\n  HostName shared.com\n\nHost other\n  HostName other.com\n";
     let mut config = parse_str(input);
     config.delete_host("prod");
     let output = config.serialize();
     assert!(
-        output.contains("Host prod staging"),
-        "Multi-pattern host should survive single-pattern delete"
+        output.contains("Host staging"),
+        "sibling alias must survive, got: {}",
+        output
     );
+    assert!(
+        !output.contains("Host prod staging"),
+        "prod token must be stripped, got: {}",
+        output
+    );
+    assert!(!output.contains("Host prod\n"));
     assert!(output.contains("Host other"), "Other host should survive");
+    assert!(!config.has_host("prod"));
+    assert!(config.has_host("staging"));
 }
 
 // ============================================================================
