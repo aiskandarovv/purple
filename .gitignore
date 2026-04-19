@@ -1,5 +1,9 @@
 # Build
 /target
+/purple-*.mcpb
+/purple-*.mcpb.sha256
+/purple-*.tar.gz
+/purple-*.tar.gz.sha256
 
 # macOS
 .DS_Store

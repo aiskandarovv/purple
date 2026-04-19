@@ -46,7 +46,7 @@ jobs:
           - target: aarch64-apple-darwin
             runner: macos-latest
           - target: x86_64-apple-darwin
-            runner: macos-latest
+            runner: macos-13
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-22.04
           - target: aarch64-unknown-linux-gnu
@@ -84,6 +84,10 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
 
+      - name: Install musl tooling
+        if: contains(matrix.target, 'musl')
+        run: sudo apt-get install -y musl-tools
+
       - name: Build release binary
         run: cargo build --locked --release --target ${{ matrix.target }}
 
@@ -107,6 +111,68 @@ jobs:
           ls -lh "${{ env.ARCHIVE }}"
           cat "${{ env.ARCHIVE }}.sha256"
 
+      - name: Set up Node.js (for mcpb pack)
+        uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+
+      - name: Build .mcpb bundle
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          scripts/build-mcpb.sh "$VERSION" "$TARGET" "target/${TARGET}/release/purple"
+          MCPB="purple-${VERSION}-${TARGET}.mcpb"
+          echo "MCPB=${MCPB}" >> "$GITHUB_ENV"
+          if command -v sha256sum > /dev/null 2>&1; then
+            sha256sum "${MCPB}" > "${MCPB}.sha256"
+          else
+            shasum -a 256 "${MCPB}" > "${MCPB}.sha256"
+          fi
+
+      - name: Smoke-test .mcpb bundle
+        shell: bash
+        env:
+          MCPB: ${{ env.MCPB }}
+        run: |
+          set -euo pipefail
+          # Unpack the bundle to a temp dir, exercise the binary inside it
+          # against a literal ${HOME} arg (the case Claude Desktop does NOT
+          # substitute) and verify the JSON-RPC tools/list returns the three
+          # read-only tools. This is the integration check that catches the
+          # bug class where the bundle ships but silently returns empty
+          # results in the client.
+          WORK="$(mktemp -d)"
+          unzip -q "$MCPB" -d "$WORK"
+          FAKE_HOME="$(mktemp -d)"
+          mkdir -p "$FAKE_HOME/.ssh" "$FAKE_HOME/.purple"
+          printf 'Host smoke\n  HostName 10.99.0.1\n  User test\n' \
+            > "$FAKE_HOME/.ssh/config"
+          OUT="$(mktemp)"
+          printf '%s\n%s\n%s\n' \
+            '{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' \
+            '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+            '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' \
+            | HOME="$FAKE_HOME" "$WORK/server/purple" \
+                --config '${HOME}/.ssh/config' \
+                mcp --read-only \
+                --audit-log '${HOME}/.purple/mcp-audit.log' \
+            > "$OUT"
+          # Last JSON-RPC line is the tools/list response. Expect 3 tools.
+          TOOL_COUNT="$(tail -1 "$OUT" | python3 -c 'import sys,json; r=json.loads(sys.stdin.read()); print(len(r["result"]["tools"]))')"
+          if [ "$TOOL_COUNT" != "3" ]; then
+            echo "::error::.mcpb smoke test failed: expected 3 tools, got $TOOL_COUNT"
+            cat "$OUT"
+            exit 1
+          fi
+          # Audit log must have been created at the expanded path.
+          if [ ! -f "$FAKE_HOME/.purple/mcp-audit.log" ]; then
+            echo "::error::audit log not written; \${HOME} not expanded"
+            exit 1
+          fi
+          echo "Smoke test passed: 3 tools returned, audit log written"
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -114,6 +180,8 @@ jobs:
           path: |
             ${{ env.ARCHIVE }}
             ${{ env.ARCHIVE }}.sha256
+            ${{ env.MCPB }}
+            ${{ env.MCPB }}.sha256
 
   release:
     name: Create GitHub Release
@@ -158,6 +226,7 @@ jobs:
           body_path: /tmp/release_notes.md
           files: |
             purple-*/*.tar.gz
+            purple-*/*.mcpb
             purple-*/*.sha256
 
   update-homebrew:

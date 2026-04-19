@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>purple - Terminal SSH Manager and SSH Config Editor in Rust</title>
 <meta name="description" content="Open-source terminal SSH manager and ~/.ssh/config editor. Fuzzy search hundreds of hosts, sync AWS, GCP, Azure and 13 more clouds, transfer files, manage Docker and Podman over SSH, sign short-lived Vault SSH certs. Free Termius alternative in Rust.">
-<meta name="keywords" content="ssh manager, ssh client, ssh config editor, terminal ssh manager, tui ssh, rust ssh tui, ratatui, termius alternative, sshs alternative, ssh bookmarks manager, cloud ssh sync, multi-cloud ssh inventory, ssh tunnel manager, sftp client, scp file transfer, docker over ssh, podman over ssh, agentless container management, portainer alternative, hashicorp vault ssh, short-lived ssh certificates, mcp server, model context protocol, claude code ssh, devops, sysadmin, homelab">
+<meta name="keywords" content="ssh manager, ssh client, ssh config editor, terminal ssh manager, tui ssh, rust ssh tui, ratatui, termius alternative, sshs alternative, ssh bookmarks manager, cloud ssh sync, multi-cloud ssh inventory, ssh tunnel manager, sftp client, scp file transfer, docker over ssh, podman over ssh, agentless container management, portainer alternative, hashicorp vault ssh, short-lived ssh certificates, mcp server, model context protocol, claude code ssh, claude desktop ssh, mcpb bundle, ssh mcp server, ai agent ssh tool, mcp audit log, devops, sysadmin, homelab">
 <meta name="robots" content="index, follow">
 <meta name="author" content="Eric Kochen">
 <meta name="color-scheme" content="dark">
@@ -41,9 +41,9 @@
   "url": "https://getpurple.sh",
   "downloadUrl": "https://getpurple.sh",
   "installUrl": "https://github.com/erickochen/purple/releases",
-  "softwareVersion": "2.44.0",
+  "softwareVersion": "2.45.0",
   "datePublished": "2024-10-01",
-  "dateModified": "2026-04-18",
+  "dateModified": "2026-04-19",
   "softwareRequirements": "macOS or Linux",
   "programmingLanguage": "Rust",
   "license": "https://opensource.org/licenses/MIT",
@@ -83,6 +83,36 @@
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
+  "@type": "HowTo",
+  "name": "Install purple MCP server in Claude Desktop",
+  "description": "Install the purple .mcpb (MCP Bundle) in Claude Desktop for one-click access to your SSH hosts and containers.",
+  "totalTime": "PT2M",
+  "tool": [{ "@type": "HowToTool", "name": "purple .mcpb bundle" }, { "@type": "HowToTool", "name": "Claude Desktop" }],
+  "step": [
+    {
+      "@type": "HowToStep",
+      "position": 1,
+      "name": "Download the .mcpb bundle",
+      "text": "Visit https://github.com/erickochen/purple/releases/latest and download the .mcpb file matching your architecture (purple-X.Y.Z-aarch64-apple-darwin.mcpb for Apple Silicon, x86_64-apple-darwin for Intel Macs, x86_64-unknown-linux-gnu for Linux x64)."
+    },
+    {
+      "@type": "HowToStep",
+      "position": 2,
+      "name": "Double-click to install",
+      "text": "Double-click the downloaded .mcpb file. Claude Desktop opens an installer dialog showing the bundle metadata and asking for two paths: your SSH config file (default ~/.ssh/config) and the audit log path (default ~/.purple/mcp-audit.log). Click Install."
+    },
+    {
+      "@type": "HowToStep",
+      "position": 3,
+      "name": "Use the tools in Claude Desktop",
+      "text": "Restart Claude Desktop if needed. In a new conversation, ask things like 'list my SSH hosts' or 'show me details of host web-prod-1'. The bundle ships in --read-only mode so list_hosts, get_host and list_containers are available; run_command and container_action are blocked. For the full tool set, install purple via Homebrew or cargo and configure claude_desktop_config.json directly."
+    }
+  ]
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
   "@type": "FAQPage",
   "mainEntity": [
     {
@@ -91,6 +121,14 @@
       "acceptedAnswer": {
         "@type": "Answer",
         "text": "purple is a free, open-source terminal SSH client for managing SSH servers. It reads your ~/.ssh/config and gives you instant search, visual file transfer, command snippets, cloud sync from 16 providers and automatic password management. Single Rust binary for macOS and Linux."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Is purple an SSH bookmark manager?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. purple stores every SSH host in ~/.ssh/config as a named bookmark, fuzzy-searches them by alias, hostname or tag, and connects on Enter. Frecency sorting keeps your most-used bookmarks on top. purple also syncs bookmarks from 16 cloud providers and signs short-lived Vault SSH certificates."
       }
     },
     {
@@ -226,7 +264,7 @@
       "name": "Can AI assistants use purple?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Yes. Run purple mcp to start a Model Context Protocol server over JSON-RPC 2.0. Claude Code, Cursor and other MCP-compatible AI agents can use five tools: list_hosts, get_host, run_command, list_containers and container_action. No API keys needed. Approval behavior depends on your AI client."
+        "text": "Yes. Run purple mcp to start a Model Context Protocol server over JSON-RPC 2.0. Claude Code, Cursor and other MCP-compatible AI agents can use five tools: list_hosts, get_host, run_command, list_containers and container_action. Pass --read-only to restrict to the safe tools (list_hosts, get_host, list_containers). Every call is logged to ~/.purple/mcp-audit.log by default. Claude Desktop users can install the .mcpb bundle from GitHub releases for a one-click setup that ships in --read-only mode."
       }
     },
     {
@@ -823,7 +861,7 @@ footer .sep { margin: 0 0.3em; }
           <button class="copy-btn copy-inline" id="copy-btn" onclick="copy(this)" style="display:none">copy</button>
         </div>
         <div class="install-output" id="install-output" style="display:none">
-          <div>Downloading purple v2.44.0 for darwin-arm64...</div>
+          <div>Downloading purple v2.45.0 for darwin-arm64...</div>
           <div>Installing to /usr/local/bin/purple... <span class="success">done.</span></div>
         </div>
         <div class="alt-installs" id="alt-installs" style="display:none">
@@ -885,11 +923,11 @@ footer .sep { margin: 0 0.3em; }
     </div>
     <div class="feat">
       <span class="feat-icon">🤖</span>
-      <span class="feat-text"><strong>Let AI agents manage your servers.</strong> Built-in MCP server. Claude Code, Cursor and other tools get direct access to your hosts and containers.</span>
+      <span class="feat-text"><strong>Let AI agents manage your servers.</strong> Built-in MCP server with one-click <code>.mcpb</code> install for Claude Desktop. Works with Claude Code, Cursor, Windsurf and any MCP-compatible agent. Read-only mode and a JSON Lines audit log are built in.</span>
     </div>
     <div class="feat">
       <span class="feat-icon">📬</span>
-      <span class="feat-text"><strong>What's new overlay.</strong> Sticky toast and overlay summarising releases since you last opened. Press n to reopen.</span>
+      <span class="feat-text"><strong>What's new overlay.</strong> Sticky toast and overlay summarizing releases since you last opened. Press n to reopen.</span>
     </div>
   </div>
 
@@ -939,13 +977,13 @@ footer .sep { margin: 0 0.3em; }
       </details>
       <details>
         <summary>Can AI assistants use purple?</summary>
-        <div class="answer">Yes. Run <code>purple mcp</code> to start the MCP server. Claude Code, Cursor and other agents get five tools: list_hosts, get_host, run_command, list_containers and container_action.</div>
+        <div class="answer">Yes. Run <code>curl -fsSL getpurple.sh | sh</code>, then <code>purple mcp</code> to start the MCP server. Claude Code, Cursor, Windsurf and other agents get five tools: list_hosts, get_host, run_command, list_containers and container_action. Pass <code>--read-only</code> to restrict it to list_hosts, get_host and list_containers. Every call is logged to <code>~/.purple/mcp-audit.log</code> by default (JSON Lines, mode 0o600, run_command body redacted). Claude Desktop users can install the <code>.mcpb</code> bundle from <a href="https://github.com/erickochen/purple/releases/latest">GitHub releases</a> for a one-click setup. Full setup guide on the <a href="https://github.com/erickochen/purple/wiki/MCP-Server">wiki</a>.</div>
       </details>
       <details>
         <summary>How do I troubleshoot connection problems?</summary>
         <div class="answer">Run with <code>--verbose</code> to enable debug logging, then <code>purple logs --tail</code> in another terminal. Logs are written to <code>~/.purple/purple.log</code> with fault domain prefixes: <code>[external]</code> for remote/tool errors, <code>[config]</code> for local config issues. Set <code>PURPLE_LOG=trace</code> for maximum detail.</div>
       </details>
-      <div class="man-foot"><span>purple v2.44.0</span><span>2026-04-18</span><span>PURPLE(1)</span></div>
+      <div class="man-foot"><span>purple v2.45.0</span><span>2026-04-19</span><span>PURPLE(1)</span></div>
     </div>
   </div>
 
@@ -959,7 +997,7 @@ footer .sep { margin: 0 0.3em; }
 </main>
 
 <footer>
-  <a href="https://github.com/erickochen/purple" rel="noopener">GitHub</a> &middot; <a href="https://github.com/erickochen/purple/wiki" rel="noopener">Docs</a> &middot; <a href="https://crates.io/crates/purple-ssh" rel="noopener">crates.io</a> &middot; MIT License &middot; Rust &middot; 6000+ tests
+  <a href="https://github.com/erickochen/purple" rel="noopener">GitHub</a> &middot; <a href="https://github.com/erickochen/purple/wiki" rel="noopener">Docs</a> &middot; <a href="https://crates.io/crates/purple-ssh" rel="noopener">crates.io</a> &middot; MIT License &middot; Rust &middot; 6500+ tests
 </footer>
 
 <script>

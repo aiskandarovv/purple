@@ -1,11 +1,11 @@
 ╭ purple ── 22 ── ●20 ✖2 ──────────────────────────────────────────────────────────────────────────╮
 │     ╭ Help ────────────────────────────────────────────────────────────────────────────────╮AST▾ │
 │─────│                                                                                      │─────│
-│▌  ● │                                                |                                     │<1m  │
-│   ● │                           ,---..   .,---.,---. |    ,---.                            │ 1h  │
-│   ● │                           |   ||   ||    |   | |    |---'                            │ 2h  │
-│   ● │                           |---'`---'`    |---' `---'`---'o                           │ 3h  │
-│   ● │                           |              |                                           │ 4h  │
+│▌  ● │                                              ╮                                       │<1m  │
+│   ● │                                 ╭─╮╷ ╷╭─ ╭─╮ │ ╭─╮                                   │ 1h  │
+│   ● │                                 │ ││ ││  │ │ │ ├─╯                                   │ 2h  │
+│   ● │                                 ├─╯╰─╯╵  ├─╯╶┴╴╰─╴ ▪                                 │ 3h  │
+│   ● │                                 ╵        ╵                                           │ 4h  │
 │   ● │                                                                                      │ 5h  │
 │   ● │                                                                                      │ 6h  │
 │   ● │           NAVIGATE                                MANAGE HOSTS                       │ 7h  │
@@ -25,7 +25,7 @@
 │   ✖ │           All commands and docs:  github.com/erickochen/purple/wiki                  │21h  │
 │     │           Got an idea or a bug?   github.com/erickochen/purple/issues                │     │
 │     │                                                                                      │     │
-│     ╰───────────────────────────────────────────────────────── v2.44.0 (built 18 Apr 2026) ╯     │
+│     ╰───────────────────────────────────────────────────────── v2.45.0 (built 19 Apr 2026) ╯     │
 ╰───── j/k  scroll  [1/10]   Esc  close                                                       e.sh ╯
  Enter  connect    /  search    #  tag    v  detail    :  cmds                               ?  more
 ---STYLES---
@@ -250,12 +250,6 @@
 (4,3) fg=White bg=Magenta mod=BOLD|DIM
 (5,3) fg=White bg=Magenta mod=BOLD|DIM
 (6,3) fg=Reset bg=Reset mod=DIM
-(34,3) fg=Magenta bg=Reset mod=BOLD
-(35,3) fg=Magenta bg=Reset mod=BOLD
-(36,3) fg=Magenta bg=Reset mod=BOLD
-(37,3) fg=Magenta bg=Reset mod=BOLD
-(38,3) fg=Magenta bg=Reset mod=BOLD
-(39,3) fg=Magenta bg=Reset mod=BOLD
 (40,3) fg=Magenta bg=Reset mod=BOLD
 (41,3) fg=Magenta bg=Reset mod=BOLD
 (42,3) fg=Magenta bg=Reset mod=BOLD
@@ -275,13 +269,7 @@
 (56,3) fg=Magenta bg=Reset mod=BOLD
 (57,3) fg=Magenta bg=Reset mod=BOLD
 (58,3) fg=Magenta bg=Reset mod=BOLD
-(59,3) fg=Magenta bg=Reset mod=BOLD
-(60,3) fg=Magenta bg=Reset mod=BOLD
-(61,3) fg=Magenta bg=Reset mod=BOLD
-(62,3) fg=Magenta bg=Reset mod=BOLD
-(63,3) fg=Magenta bg=Reset mod=BOLD
-(64,3) fg=Magenta bg=Reset mod=BOLD
-(65,3) fg=Cyan bg=Reset mod=BOLD
+(59,3) fg=Cyan bg=Reset mod=BOLD
 (93,3) fg=Reset bg=Reset mod=DIM
 (94,3) fg=White bg=Magenta mod=BOLD|DIM
 (95,3) fg=White bg=Magenta mod=BOLD|DIM
@@ -296,12 +284,6 @@
 (4,4) fg=DarkGray bg=Reset mod=DIM
 (5,4) fg=DarkGray bg=Reset mod=DIM
 (6,4) fg=Reset bg=Reset mod=DIM
-(34,4) fg=Magenta bg=Reset mod=BOLD
-(35,4) fg=Magenta bg=Reset mod=BOLD
-(36,4) fg=Magenta bg=Reset mod=BOLD
-(37,4) fg=Magenta bg=Reset mod=BOLD
-(38,4) fg=Magenta bg=Reset mod=BOLD
-(39,4) fg=Magenta bg=Reset mod=BOLD
 (40,4) fg=Magenta bg=Reset mod=BOLD
 (41,4) fg=Magenta bg=Reset mod=BOLD
 (42,4) fg=Magenta bg=Reset mod=BOLD
@@ -321,13 +303,7 @@
 (56,4) fg=Magenta bg=Reset mod=BOLD
 (57,4) fg=Magenta bg=Reset mod=BOLD
 (58,4) fg=Magenta bg=Reset mod=BOLD
-(59,4) fg=Magenta bg=Reset mod=BOLD
-(60,4) fg=Magenta bg=Reset mod=BOLD
-(61,4) fg=Magenta bg=Reset mod=BOLD
-(62,4) fg=Magenta bg=Reset mod=BOLD
-(63,4) fg=Magenta bg=Reset mod=BOLD
-(64,4) fg=Magenta bg=Reset mod=BOLD
-(65,4) fg=Cyan bg=Reset mod=BOLD
+(59,4) fg=Cyan bg=Reset mod=BOLD
 (93,4) fg=Reset bg=Reset mod=DIM
 (94,4) fg=DarkGray bg=Reset mod=DIM
 (95,4) fg=DarkGray bg=Reset mod=DIM
@@ -342,12 +318,6 @@
 (4,5) fg=DarkGray bg=Reset mod=DIM
 (5,5) fg=DarkGray bg=Reset mod=DIM
 (6,5) fg=Reset bg=Reset mod=DIM
-(34,5) fg=Magenta bg=Reset mod=BOLD
-(35,5) fg=Magenta bg=Reset mod=BOLD
-(36,5) fg=Magenta bg=Reset mod=BOLD
-(37,5) fg=Magenta bg=Reset mod=BOLD
-(38,5) fg=Magenta bg=Reset mod=BOLD
-(39,5) fg=Magenta bg=Reset mod=BOLD
 (40,5) fg=Magenta bg=Reset mod=BOLD
 (41,5) fg=Magenta bg=Reset mod=BOLD
 (42,5) fg=Magenta bg=Reset mod=BOLD
@@ -367,13 +337,7 @@
 (56,5) fg=Magenta bg=Reset mod=BOLD
 (57,5) fg=Magenta bg=Reset mod=BOLD
 (58,5) fg=Magenta bg=Reset mod=BOLD
-(59,5) fg=Magenta bg=Reset mod=BOLD
-(60,5) fg=Magenta bg=Reset mod=BOLD
-(61,5) fg=Magenta bg=Reset mod=BOLD
-(62,5) fg=Magenta bg=Reset mod=BOLD
-(63,5) fg=Magenta bg=Reset mod=BOLD
-(64,5) fg=Magenta bg=Reset mod=BOLD
-(65,5) fg=Cyan bg=Reset mod=BOLD
+(59,5) fg=Cyan bg=Reset mod=BOLD
 (93,5) fg=Reset bg=Reset mod=DIM
 (94,5) fg=DarkGray bg=Reset mod=DIM
 (95,5) fg=DarkGray bg=Reset mod=DIM
@@ -388,12 +352,6 @@
 (4,6) fg=DarkGray bg=Reset mod=DIM
 (5,6) fg=DarkGray bg=Reset mod=DIM
 (6,6) fg=Reset bg=Reset mod=DIM
-(34,6) fg=Magenta bg=Reset mod=BOLD
-(35,6) fg=Magenta bg=Reset mod=BOLD
-(36,6) fg=Magenta bg=Reset mod=BOLD
-(37,6) fg=Magenta bg=Reset mod=BOLD
-(38,6) fg=Magenta bg=Reset mod=BOLD
-(39,6) fg=Magenta bg=Reset mod=BOLD
 (40,6) fg=Magenta bg=Reset mod=BOLD
 (41,6) fg=Magenta bg=Reset mod=BOLD
 (42,6) fg=Magenta bg=Reset mod=BOLD
@@ -413,13 +371,7 @@
 (56,6) fg=Magenta bg=Reset mod=BOLD
 (57,6) fg=Magenta bg=Reset mod=BOLD
 (58,6) fg=Magenta bg=Reset mod=BOLD
-(59,6) fg=Magenta bg=Reset mod=BOLD
-(60,6) fg=Magenta bg=Reset mod=BOLD
-(61,6) fg=Magenta bg=Reset mod=BOLD
-(62,6) fg=Magenta bg=Reset mod=BOLD
-(63,6) fg=Magenta bg=Reset mod=BOLD
-(64,6) fg=Magenta bg=Reset mod=BOLD
-(65,6) fg=Cyan bg=Reset mod=BOLD
+(59,6) fg=Cyan bg=Reset mod=BOLD
 (93,6) fg=Reset bg=Reset mod=DIM
 (94,6) fg=DarkGray bg=Reset mod=DIM
 (95,6) fg=DarkGray bg=Reset mod=DIM
@@ -434,12 +386,6 @@
 (4,7) fg=DarkGray bg=Reset mod=DIM
 (5,7) fg=DarkGray bg=Reset mod=DIM
 (6,7) fg=Reset bg=Reset mod=DIM
-(34,7) fg=Magenta bg=Reset mod=BOLD
-(35,7) fg=Magenta bg=Reset mod=BOLD
-(36,7) fg=Magenta bg=Reset mod=BOLD
-(37,7) fg=Magenta bg=Reset mod=BOLD
-(38,7) fg=Magenta bg=Reset mod=BOLD
-(39,7) fg=Magenta bg=Reset mod=BOLD
 (40,7) fg=Magenta bg=Reset mod=BOLD
 (41,7) fg=Magenta bg=Reset mod=BOLD
 (42,7) fg=Magenta bg=Reset mod=BOLD
@@ -459,13 +405,7 @@
 (56,7) fg=Magenta bg=Reset mod=BOLD
 (57,7) fg=Magenta bg=Reset mod=BOLD
 (58,7) fg=Magenta bg=Reset mod=BOLD
-(59,7) fg=Magenta bg=Reset mod=BOLD
-(60,7) fg=Magenta bg=Reset mod=BOLD
-(61,7) fg=Magenta bg=Reset mod=BOLD
-(62,7) fg=Magenta bg=Reset mod=BOLD
-(63,7) fg=Magenta bg=Reset mod=BOLD
-(64,7) fg=Magenta bg=Reset mod=BOLD
-(65,7) fg=Cyan bg=Reset mod=BOLD
+(59,7) fg=Cyan bg=Reset mod=BOLD
 (93,7) fg=Reset bg=Reset mod=DIM
 (94,7) fg=DarkGray bg=Reset mod=DIM
 (95,7) fg=DarkGray bg=Reset mod=DIM

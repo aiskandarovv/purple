@@ -619,6 +619,37 @@ pub fn regions_selected_count(count: usize, label: &str) -> String {
 pub const NO_CLIPBOARD_TOOL: &str =
     "No clipboard tool found. Install pbcopy (macOS), wl-copy (Wayland), or xclip/xsel (X11).";
 
+// ── MCP server ──────────────────────────────────────────────────────
+
+pub const MCP_TOOL_DENIED_READ_ONLY: &str = "Tool denied. Server started with --read-only. Restart without --read-only to enable state-changing tools.";
+
+/// Bare message body. Callers add the `[purple]` fault-domain prefix at
+/// their `warn!` / `error!` site; the `eprintln!` startup diagnostic emits
+/// this body directly without the tag.
+pub fn mcp_audit_init_failed(path: &impl std::fmt::Display, e: &impl std::fmt::Display) -> String {
+    format!(
+        "Failed to initialise MCP audit log at {}: {}. Continuing without audit logging.",
+        path, e
+    )
+}
+
+/// Bare message body. Callers add `[purple]` at the log macro site.
+pub fn mcp_audit_write_failed(e: &impl std::fmt::Display) -> String {
+    format!("Failed to write MCP audit entry: {}", e)
+}
+
+/// Returned to the MCP client as `isError` content when the SSH config path
+/// does not point to an existing file. Surfaces the bug class where a
+/// missing-file silently yields an empty host list.
+pub fn mcp_config_file_not_found(path: &impl std::fmt::Display) -> String {
+    format!("SSH config file not found: {}", path)
+}
+
+/// Logged when `dirs::home_dir()` cannot resolve a home for the audit log
+/// default. Auditing is silently disabled in this state, so the operator
+/// needs an explicit cue.
+pub const MCP_AUDIT_HOME_DIR_UNAVAILABLE: &str = "Could not determine home directory; MCP audit log disabled. Set --audit-log <PATH> explicitly to enable auditing.";
+
 // ── CLI messages ────────────────────────────────────────────────────
 
 #[path = "messages/cli.rs"]

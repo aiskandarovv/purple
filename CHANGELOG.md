@@ -1,7 +1,17 @@
+## 2.45.0 - 2026-04-19
+
+- feat: Claude Desktop one-click install with safe defaults.
+- feat: Download the `.mcpb` bundle from any release and double-click. Your agent gets `list_hosts`, `get_host` and `list_containers` out of the box. No shell, no container control.
+- feat: `purple mcp --read-only` exposes the same safe trio when wiring up Claude Code, Cursor or any other MCP client by hand.
+- feat: Every MCP tool call lands in `~/.purple/mcp-audit.log` as JSON. Timestamp, tool, args, outcome, reason. Owner-only file mode. `run_command` arguments redacted so passwords on shell flags never hit disk. Redirect with `--audit-log <PATH>` or turn it off with `--no-audit`.
+- feat: Audit log refuses to open through a pre-existing symlink, so a writable-directory attacker cannot redirect writes elsewhere. `run_command` switched off busy-polling and clamps oversized timeouts, so a runaway agent cannot pin the server.
+- feat: Linux musl builds for `x86_64` and `aarch64` ship next to the existing glibc binaries. Drop the static binary on any distro and run.
+- change: Wordmark refreshed with cleaner box-drawing strokes. Same cadence, still a cyan period at the end.
+
 ## 2.44.0 - 2026-04-18
 
 - feat: Live progress, live hosts, untruncated IPs.
-- feat: The sync footer shows which provider is in flight, how many providers are done and a running `(+added ~updated -stale)` diff, so you can tell at a glance what is changing in your host list.
+- feat: The sync footer shows which provider is in flight, how many providers are done and a running diff, so you can tell at a glance what is changing in your host list.
 - feat: Online indicators pulse gently so a quick scan of the host list tells you which hosts are alive right now.
 - feat: IP addresses in the address column always render in full, even next to a ProxyJump or tunnel indicator, so you can read and copy them without squinting.
 - change: Welcome, Help and What's New overlays share one clean logotype with the cyan-dot accent from the landing page, giving web and TUI one consistent look.

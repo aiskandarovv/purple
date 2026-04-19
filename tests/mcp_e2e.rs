@@ -133,3 +133,101 @@ fn mcp_e2e_full_session() {
     let status = child.wait().unwrap();
     assert!(status.success());
 }
+
+// Regression for the .mcpb-on-Claude-Desktop bug: Claude Desktop did not
+// substitute `${HOME}` in mcp_config.args before spawning purple, so purple
+// got `${HOME}/.ssh/config` literally and silently returned an empty host
+// list. The unit tests for `expand_user_path` cover the function in isolation;
+// this test covers the full subprocess chain that mirrors how the .mcpb
+// bundle launches in production.
+#[test]
+fn mcp_subprocess_expands_literal_home_in_args() {
+    use tempfile::TempDir;
+
+    let tmp = TempDir::new().unwrap();
+    let home = tmp.path();
+    let ssh_dir = home.join(".ssh");
+    std::fs::create_dir_all(&ssh_dir).unwrap();
+    std::fs::write(
+        ssh_dir.join("config"),
+        "Host smoke-${HOME}-test\n  HostName 10.99.0.1\n  User testuser\n",
+    )
+    .unwrap();
+
+    let audit_log = home.join(".purple").join("mcp-audit.log");
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_purple"))
+        .env("HOME", home)
+        .args([
+            "--config",
+            "${HOME}/.ssh/config",
+            "mcp",
+            "--read-only",
+            "--audit-log",
+            "${HOME}/.purple/mcp-audit.log",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("Failed to start purple mcp");
+
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+
+    let resp = send_and_receive(
+        &mut stdin,
+        &mut stdout,
+        &serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "1.0"}
+            }
+        }),
+    );
+    assert_eq!(resp["result"]["serverInfo"]["name"], "purple");
+
+    send_notification(
+        &mut stdin,
+        &serde_json::json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+    );
+
+    let resp = send_and_receive(
+        &mut stdin,
+        &mut stdout,
+        &serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {"name": "list_hosts", "arguments": {}}
+        }),
+    );
+
+    let result = &resp["result"];
+    assert_ne!(
+        result["isError"].as_bool(),
+        Some(true),
+        "literal ${{HOME}} arg must expand to real home; got error: {result}"
+    );
+    let text = result["content"][0]["text"].as_str().unwrap();
+    let hosts: Vec<serde_json::Value> = serde_json::from_str(text).unwrap();
+    assert_eq!(
+        hosts.len(),
+        1,
+        "expected the single seeded host, got: {text}"
+    );
+    assert_eq!(hosts[0]["hostname"], "10.99.0.1");
+
+    drop(stdin);
+    child.wait().unwrap();
+
+    assert!(
+        audit_log.exists(),
+        "audit log path with literal ${{HOME}} must expand and write to: {}",
+        audit_log.display()
+    );
+}

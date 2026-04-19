@@ -117,7 +117,22 @@ pub enum Commands {
     /// Update purple to the latest version
     Update,
     /// Start MCP server (Model Context Protocol) for AI agent integration
-    Mcp,
+    Mcp {
+        /// Restrict tools to read-only operations. Denies run_command and container_action,
+        /// and removes them from tools/list. Recommended when exposing purple to autonomous agents.
+        #[arg(long)]
+        read_only: bool,
+
+        /// Disable the MCP audit log. By default every tool call is appended to
+        /// ~/.purple/mcp-audit.log as JSON Lines.
+        #[arg(long)]
+        no_audit: bool,
+
+        /// Custom path for the MCP audit log (default: ~/.purple/mcp-audit.log).
+        /// Ignored when --no-audit is set.
+        #[arg(long, value_name = "PATH")]
+        audit_log: Option<String>,
+    },
     /// Manage color themes
     Theme {
         #[command(subcommand)]

@@ -31,6 +31,8 @@ cd purple && cargo build --release
 ```
 </details>
 
+Claude Desktop users can install the [.mcpb bundle](https://github.com/erickochen/purple/releases/latest) for one-click MCP integration (read-only by default). Setup details on the [MCP Server wiki](https://github.com/erickochen/purple/wiki/MCP-Server). No data leaves your machine. See [PRIVACY.md](PRIVACY.md).
+
 Run `purple`. Press `?` on any screen for help. That's it.
 
 ## Why I built this
@@ -68,7 +70,7 @@ I wanted one place for all of that. So I built it.
 
 purple reads `~/.ssh/config` directly. No database, no daemon, no account. Comments, indentation, Include files, unknown directives. All preserved.
 
-Written in Rust. Single binary. 6200+ tests. MIT license.
+Written in Rust. Single binary. 6500+ tests. MIT license.
 
 ## Links
 

@@ -52,12 +52,24 @@ use tui_loop::run_tui;
 use tui_loop::{cache_entry_is_stale, current_cert_mtime};
 
 pub(crate) fn resolve_config_path(path: &str) -> Result<PathBuf> {
-    if let Some(rest) = path.strip_prefix("~/") {
-        let home = dirs::home_dir().context("Could not determine home directory")?;
-        Ok(home.join(rest))
-    } else {
-        Ok(PathBuf::from(path))
+    expand_user_path(path)
+}
+
+/// Expand `~/`, `${HOME}/` and `$HOME/` prefixes against the user's home
+/// directory. MCPB clients (e.g. Claude Desktop) do not always substitute
+/// `${HOME}` before passing CLI args, so the binary must handle it.
+pub(crate) fn expand_user_path(path: &str) -> Result<PathBuf> {
+    let home_prefixes = ["~/", "${HOME}/", "$HOME/"];
+    for prefix in home_prefixes {
+        if let Some(rest) = path.strip_prefix(prefix) {
+            let home = dirs::home_dir().context("Could not determine home directory")?;
+            return Ok(home.join(rest));
+        }
     }
+    if path == "~" || path == "${HOME}" || path == "$HOME" {
+        return dirs::home_dir().context("Could not determine home directory");
+    }
+    Ok(PathBuf::from(path))
 }
 
 pub(crate) fn resolve_token(explicit: Option<String>, from_stdin: bool) -> Result<String> {
@@ -124,9 +136,25 @@ fn main() -> Result<()> {
     if let Some(Commands::Password { command }) = cli.command {
         return cli::handle_password_command(command);
     }
-    if let Some(Commands::Mcp) = cli.command {
+    if let Some(Commands::Mcp {
+        read_only,
+        no_audit,
+        audit_log,
+    }) = cli.command
+    {
         let config_path = resolve_config_path(&cli.config)?;
-        return mcp::run(&config_path);
+        let audit_log_path = if no_audit {
+            None
+        } else if let Some(path) = audit_log {
+            Some(expand_user_path(&path)?)
+        } else {
+            mcp::default_audit_log_path()
+        };
+        let options = mcp::McpOptions {
+            read_only,
+            audit_log_path,
+        };
+        return mcp::run(&config_path, options);
     }
     if let Some(Commands::Logs { tail, clear }) = cli.command {
         return cli::handle_logs_command(tail, clear);
@@ -185,7 +213,7 @@ fn main() -> Result<()> {
         Some(Commands::Provider { .. })
         | Some(Commands::Update)
         | Some(Commands::Password { .. })
-        | Some(Commands::Mcp)
+        | Some(Commands::Mcp { .. })
         | Some(Commands::Theme { .. })
         | Some(Commands::Logs { .. })
         | Some(Commands::WhatsNew { .. }) => unreachable!(),
