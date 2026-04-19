@@ -44,6 +44,12 @@ log = "0.4"
 simplelog = "0.12"
 semver = "1"
 
+# musl static builds need OpenSSL compiled from source. Without this,
+# native-tls (pulled by ureq) can't find a musl-compatible system openssl
+# on Ubuntu CI runners. No effect on glibc/darwin builds.
+[target.'cfg(target_env = "musl")'.dependencies]
+openssl = { version = "0.10", features = ["vendored"] }
+
 [dev-dependencies]
 mockito = "1.7.2"
 proptest = "1"
