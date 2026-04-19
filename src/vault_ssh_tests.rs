@@ -60,6 +60,11 @@ fn sign_certificate_missing_pubkey() {
 
 #[test]
 fn sign_certificate_vault_not_configured() {
+    // Serialize against other vault tests that inject a mock `vault` into
+    // PATH. Without this lock a parallel mock injection makes the spawn
+    // here succeed and the assertion below fails.
+    let _guard = PATH_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+
     let tmpdir = std::env::temp_dir();
     let fake_key = tmpdir.join("purple_test_vault_sign_key.pub");
     std::fs::write(
