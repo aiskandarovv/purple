@@ -46,7 +46,7 @@ jobs:
           - target: aarch64-apple-darwin
             runner: macos-latest
           - target: x86_64-apple-darwin
-            runner: macos-13
+            runner: macos-latest
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-22.04
           - target: aarch64-unknown-linux-gnu
@@ -136,6 +136,12 @@ jobs:
           fi
 
       - name: Smoke-test .mcpb bundle
+        # Skip when the bundle binary cannot run natively on this runner.
+        # x86_64-apple-darwin cross-compiles on the arm64 macos-latest, so
+        # there is no Intel host to execute the binary. The other 5 targets
+        # plus the cross-platform mcp_e2e integration test cover the same
+        # bug class.
+        if: matrix.target != 'x86_64-apple-darwin'
         shell: bash
         env:
           MCPB: ${{ env.MCPB }}
