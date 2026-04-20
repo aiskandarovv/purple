@@ -7,6 +7,16 @@ use super::design;
 use super::theme;
 use crate::app::{App, Screen};
 
+#[cfg(not(test))]
+fn build_date() -> &'static str {
+    env!("PURPLE_BUILD_DATE")
+}
+
+#[cfg(test)]
+fn build_date() -> &'static str {
+    "1 Jan 2000"
+}
+
 pub fn render(frame: &mut Frame, app: &mut App) {
     let return_screen = match &app.screen {
         Screen::Help { return_screen } => return_screen.as_ref(),
@@ -73,10 +83,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     if is_host_list {
         let version = Line::from(vec![
             Span::styled(format!(" v{}", env!("CARGO_PKG_VERSION")), theme::version()),
-            Span::styled(
-                format!(" (built {}) ", env!("PURPLE_BUILD_DATE")),
-                theme::muted(),
-            ),
+            Span::styled(format!(" (built {}) ", build_date()), theme::muted()),
         ]);
         block = block.title_bottom(version.right_aligned());
     }

@@ -1,3 +1,7 @@
+## 2.45.1 - 2026-04-20
+
+- fix: Tighter releases. Build verification stays stable across calendar days and CI runners.
+
 ## 2.45.0 - 2026-04-19
 
 - feat: Claude Desktop one-click install with safe defaults.

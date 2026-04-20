@@ -25,7 +25,7 @@
 │   ✖ │           All commands and docs:  github.com/erickochen/purple/wiki                  │21h  │
 │     │           Got an idea or a bug?   github.com/erickochen/purple/issues                │     │
 │     │                                                                                      │     │
-│     ╰───────────────────────────────────────────────────────── v2.45.0 (built 19 Apr 2026) ╯     │
+│     ╰────────────────────────────────────────────────────────── v2.45.1 (built 1 Jan 2000) ╯     │
 ╰───── j/k  scroll  [1/10]   Esc  close                                                       e.sh ╯
  Enter  connect    /  search    #  tag    v  detail    :  cmds                               ?  more
 ---STYLES---
@@ -1172,7 +1172,7 @@
 (61,27) fg=Reset bg=Reset mod=DIM
 (62,27) fg=Reset bg=Reset mod=DIM
 (63,27) fg=Reset bg=Reset mod=DIM
-(64,27) fg=Magenta bg=Reset mod=DIM
+(64,27) fg=Reset bg=Reset mod=DIM
 (65,27) fg=Magenta bg=Reset mod=DIM
 (66,27) fg=Magenta bg=Reset mod=DIM
 (67,27) fg=Magenta bg=Reset mod=DIM
@@ -1180,7 +1180,7 @@
 (69,27) fg=Magenta bg=Reset mod=DIM
 (70,27) fg=Magenta bg=Reset mod=DIM
 (71,27) fg=Magenta bg=Reset mod=DIM
-(72,27) fg=Reset bg=Reset mod=DIM
+(72,27) fg=Magenta bg=Reset mod=DIM
 (73,27) fg=Reset bg=Reset mod=DIM
 (74,27) fg=Reset bg=Reset mod=DIM
 (75,27) fg=Reset bg=Reset mod=DIM
