@@ -1,3 +1,10 @@
+## 2.45.2 - 2026-04-25
+
+- feat: ProxyJump bastions get their own credentials.
+- feat: Each hop in your jump chain reads its own keychain, 1Password, Bitwarden, pass or Vault KV entry, so multi-hop SSH connects without typing.
+- feat: Every hop is scoped to its own retry window, so a stale bastion marker no longer blocks the next reconnect.
+- change: Prompt-based credential lookup is restricted to the hosts in your ProxyJump chain, so a malicious server cannot phish credentials for other entries in your config.
+
 ## 2.45.1 - 2026-04-20
 
 - fix: Tighter releases. Build verification stays stable across calendar days and CI runners.

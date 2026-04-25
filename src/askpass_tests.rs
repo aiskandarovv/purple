@@ -1575,3 +1575,404 @@ fn retrieve_from_command_normal_values_unchanged() {
     let output = result.unwrap();
     assert_eq!(output, "myserver 10.0.0.1");
 }
+
+// =========================================================================
+// parse_password_prompt_host: extract host from OpenSSH password prompt
+// Regression coverage for ProxyJump bastion authentication (issue #43).
+// =========================================================================
+
+#[test]
+fn parse_prompt_extracts_host_from_user_at_host_form() {
+    assert_eq!(
+        parse_password_prompt_host("Administrator@10.0.0.5's password: "),
+        Some("10.0.0.5")
+    );
+}
+
+#[test]
+fn parse_prompt_extracts_alias_when_used_as_host() {
+    assert_eq!(
+        parse_password_prompt_host("root@JumpServer's password: "),
+        Some("JumpServer")
+    );
+}
+
+#[test]
+fn parse_prompt_extracts_hostname_with_port_omitted() {
+    assert_eq!(
+        parse_password_prompt_host("user@bastion.example.com's password: "),
+        Some("bastion.example.com")
+    );
+}
+
+#[test]
+fn parse_prompt_returns_none_for_passphrase_prompt() {
+    assert_eq!(
+        parse_password_prompt_host("Enter passphrase for key '/home/user/.ssh/id_rsa': "),
+        None
+    );
+}
+
+#[test]
+fn parse_prompt_returns_none_for_yes_no_prompt() {
+    assert_eq!(
+        parse_password_prompt_host("Are you sure you want to continue connecting (yes/no)? "),
+        None
+    );
+}
+
+#[test]
+fn parse_prompt_returns_none_for_generic_password_prompt() {
+    assert_eq!(parse_password_prompt_host("Password: "), None);
+}
+
+#[test]
+fn parse_prompt_returns_none_for_empty_prompt() {
+    assert_eq!(parse_password_prompt_host(""), None);
+}
+
+#[test]
+fn parse_prompt_handles_empty_user_part_before_at() {
+    // Pathological prompt with no user before @. We still extract the host;
+    // the caller's permitted-set restriction stops a leak if the host is
+    // not in the connection's chain.
+    assert_eq!(
+        parse_password_prompt_host("@host's password: "),
+        Some("host")
+    );
+}
+
+#[test]
+fn parse_prompt_handles_user_with_at_sign_via_rsplit() {
+    assert_eq!(
+        parse_password_prompt_host("user@domain@host's password: "),
+        Some("host")
+    );
+}
+
+#[test]
+fn parse_prompt_strips_ipv6_brackets() {
+    assert_eq!(
+        parse_password_prompt_host("user@[::1]'s password: "),
+        Some("::1")
+    );
+}
+
+#[test]
+fn parse_prompt_strips_ipv6_brackets_with_full_address() {
+    assert_eq!(
+        parse_password_prompt_host("admin@[2001:db8::1]'s password: "),
+        Some("2001:db8::1")
+    );
+}
+
+// =========================================================================
+// build_proxy_chain + parse_proxy_jump_host
+// =========================================================================
+
+fn permitted(aliases: &[&str]) -> std::collections::HashSet<String> {
+    aliases.iter().map(|s| s.to_string()).collect()
+}
+
+#[test]
+fn proxy_chain_single_target_no_jump() {
+    let config = parse_config("Host Target\n  HostName 10.0.0.10\n");
+    let chain = build_proxy_chain(&config, "Target");
+    assert_eq!(chain, permitted(&["Target"]));
+}
+
+#[test]
+fn proxy_chain_single_bastion() {
+    let config = parse_config(
+        "\
+Host Bastion
+  HostName 10.0.0.5
+
+Host Target
+  HostName 10.0.0.10
+  ProxyJump Bastion
+",
+    );
+    let chain = build_proxy_chain(&config, "Target");
+    assert_eq!(chain, permitted(&["Target", "Bastion"]));
+}
+
+#[test]
+fn proxy_chain_recursive_two_hops() {
+    let config = parse_config(
+        "\
+Host Edge
+  HostName 10.0.0.1
+
+Host Bastion
+  HostName 10.0.0.5
+  ProxyJump Edge
+
+Host Target
+  HostName 10.0.0.10
+  ProxyJump Bastion
+",
+    );
+    let chain = build_proxy_chain(&config, "Target");
+    assert_eq!(chain, permitted(&["Target", "Bastion", "Edge"]));
+}
+
+#[test]
+fn proxy_chain_breaks_cycles() {
+    // Pathological self-referential ProxyJump. The visited-set prevents an
+    // infinite loop and the chain still contains the involved aliases.
+    let config = parse_config(
+        "\
+Host A
+  HostName 10.0.0.1
+  ProxyJump B
+
+Host B
+  HostName 10.0.0.2
+  ProxyJump A
+",
+    );
+    let chain = build_proxy_chain(&config, "A");
+    assert_eq!(chain, permitted(&["A", "B"]));
+}
+
+#[test]
+fn proxy_chain_comma_separated_jumps() {
+    let config = parse_config(
+        "\
+Host Edge
+  HostName 10.0.0.1
+
+Host Bastion
+  HostName 10.0.0.5
+
+Host Target
+  HostName 10.0.0.10
+  ProxyJump Edge,Bastion
+",
+    );
+    let chain = build_proxy_chain(&config, "Target");
+    assert_eq!(chain, permitted(&["Target", "Edge", "Bastion"]));
+}
+
+#[test]
+fn proxy_chain_unknown_jump_host_is_skipped() {
+    // ProxyJump references a host not in the user's config (e.g. a raw
+    // hostname). We still include the target itself; nothing else gets
+    // promoted into the chain.
+    let config = parse_config(
+        "\
+Host Target
+  HostName 10.0.0.10
+  ProxyJump unknown.example.com
+",
+    );
+    let chain = build_proxy_chain(&config, "Target");
+    assert_eq!(chain, permitted(&["Target"]));
+}
+
+#[test]
+fn proxy_jump_host_strips_user_prefix() {
+    assert_eq!(parse_proxy_jump_host("admin@bastion"), "bastion");
+}
+
+#[test]
+fn proxy_jump_host_strips_port_suffix() {
+    assert_eq!(parse_proxy_jump_host("bastion:2222"), "bastion");
+}
+
+#[test]
+fn proxy_jump_host_handles_user_and_port() {
+    assert_eq!(parse_proxy_jump_host("admin@bastion:2222"), "bastion");
+}
+
+#[test]
+fn proxy_jump_host_handles_ipv6_brackets() {
+    assert_eq!(parse_proxy_jump_host("admin@[::1]:22"), "::1");
+}
+
+#[test]
+fn proxy_jump_host_trims_whitespace() {
+    assert_eq!(parse_proxy_jump_host("  bastion  "), "bastion");
+}
+
+// =========================================================================
+// find_alias_for_host: resolve a prompt host to a config entry, restricted
+// to the ProxyJump chain so a malicious server cannot phish unrelated hosts.
+// =========================================================================
+
+#[test]
+fn find_alias_matches_by_alias_within_permitted() {
+    let config = parse_config("Host JumpServer\n  HostName 10.0.0.5\n");
+    let chain = permitted(&["JumpServer"]);
+    assert_eq!(
+        find_alias_for_host(&config, "JumpServer", &chain),
+        Some("JumpServer".to_string())
+    );
+}
+
+#[test]
+fn find_alias_matches_by_hostname_within_permitted() {
+    let config = parse_config("Host JumpServer\n  HostName 10.0.0.5\n");
+    let chain = permitted(&["JumpServer"]);
+    assert_eq!(
+        find_alias_for_host(&config, "10.0.0.5", &chain),
+        Some("JumpServer".to_string())
+    );
+}
+
+#[test]
+fn find_alias_match_is_case_insensitive() {
+    let config = parse_config("Host Bastion\n  HostName Bastion.Example.COM\n");
+    let chain = permitted(&["Bastion"]);
+    assert_eq!(
+        find_alias_for_host(&config, "bastion.example.com", &chain),
+        Some("Bastion".to_string())
+    );
+    assert_eq!(
+        find_alias_for_host(&config, "BASTION", &chain),
+        Some("Bastion".to_string())
+    );
+}
+
+#[test]
+fn find_alias_prefers_alias_over_hostname_collision() {
+    // Pathological case where one host's alias matches another host's hostname.
+    // Alias match wins so the user's explicit naming takes precedence.
+    let config = parse_config(
+        "\
+Host bastion
+  HostName 10.0.0.5
+
+Host other
+  HostName bastion
+",
+    );
+    let chain = permitted(&["bastion", "other"]);
+    assert_eq!(
+        find_alias_for_host(&config, "bastion", &chain),
+        Some("bastion".to_string())
+    );
+}
+
+#[test]
+fn find_alias_returns_none_for_unknown_host() {
+    let config = parse_config("Host JumpServer\n  HostName 10.0.0.5\n");
+    let chain = permitted(&["JumpServer"]);
+    assert_eq!(find_alias_for_host(&config, "UnknownHost", &chain), None);
+}
+
+#[test]
+fn find_alias_rejects_host_outside_permitted_set() {
+    // Security regression: a malicious server sends a prompt naming a host
+    // that exists in ~/.ssh/config but is NOT in this connection's
+    // ProxyJump chain. The resolver must refuse, so the caller falls back
+    // to PURPLE_HOST_ALIAS instead of leaking the unrelated host's
+    // credential.
+    let config = parse_config(
+        "\
+Host Target
+  HostName 10.0.0.10
+
+Host UnrelatedServer
+  HostName 10.99.99.99
+  # purple:askpass keychain
+",
+    );
+    let chain = permitted(&["Target"]);
+    assert_eq!(
+        find_alias_for_host(&config, "UnrelatedServer", &chain),
+        None,
+        "must not resolve hosts outside the connection's chain"
+    );
+    assert_eq!(
+        find_alias_for_host(&config, "10.99.99.99", &chain),
+        None,
+        "must not resolve hostnames outside the connection's chain either"
+    );
+}
+
+#[test]
+fn find_alias_resolves_bastion_within_chain() {
+    // Target uses ProxyJump=Bastion. When ssh authenticates the bastion leg,
+    // the prompt names the bastion. The chain includes the bastion, so we
+    // resolve correctly.
+    let config = parse_config(
+        "\
+Host Bastion
+  HostName 10.0.0.5
+  # purple:askpass keychain
+
+Host Target
+  HostName 10.0.0.10
+  ProxyJump Bastion
+  # purple:askpass keychain
+",
+    );
+    let chain = build_proxy_chain(&config, "Target");
+    assert_eq!(
+        find_alias_for_host(&config, "Bastion", &chain),
+        Some("Bastion".to_string())
+    );
+    assert_eq!(
+        find_alias_for_host(&config, "10.0.0.5", &chain),
+        Some("Bastion".to_string())
+    );
+    assert_eq!(
+        find_alias_for_host(&config, "Target", &chain),
+        Some("Target".to_string())
+    );
+}
+
+#[test]
+fn find_askpass_via_prompt_resolution_picks_bastion_source() {
+    // End-to-end: parse a bastion prompt, resolve to the bastion alias,
+    // then look up that alias's askpass source. Different from the target's.
+    let config = parse_config(
+        "\
+Host Bastion
+  HostName 10.0.0.5
+  # purple:askpass vault:secret/ssh/bastion#password
+
+Host Target
+  HostName 10.0.0.10
+  ProxyJump Bastion
+  # purple:askpass keychain
+",
+    );
+    let chain = build_proxy_chain(&config, "Target");
+    let resolved = parse_password_prompt_host("admin@10.0.0.5's password: ")
+        .and_then(|h| find_alias_for_host(&config, h, &chain))
+        .expect("should resolve bastion");
+    assert_eq!(resolved, "Bastion");
+    assert_eq!(
+        find_askpass_source(&config, &resolved),
+        Some("vault:secret/ssh/bastion#password".to_string())
+    );
+}
+
+#[test]
+fn end_to_end_foreign_host_prompt_is_rejected() {
+    // Server (compromised target) sends a keyboard-interactive prompt that
+    // mimics a password prompt for an unrelated host. We must NOT resolve
+    // that host even though it exists in ~/.ssh/config — only chain hops
+    // are permitted.
+    let config = parse_config(
+        "\
+Host Target
+  HostName 10.0.0.10
+  # purple:askpass keychain
+
+Host UnrelatedServer
+  HostName 10.99.99.99
+  # purple:askpass keychain
+",
+    );
+    let chain = build_proxy_chain(&config, "Target");
+    let resolved = parse_password_prompt_host("attacker@UnrelatedServer's password: ")
+        .and_then(|h| find_alias_for_host(&config, h, &chain));
+    assert_eq!(
+        resolved, None,
+        "foreign-host prompt must not resolve to an unrelated entry"
+    );
+}

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::SystemTime;
@@ -80,17 +81,37 @@ pub fn handle() -> Result<()> {
         std::process::exit(1);
     }
 
-    // Retry detection: if we've been called recently for this alias, the password was wrong.
-    // Exit with error so SSH falls back to interactive prompt.
-    let marker = marker_path(&alias);
+    // Parse config first so we can resolve the prompt's host to the right entry.
+    // With ProxyJump, ssh fires askpass for each hop. The prompt argv[1] tells us
+    // which hop is being authenticated; PURPLE_HOST_ALIAS only knows the final
+    // target. Resolving the prompt host to its own alias scopes the keychain
+    // lookup to the correct entry per hop.
+    let config =
+        SshConfigFile::parse(&PathBuf::from(&config_path)).context("Failed to parse SSH config")?;
+
+    // Restrict prompt-based resolution to PURPLE_HOST_ALIAS and the hosts
+    // reachable via its ProxyJump chain. Without this scope, a malicious
+    // server could send a keyboard-interactive prompt formatted like a
+    // password prompt for an unrelated host (`attacker@victim's password:`)
+    // and exfiltrate that host's credential. Chain membership ensures we
+    // only ever supply credentials for hosts the user has wired into this
+    // connection.
+    let chain = build_proxy_chain(&config, &alias);
+    let resolved_alias = parse_password_prompt_host(&prompt)
+        .and_then(|h| find_alias_for_host(&config, h, &chain))
+        .unwrap_or_else(|| alias.clone());
+
+    // Retry detection: if we've been called recently for this resolved alias,
+    // the password was wrong. Exit with error so SSH falls back to interactive.
+    // The marker is keyed on the resolved alias so retries on one ProxyJump hop
+    // do not block askpass on the next hop.
+    let marker = marker_path(&resolved_alias);
     if let Some(marker_path) = &marker {
         if is_recent_marker(marker_path) {
-            debug!("Askpass retry detected for {alias}");
-            // Clean up and bail
+            debug!("Askpass retry detected for {resolved_alias}");
             let _ = std::fs::remove_file(marker_path);
             std::process::exit(1);
         }
-        // Create marker for retry detection
         if let Err(e) = std::fs::create_dir_all(marker_path.parent().unwrap()) {
             debug!("[config] Failed to create askpass marker directory: {e}");
         }
@@ -99,37 +120,122 @@ pub fn handle() -> Result<()> {
         }
     }
 
-    // Parse config and find askpass source
-    let config =
-        SshConfigFile::parse(&PathBuf::from(&config_path)).context("Failed to parse SSH config")?;
-
-    let source = find_askpass_source(&config, &alias);
+    let source = find_askpass_source(&config, &resolved_alias);
 
     let source = match source {
         Some(s) => s,
         None => std::process::exit(1),
     };
 
-    debug!("Askpass invoked for alias={alias} source={source}");
+    debug!("Askpass invoked for alias={resolved_alias} source={source}");
 
-    // Retrieve password
-    let hostname = find_hostname(&config, &alias);
-    match retrieve_password(&source, &alias, &hostname) {
+    let hostname = find_hostname(&config, &resolved_alias);
+    match retrieve_password(&source, &resolved_alias, &hostname) {
         Ok(password) => {
-            debug!("Askpass retrieved password for {alias} via {source}");
+            debug!("Askpass retrieved password for {resolved_alias} via {source}");
             print!("{}", password);
             Ok(())
         }
         Err(err) => {
             warn!("[external] Password retrieval failed via {source}");
             debug!("[external] Password retrieval detail: {err}");
-            // Clean up marker on failure
             if let Some(m) = &marker {
                 let _ = std::fs::remove_file(m);
             }
             std::process::exit(1);
         }
     }
+}
+
+/// Extract the host being authenticated from an OpenSSH password prompt.
+/// OpenSSH builds prompts as `<user>@<host>'s password:` (see `userauth_passwd`
+/// in openssh-portable). IPv6 hosts are rendered with brackets (`user@[::1]`),
+/// which we strip so the result matches a plain `HostName` entry. Returns
+/// `None` for keyboard-interactive prompts or any other format we cannot parse,
+/// so the caller falls back to PURPLE_HOST_ALIAS.
+fn parse_password_prompt_host(prompt: &str) -> Option<&str> {
+    let idx = prompt.find("'s password")?;
+    let head = &prompt[..idx];
+    let (_, host) = head.rsplit_once('@')?;
+    let host = host.trim();
+    let host = host
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(host);
+    if host.is_empty() { None } else { Some(host) }
+}
+
+/// Find the alias whose entry matches `host` by alias or hostname, restricted
+/// to entries in `permitted`. Alias match takes priority over hostname match
+/// in a single pass. Used to map the SSH prompt's host (which may be a bastion
+/// in a ProxyJump chain) back to the entry that owns its `# purple:askpass`
+/// config. The `permitted` scope blocks malicious-server attempts to coax a
+/// credential lookup for an unrelated host in `~/.ssh/config`.
+fn find_alias_for_host(
+    config: &SshConfigFile,
+    host: &str,
+    permitted: &HashSet<String>,
+) -> Option<String> {
+    let mut by_hostname: Option<String> = None;
+    for entry in config.host_entries() {
+        if !permitted.contains(&entry.alias) {
+            continue;
+        }
+        if entry.alias.eq_ignore_ascii_case(host) {
+            return Some(entry.alias.clone());
+        }
+        if by_hostname.is_none() && entry.hostname.eq_ignore_ascii_case(host) {
+            by_hostname = Some(entry.alias.clone());
+        }
+    }
+    by_hostname
+}
+
+/// Build the set of aliases reachable from `target` via its ProxyJump chain,
+/// including `target` itself. ProxyJump values can be comma-separated and
+/// formatted `[user@]host[:port]`, including bracketed IPv6 hosts. Cycles are
+/// broken by the visited-set; entries that reference unknown hosts contribute
+/// nothing to the chain.
+fn build_proxy_chain(config: &SshConfigFile, target: &str) -> HashSet<String> {
+    let entries = config.host_entries();
+    let mut chain: HashSet<String> = HashSet::new();
+    let mut queue: Vec<String> = vec![target.to_string()];
+    while let Some(current) = queue.pop() {
+        if !chain.insert(current.clone()) {
+            continue;
+        }
+        let Some(entry) = entries.iter().find(|e| e.alias == current) else {
+            continue;
+        };
+        if entry.proxy_jump.is_empty() {
+            continue;
+        }
+        for jump in entry.proxy_jump.split(',') {
+            let host = parse_proxy_jump_host(jump);
+            if host.is_empty() {
+                continue;
+            }
+            for e in &entries {
+                if e.alias.eq_ignore_ascii_case(host) || e.hostname.eq_ignore_ascii_case(host) {
+                    queue.push(e.alias.clone());
+                }
+            }
+        }
+    }
+    chain
+}
+
+/// Extract the host portion from a single ProxyJump entry of the form
+/// `[user@]host[:port]`. Handles bracketed IPv6 hosts (`[::1]:22`).
+fn parse_proxy_jump_host(jump: &str) -> &str {
+    let trimmed = jump.trim();
+    let after_user = trimmed.rsplit_once('@').map(|(_, h)| h).unwrap_or(trimmed);
+    if let Some(rest) = after_user.strip_prefix('[') {
+        if let Some(end) = rest.find(']') {
+            return &rest[..end];
+        }
+    }
+    after_user.split(':').next().unwrap_or(after_user)
 }
 
 /// Find the askpass source for a host. Checks per-host config, then global default.
@@ -432,10 +538,26 @@ fn is_recent_marker(path: &PathBuf) -> bool {
     false
 }
 
-/// Clean up the retry marker file for an alias. Called after a successful connection.
-pub fn cleanup_marker(alias: &str) {
-    if let Some(path) = marker_path(alias) {
-        let _ = std::fs::remove_file(path);
+/// Clean up retry markers after a successful connection. ProxyJump connections
+/// create one marker per hop and the parent process only knows the final
+/// target alias, so we clear every `~/.purple/.askpass_*` file on success.
+/// Each marker has a 60s expiry; this just keeps rapid reconnects snappy and
+/// prevents a stranded bastion marker from blocking the next attempt.
+pub fn cleanup_marker(_alias: &str) {
+    let Some(home) = dirs::home_dir() else {
+        return;
+    };
+    let Ok(read) = std::fs::read_dir(home.join(".purple")) else {
+        return;
+    };
+    for entry in read.flatten() {
+        if entry
+            .file_name()
+            .to_str()
+            .is_some_and(|s| s.starts_with(".askpass_"))
+        {
+            let _ = std::fs::remove_file(entry.path());
+        }
     }
 }
 
